@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Product Task Sheet</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = { theme: { extend: { fontFamily: { body: ['Inter', 'system-ui', 'sans-serif'] } } } };
+  </script>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="min-h-screen bg-slate-50 font-body text-slate-800 antialiased">
+  <div id="progress" class="progress" role="progressbar" aria-label="Loading"></div>
+
+  <header class="sticky top-0 z-30 border-b border-slate-200 bg-white">
+    <div class="mx-auto flex max-w-[1400px] flex-wrap items-center gap-4 px-6 pt-4">
+      <h1 class="text-lg font-semibold text-slate-900">Product Task Sheet</h1>
+      <div id="products" class="flex flex-wrap items-center gap-1.5 border-l border-slate-200 pl-4">
+        <span class="skeleton h-7 w-24"></span><span class="skeleton h-7 w-20"></span>
+      </div>
+      <div id="summary" class="ml-auto flex flex-wrap gap-2">
+        <span class="skeleton h-7 w-24"></span><span class="skeleton h-7 w-24"></span><span class="skeleton h-7 w-24"></span>
+      </div>
+    </div>
+    <nav id="tabs" class="mx-auto flex max-w-[1400px] flex-wrap items-end gap-1 px-6 pt-3"></nav>
+  </header>
+
+  <main id="board" class="mx-auto max-w-[1400px] px-6 py-6">
+    <div aria-busy="true" aria-label="Loading">
+      <div class="mb-6 flex items-center gap-4"><div class="skeleton h-8 w-48"></div><div class="skeleton h-2 w-40"></div></div>
+      <div class="skeleton mb-3 h-5 w-32"></div>
+      <div class="flex gap-11 overflow-hidden">
+        <div class="skeleton h-[480px] w-[290px] shrink-0"></div>
+        <div class="skeleton h-[480px] w-[290px] shrink-0"></div>
+        <div class="skeleton h-[480px] w-[290px] shrink-0"></div>
+        <div class="skeleton h-[480px] w-[290px] shrink-0"></div>
+      </div>
+    </div>
+  </main>
+
+  <div id="popup" class="overlay hidden">
+    <div class="popup-card"><div id="popupBody"></div></div>
+  </div>
+
+  <div id="copyModal" class="overlay hidden">
+    <form id="copyForm" class="popup-card max-w-md"></form>
+  </div>
+
+  <div id="sheet" class="sheet hidden">
+    <div class="sheet-card" id="sheetBody"></div>
+  </div>
+
+  <datalist id="people"></datalist>
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

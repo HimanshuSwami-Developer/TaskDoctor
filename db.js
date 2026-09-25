@@ -1,0 +1,115 @@
+'use strict';
+/**
+ * Postgres (Neon) connection + schema.
+ * DATABASE_URL comes from .env — see .env.example.
+ */
+const fs = require('fs');
+const path = require('path');
+const { Pool, types } = require('pg');
+
+// Load .env ourselves so "node server" works as well as "npm start".
+const ENV_FILE = path.join(__dirname, '.env');
+if (!process.env.DATABASE_URL && fs.existsSync(ENV_FILE)) process.loadEnvFile(ENV_FILE);
+
+// int8 columns (sort_order) → JS number instead of string
+types.setTypeParser(20, (value) => Number(value));
+
+if (!process.env.DATABASE_URL) {
+  console.error('DATABASE_URL is not set. Copy .env.example to .env and paste your Neon connection string.');
+  process.exit(1);
+}
+
+// Neon hands out "sslmode=require"; pg already treats it as full certificate verification,
+// so say so explicitly (silences pg's deprecation warning, same security).
+const connectionString = process.env.DATABASE_URL.replace(/sslmode=(prefer|require|verify-ca)\b/, 'sslmode=verify-full');
+const pool = new Pool({ connectionString, max: 5 });
+
+const SCHEMA = `
+-- A product, e.g. Finzoom, Findost, IPO
+CREATE TABLE IF NOT EXISTS products (
+  id          text PRIMARY KEY,
+  name        text NOT NULL,
+  sort_order  bigint NOT NULL DEFAULT 0,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS modules (
+  id          text PRIMARY KEY,
+  product_id  text REFERENCES products(id) ON DELETE CASCADE,
+  name        text NOT NULL,
+  sort_order  bigint NOT NULL DEFAULT 0,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS modules_product_idx ON modules(product_id);
+
+CREATE TABLE IF NOT EXISTS flows (
+  id          text PRIMARY KEY,
+  module_id   text NOT NULL REFERENCES modules(id) ON DELETE CASCADE,
+  name        text NOT NULL,
+  sort_order  bigint NOT NULL DEFAULT 0,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS flows_module_idx ON flows(module_id);
+
+-- A screen, or a condition step (type = 'condition') whose branches point at screens
+CREATE TABLE IF NOT EXISTS screens (
+  id          text PRIMARY KEY,
+  flow_id     text NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+  type        text NOT NULL DEFAULT 'screen' CHECK (type IN ('screen', 'condition')),
+  name        text NOT NULL,
+  page        text NOT NULL DEFAULT '',
+  device      text NOT NULL DEFAULT 'app' CHECK (device IN ('app', 'web')),
+  wireframe   text NOT NULL DEFAULT 'form' CHECK (wireframe IN ('form', 'list', 'dashboard', 'detail')),
+  status      text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'testing', 'complete')),
+  status_date timestamptz,
+  link_id     text,
+  branches    jsonb NOT NULL DEFAULT '[]'::jsonb,
+  sort_order  bigint NOT NULL DEFAULT 0,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS screens_flow_idx ON screens(flow_id);
+CREATE INDEX IF NOT EXISTS screens_link_idx ON screens(link_id);
+
+-- One uploaded design per screen
+CREATE TABLE IF NOT EXISTS screen_images (
+  screen_id   text PRIMARY KEY REFERENCES screens(id) ON DELETE CASCADE,
+  mime        text NOT NULL,
+  data        bytea NOT NULL,
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- Issues (bugs / flaws) logged on a screen
+CREATE TABLE IF NOT EXISTS comments (
+  id          text PRIMARY KEY,
+  screen_id   text NOT NULL REFERENCES screens(id) ON DELETE CASCADE,
+  text        text NOT NULL,
+  priority    text NOT NULL DEFAULT 'medium' CHECK (priority IN ('urgent', 'high', 'medium', 'low')),
+  assignee    text NOT NULL DEFAULT '',
+  remarks     text NOT NULL DEFAULT '',
+  resolved    boolean NOT NULL DEFAULT false,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS comments_screen_idx ON comments(screen_id);
+`;
+
+const query = (text, params) => pool.query(text, params);
+
+async function tx(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+const init = () => pool.query(SCHEMA);
+
+module.exports = { pool, query, tx, init };
