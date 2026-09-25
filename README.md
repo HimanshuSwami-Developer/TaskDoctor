@@ -2,12 +2,13 @@
 
 Track **products → modules → flows → screens** (e.g. Finzoom, Findost, IPO), with issues logged against each screen.
 
-HTML + jQuery + Tailwind on the frontend, Node.js + Express on the backend, and data (including screen images) stored in **Neon Postgres**.
+HTML + jQuery + Tailwind on the frontend, Node.js + Express on the backend, data stored in **Neon Postgres**, and screen images stored in **Cloudinary** (folder `task-doctor`).
 
 ## Setup
 
 1. Create a project at [console.neon.tech](https://console.neon.tech) and copy its **connection string**.
 2. Copy `.env.example` to `.env` and paste the string in as `DATABASE_URL`. `.env` is git-ignored.
+   For images, also fill in `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY` and `CLOUDINARY_API_SECRET` (Cloudinary → Settings → API Keys). Without them the app still works, but image uploads are turned off.
 3. Install and start. The tables are created automatically on the first start.
 
 ```bash
@@ -15,7 +16,7 @@ npm install
 npm start        # or: node server — http://localhost:4000
 ```
 
-Tables: `products`, `modules`, `flows`, `screens` (including conditions, whose branches are stored as `jsonb`), `screen_images` (`bytea`) and `comments`. Deleting a product, module or flow removes everything inside it.
+Tables: `products`, `modules`, `flows`, `screens` (including conditions, whose branches are stored as `jsonb`), and `comments`. Screens store their Cloudinary image URL and public id, and deleting a screen (or anything above it) also deletes its image from Cloudinary. Deleting a product, module or flow removes everything inside it.
 
 ## Features
 
@@ -48,6 +49,8 @@ Tables: `products`, `modules`, `flows`, `screens` (including conditions, whose b
 ```
 server.js           API (Express + pg)
 db.js               Postgres connection + schema
+cloud.js            Cloudinary image upload / delete
+env.js              loads .env
 .env.example        DATABASE_URL template
 public/             index.html, app.js, styles.css
 ```

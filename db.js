@@ -3,13 +3,8 @@
  * Postgres (Neon) connection + schema.
  * DATABASE_URL comes from .env — see .env.example.
  */
-const fs = require('fs');
-const path = require('path');
+require('./env');
 const { Pool, types } = require('pg');
-
-// Load .env ourselves so "node server" works as well as "npm start".
-const ENV_FILE = path.join(__dirname, '.env');
-if (!process.env.DATABASE_URL && fs.existsSync(ENV_FILE)) process.loadEnvFile(ENV_FILE);
 
 // int8 columns (sort_order) → JS number instead of string
 types.setTypeParser(20, (value) => Number(value));
@@ -64,6 +59,8 @@ CREATE TABLE IF NOT EXISTS screens (
   status      text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'testing', 'complete')),
   status_date timestamptz,
   link_id     text,
+  image_url   text,        -- Cloudinary secure URL
+  image_public_id text,    -- Cloudinary public_id (for replace / delete)
   branches    jsonb NOT NULL DEFAULT '[]'::jsonb,
   sort_order  bigint NOT NULL DEFAULT 0,
   created_at  timestamptz NOT NULL DEFAULT now()
@@ -71,13 +68,10 @@ CREATE TABLE IF NOT EXISTS screens (
 CREATE INDEX IF NOT EXISTS screens_flow_idx ON screens(flow_id);
 CREATE INDEX IF NOT EXISTS screens_link_idx ON screens(link_id);
 
--- One uploaded design per screen
-CREATE TABLE IF NOT EXISTS screen_images (
-  screen_id   text PRIMARY KEY REFERENCES screens(id) ON DELETE CASCADE,
-  mime        text NOT NULL,
-  data        bytea NOT NULL,
-  updated_at  timestamptz NOT NULL DEFAULT now()
-);
+-- Images live in Cloudinary now (was: bytea table screen_images)
+ALTER TABLE screens ADD COLUMN IF NOT EXISTS image_url text;
+ALTER TABLE screens ADD COLUMN IF NOT EXISTS image_public_id text;
+DROP TABLE IF EXISTS screen_images;
 
 -- Issues (bugs / flaws) logged on a screen
 CREATE TABLE IF NOT EXISTS comments (

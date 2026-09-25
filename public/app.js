@@ -127,17 +127,124 @@ $(function () {
     }
   }
 
-  function api(method, url, data, busyEl) {
+  function errorText(xhr) {
+    if (xhr && xhr.status === 404) return 'This item no longer exists. It may have been deleted. Refresh the page and try again.';
+    return (xhr && xhr.responseJSON && xhr.responseJSON.error) || 'Could not reach the server. Please try again.';
+  }
+
+  // opts.silent: the caller shows the error itself (e.g. inside a dialog)
+  function api(method, url, data, busyEl, opts = {}) {
     const el = busyEl || busyTarget(trigger);
     setBusy(el, true);
     startLoading();
     return $.ajax({ method, url, contentType: 'application/json', data: data && JSON.stringify(data) })
       .always(() => { setBusy(el, false); stopLoading(); })
       .fail((xhr) => {
+        if (opts.silent) return;
         if (xhr.status === 0 && method === 'GET') return; // offline on load: shown in the page instead
-        alert((xhr.responseJSON && xhr.responseJSON.error) || 'Server error');
+        dialog.alert(errorText(xhr));
       });
   }
+
+  // ---------------------------------------------------------------- dialogs (instead of alert / confirm / prompt)
+  //
+  // dialog.open({ title, message, fields, confirmText, danger, onConfirm }) → Promise(values | null)
+  //   fields:    [{ name, label, value, placeholder, required }]
+  //   onConfirm: (values) => jqXHR. The dialog shows a spinner, closes when it succeeds,
+  //              and stays open with the server's error message when it fails.
+
+  const dialog = (() => {
+    let resolver = null;
+    let busy = false;
+    const isOpen = () => !$('#dialog').hasClass('hidden');
+
+    function close(value) {
+      $('#dialog').addClass('hidden');
+      if (!openId && !sheetId && $('#copyModal').hasClass('hidden')) $('body').removeClass('overflow-hidden');
+      const resolve = resolver;
+      resolver = null;
+      busy = false;
+      if (resolve) resolve(value);
+    }
+
+    function open({ title, message = '', fields = [], confirmText = 'OK', cancelText = 'Cancel', danger = false, hideCancel = false, onConfirm = null }) {
+      if (resolver) close(null);
+      const badge = danger ? `<span class="dialog-icon danger">${icon('trash', 18)}</span>` : '';
+      $('#dialogForm').html(`
+        <div class="flex items-start gap-3 px-5 pt-5">
+          ${badge}
+          <div class="min-w-0 flex-1">
+            <h3 id="dialogTitle" class="text-base font-semibold text-slate-900">${esc(title)}</h3>
+            ${message ? `<p class="mt-1 text-sm leading-relaxed text-slate-600">${esc(message)}</p>` : ''}
+          </div>
+        </div>
+        ${fields.length ? `<div class="space-y-3 px-5 pt-4">${fields.map((f) => `
+          <label class="block">
+            <span class="field-label">${esc(f.label)}${f.required ? '' : ' <span class="font-normal text-slate-400">(optional)</span>'}</span>
+            <input class="input w-full" name="${f.name}" value="${esc(f.value || '')}" placeholder="${esc(f.placeholder || '')}" maxlength="${f.max || 200}" autocomplete="off" ${f.required ? 'data-required' : ''}>
+          </label>`).join('')}</div>` : ''}
+        <p class="dialog-error mx-5 mt-3 hidden"></p>
+        <div class="dialog-actions">
+          ${hideCancel ? '' : `<button type="button" class="btn-secondary" data-dialog-cancel>${esc(cancelText)}</button>`}
+          <button type="submit" class="${danger ? 'btn-danger-solid' : 'btn-primary'}">${esc(confirmText)}</button>
+        </div>`);
+      $('#dialogForm').data({ fields, onConfirm });
+      $('#dialog').removeClass('hidden');
+      $('body').addClass('overflow-hidden');
+      setTimeout(() => {
+        const input = $('#dialogForm input')[0];
+        if (input) { input.focus(); input.select(); } else $('#dialogForm [type=submit]').trigger('focus');
+      }, 30);
+      return new Promise((resolve) => { resolver = resolve; });
+    }
+
+    function showError(msg) {
+      $('#dialogForm .dialog-error').text(msg).removeClass('hidden');
+    }
+
+    $('#dialogForm').on('submit', function (e) {
+      e.preventDefault();
+      if (busy) return;
+      const { fields, onConfirm } = $(this).data();
+      const values = {};
+      (fields || []).forEach((f) => { values[f.name] = $(this).find(`[name="${f.name}"]`).val().trim(); });
+      const missing = (fields || []).find((f) => f.required && !values[f.name]);
+      if (missing) {
+        showError(`${missing.label} is required.`);
+        $(this).find(`[name="${missing.name}"]`).trigger('focus');
+        return;
+      }
+      if (!onConfirm) { close(fields && fields.length ? values : true); return; }
+      const submit = $(this).find('[type=submit]')[0];
+      busy = true;
+      setBusy(submit, true);
+      $(this).find('[data-dialog-cancel], input').prop('disabled', true);
+      onConfirm(values)
+        .done(() => close(fields && fields.length ? values : true))
+        .fail((xhr) => {
+          busy = false;
+          setBusy(submit, false);
+          $(this).find('[data-dialog-cancel], input').prop('disabled', false);
+          showError(errorText(xhr));
+        });
+    });
+    $(document).on('click', '[data-dialog-cancel]', () => { if (!busy) close(null); });
+    $('#dialog').on('mousedown', function (e) { if (e.target === this && !busy) close(null); });
+
+    return {
+      open,
+      isOpen,
+      cancel: () => { if (!busy) close(null); },
+      alert: (message, title = 'Something went wrong') => open({ title, message, confirmText: 'OK', hideCancel: true }),
+      confirm: (opts) => open(opts),
+    };
+  })();
+
+  // Ask for one or more text values, then save them.
+  function ask({ title, fields, confirmText = 'Save', save }) {
+    return dialog.open({ title, fields, confirmText, onConfirm: (values) => save(values) });
+  }
+  const QUIET = { silent: true };
 
   function toast(msg) {
     $('#toast').text(msg).removeClass('hidden');
@@ -178,10 +285,16 @@ $(function () {
     return head + (templates[type] || templates.form);
   }
 
+  // Cloudinary on-the-fly resize/compress: small for cards, full for the large view
+  function imageUrl(url, size) {
+    const t = size === 'sm' ? 'f_auto,q_auto,w_640' : 'f_auto,q_auto';
+    return url.includes('/image/upload/') ? url.replace('/image/upload/', `/image/upload/${t}/`) : url;
+  }
+
   function device(s, size) {
     // placeholder shimmer until the image has loaded
     const content = s.image
-      ? `<img src="${esc(s.image)}" alt="${esc(s.name)}" loading="lazy" onload="this.parentNode.classList.add('loaded')" onerror="this.parentNode.classList.add('loaded')">`
+      ? `<img src="${esc(imageUrl(s.image, size))}" alt="${esc(s.name)}" loading="lazy" onload="this.parentNode.classList.add('loaded')" onerror="this.parentNode.classList.add('loaded')">`
       : wireframe(s.wireframe || 'form');
     const screenClass = s.image ? 'screen has-img' : 'screen';
     if (s.device === 'web') {
@@ -731,60 +844,88 @@ $(function () {
     refocus = { screen: $f.data('screen'), where: $f.closest('#sheet').length ? '#sheet' : $f.closest('#popup').length ? '#popup' : '#board' };
   }));
 
-  $doc.on('click', '[data-action="add-module"]', () => {
-    const name = prompt('Module name');
-    if (name && name.trim()) api('POST', `/api/products/${productId}/modules`, { name }).done((m) => { activeId = m.id; load(); });
-  });
+  $doc.on('click', '[data-action="add-module"]', () => ask({
+    title: 'New module',
+    fields: [{ name: 'name', label: 'Module name', placeholder: 'e.g. Onboarding, Payments', required: true }],
+    confirmText: 'Add module',
+    save: (v) => api('POST', `/api/products/${productId}/modules`, v, null, QUIET).done((m) => { activeId = m.id; load(); }),
+  }));
   $doc.on('click', '[data-action="add-flow"]', function () {
-    const name = prompt('Flow name');
-    if (name && name.trim()) api('POST', `/api/modules/${$(this).data('module')}/flows`, { name }).done(load);
+    const moduleId = $(this).data('module');
+    ask({
+      title: 'New flow',
+      fields: [{ name: 'name', label: 'Flow name', placeholder: 'e.g. Sign Up, Add Money', required: true }],
+      confirmText: 'Add flow',
+      save: (v) => api('POST', `/api/modules/${moduleId}/flows`, v, null, QUIET).done(load),
+    });
   });
   $doc.on('click', '[data-action="retry"]', () => load());
   $doc.on('click', '[data-tab]', function () { activeId = $(this).data('tab'); render(); });
 
   // products
   $doc.on('click', '[data-product]', function () { selectProduct($(this).data('product')); render(); });
-  $doc.on('click', '[data-action="add-product"]', () => {
-    const name = prompt('Product name, e.g. Finzoom, Findost, IPO');
-    if (name && name.trim()) {
-      api('POST', '/api/products', { name }).done((p) => { productId = p.id; storage('set', 'productId', p.id); load(); });
-    }
-  });
+  $doc.on('click', '[data-action="add-product"]', () => ask({
+    title: 'New product',
+    fields: [{ name: 'name', label: 'Product name', placeholder: 'e.g. Finzoom, Findost, IPO', required: true }],
+    confirmText: 'Add product',
+    save: (v) => api('POST', '/api/products', v, null, QUIET).done((p) => { productId = p.id; storage('set', 'productId', p.id); load(); }),
+  }));
   $doc.on('click', '[data-rename-product]', function () {
     const p = products.find((x) => x.id === $(this).data('rename-product'));
-    rename(`/api/products/${p.id}`, p.name);
+    rename('product', `/api/products/${p.id}`, p.name);
   });
   $doc.on('click', '[data-delete-product]', function () {
-    remove(`/api/products/${$(this).data('delete-product')}`, 'product and all of its modules, flows and screens');
+    const p = products.find((x) => x.id === $(this).data('delete-product'));
+    remove({ title: `Delete “${p.name}”?`, message: 'All of its modules, flows, screens and issues will be deleted. This cannot be undone.', url: `/api/products/${p.id}` });
   });
 
-  function rename(url, current) {
-    const name = prompt('Name', current);
-    if (name && name.trim()) api('PATCH', url, { name }).done(load);
+  function rename(what, url, current) {
+    ask({
+      title: `Rename ${what}`,
+      fields: [{ name: 'name', label: `${what[0].toUpperCase()}${what.slice(1)} name`, value: current, required: true }],
+      save: (v) => api('PATCH', url, v, null, QUIET).done(load),
+    });
   }
   $doc.on('click', '[data-rename-module]', function () {
     const m = allModules.find((x) => x.id === $(this).data('rename-module'));
-    rename(`/api/modules/${m.id}`, m.name);
+    rename('module', `/api/modules/${m.id}`, m.name);
   });
   $doc.on('click', '[data-rename-flow]', function () {
     const f = findFlow($(this).data('rename-flow'));
-    rename(`/api/flows/${f.id}`, f.name);
+    rename('flow', `/api/flows/${f.id}`, f.name);
   });
   $doc.on('click', '[data-edit-screen]', function () {
     const s = findScreen($(this).data('edit-screen'));
-    const name = prompt('Screen name', s.name);
-    if (!name || !name.trim()) return;
-    const page = prompt('Page', s.page || '');
-    api('PATCH', `/api/screens/${s.id}`, { name, page: page == null ? s.page : page }).done(load);
+    ask({
+      title: 'Edit screen',
+      fields: [
+        { name: 'name', label: 'Screen name', value: s.name, required: true },
+        { name: 'page', label: 'Page', value: s.page, placeholder: 'e.g. /signup/otp' },
+      ],
+      save: (v) => api('PATCH', `/api/screens/${s.id}`, v, null, QUIET).done(load),
+    });
   });
 
-  function remove(url, what) {
-    if (confirm(`Delete this ${what}?`)) api('DELETE', url).done(load);
+  function remove({ title, message = 'This cannot be undone.', url, confirmText = 'Delete' }) {
+    dialog.confirm({ title, message, confirmText, danger: true, onConfirm: () => api('DELETE', url, null, null, QUIET).done(load) });
   }
-  $doc.on('click', '[data-delete-module]', function () { remove(`/api/modules/${$(this).data('delete-module')}`, 'module and everything in it'); });
-  $doc.on('click', '[data-delete-flow]', function () { remove(`/api/flows/${$(this).data('delete-flow')}`, 'flow and its screens'); });
-  $doc.on('click', '[data-delete-screen]', function () { remove(`/api/screens/${$(this).data('delete-screen')}`, 'screen'); });
-  $doc.on('click', '[data-delete-comment]', function () { remove(`/api/comments/${$(this).data('delete-comment')}`, 'issue'); });
+  $doc.on('click', '[data-delete-module]', function () {
+    const m = allModules.find((x) => x.id === $(this).data('delete-module'));
+    remove({ title: `Delete module “${m.name}”?`, message: 'All of its flows, screens and issues will be deleted. This cannot be undone.', url: `/api/modules/${m.id}` });
+  });
+  $doc.on('click', '[data-delete-flow]', function () {
+    const f = findFlow($(this).data('delete-flow'));
+    remove({ title: `Delete flow “${f.name}”?`, message: 'All of its screens and issues will be deleted. This cannot be undone.', url: `/api/flows/${f.id}` });
+  });
+  $doc.on('click', '[data-delete-screen]', function () {
+    const s = findScreen($(this).data('delete-screen'));
+    const what = isCondition(s) ? 'condition' : 'screen';
+    remove({ title: `Delete ${what} “${s.name}”?`, message: isCondition(s) ? 'Its branches will be removed. This cannot be undone.' : 'Its image and issues will be deleted too. This cannot be undone.', url: `/api/screens/${s.id}` });
+  });
+  $doc.on('click', '[data-delete-comment]', function () {
+    const c = allIssues().find((x) => x.id === $(this).data('delete-comment'));
+    remove({ title: 'Delete this issue?', message: `“${c.text.length > 80 ? `${c.text.slice(0, 80)}…` : c.text}” will be deleted. This cannot be undone.`, url: `/api/comments/${c.id}` });
+  });
 
   $doc.on('change', '[data-status]', function () {
     api('PATCH', `/api/screens/${$(this).data('status')}`, { status: $(this).val() }).done(load);
@@ -832,17 +973,17 @@ $(function () {
     const id = $(this).data('upload');
     const file = this.files[0];
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) { alert('Image must be under 5 MB'); return; }
+    if (file.size > 5 * 1024 * 1024) { dialog.alert('Please choose an image under 5 MB.', 'Image too large'); this.value = ''; return; }
     const label = this.closest('label');
     setBusy(label, true); // reading the file happens before the request starts
     const reader = new FileReader();
     reader.onload = () => api('POST', `/api/screens/${id}/image`, { dataUrl: reader.result }, label)
       .done(() => { toast('Image uploaded'); load(); });
-    reader.onerror = () => { setBusy(label, false); alert('Could not read that file'); };
+    reader.onerror = () => { setBusy(label, false); dialog.alert('That file could not be read. Please try another image.', 'Upload failed'); };
     reader.readAsDataURL(file);
   });
   $doc.on('click', '[data-remove-image]', function () {
-    if (confirm('Remove this image?')) api('DELETE', `/api/screens/${$(this).data('remove-image')}/image`).done(load);
+    remove({ title: 'Remove this image?', message: 'The screen will show its wireframe again.', confirmText: 'Remove', url: `/api/screens/${$(this).data('remove-image')}/image` });
   });
 
   // conditions
@@ -857,8 +998,15 @@ $(function () {
 
   $doc.on('click', '[data-add-condition]', function () {
     const $f = $(this).closest('form');
-    const name = $f.find('[name=name]').val().trim() || prompt('Condition name, e.g. Mandate status');
-    if (name && name.trim()) api('POST', `/api/flows/${$f.data('flow')}/screens`, { type: 'condition', name }).done(load);
+    const flowId = $f.data('flow');
+    const typed = $f.find('[name=name]').val().trim();
+    if (typed) { api('POST', `/api/flows/${flowId}/screens`, { type: 'condition', name: typed }).done(load); return; }
+    ask({
+      title: 'New condition',
+      fields: [{ name: 'name', label: 'Condition name', placeholder: 'e.g. Mandate status', required: true }],
+      confirmText: 'Add condition',
+      save: (v) => api('POST', `/api/flows/${flowId}/screens`, { type: 'condition', name: v.name }, null, QUIET).done(load),
+    });
   });
   $doc.on('change', '[data-branch-label], [data-branch-target]', function () {
     const id = $(this).closest('.card').data('id');
@@ -875,8 +1023,7 @@ $(function () {
   });
   $doc.on('click', '[data-rename-condition]', function () {
     const c = findScreen($(this).data('rename-condition'));
-    const name = prompt('Condition name', c.name);
-    if (name && name.trim()) api('PATCH', `/api/screens/${c.id}`, { name }).done(load);
+    rename('condition', `/api/screens/${c.id}`, c.name);
   });
   $doc.on('click', '[data-locate]', function () {
     const $card = $(`.card[data-id="${$(this).data('locate')}"]`);
@@ -936,7 +1083,8 @@ $(function () {
 
   $doc.on('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if (!$('#copyModal').hasClass('hidden')) closeCopy();
+    if (dialog.isOpen()) dialog.cancel();
+    else if (!$('#copyModal').hasClass('hidden')) closeCopy();
     else if (sheetId) closeSheet();
     else if (openId) closePopup();
   });

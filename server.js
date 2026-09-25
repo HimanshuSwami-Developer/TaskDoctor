@@ -3,13 +3,13 @@ const express = require('express');
 const path = require('path');
 const { randomUUID } = require('crypto');
 const db = require('./db');
+const cloud = require('./cloud');
 
 const PORT = Number(process.env.PORT) || 4000;
 const STATUSES = ['pending', 'testing', 'complete'];
 const DEVICES = ['app', 'web'];
 const WIREFRAMES = ['form', 'list', 'dashboard', 'detail'];
 const PRIORITIES = ['urgent', 'high', 'medium', 'low'];
-const IMAGE_TYPES = { png: 'image/png', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };
 
 const app = express();
 app.use(express.json({ limit: '8mb' }));
@@ -66,9 +66,17 @@ function clearDeadBranches() {
     WHERE c.type = 'condition'`);
 }
 
+// Cloudinary public_ids of every image below a product / module / flow / screen (deleted with it).
+async function imagesUnder(where, params) {
+  const { rows } = await db.query(
+    `SELECT s.image_public_id FROM screens s JOIN flows f ON f.id = s.flow_id JOIN modules m ON m.id = f.module_id
+     WHERE s.image_public_id IS NOT NULL AND ${where}`, params);
+  return rows.map((r) => r.image_public_id);
+}
+
 // ---------------------------------------------------------------- row → API shape (same JSON the front-end always used)
 
-const SCREEN_SELECT = `SELECT s.*, i.updated_at AS image_at FROM screens s LEFT JOIN screen_images i ON i.screen_id = s.id`;
+const SCREEN_SELECT = 'SELECT s.* FROM screens s';
 
 const toProduct = (r) => ({ id: r.id, name: r.name, order: r.sort_order });
 const toModule = (r) => ({ id: r.id, productId: r.product_id, name: r.name, order: r.sort_order });
@@ -90,8 +98,7 @@ function toScreen(r) {
     page: r.page,
     device: r.device,
     wireframe: r.wireframe,
-    // version in the URL so a replaced image is not served from cache
-    image: r.image_at ? `/api/screens/${r.id}/image?v=${new Date(r.image_at).getTime()}` : null,
+    image: r.image_url || null, // Cloudinary URL (contains a version, so replaced images are not cached)
     status: r.status,
     statusDate: r.status_date,
     linkId: r.link_id,
@@ -136,7 +143,9 @@ app.patch('/api/products/:id', route(async (req, res) => {
 }));
 
 app.delete('/api/products/:id', route(async (req, res) => {
+  const images = await imagesUnder('m.product_id = $1', [req.params.id]);
   await db.query('DELETE FROM products WHERE id = $1', [req.params.id]);
+  await cloud.remove(images);
   await clearDeadBranches();
   res.json({ ok: true });
 }));
@@ -158,7 +167,9 @@ app.patch('/api/modules/:id', route(async (req, res) => {
 }));
 
 app.delete('/api/modules/:id', route(async (req, res) => {
+  const images = await imagesUnder('m.id = $1', [req.params.id]);
   await db.query('DELETE FROM modules WHERE id = $1', [req.params.id]);
+  await cloud.remove(images);
   await clearDeadBranches();
   res.json({ ok: true });
 }));
@@ -192,7 +203,9 @@ app.put('/api/flows/:id/order', route(async (req, res) => {
 }));
 
 app.delete('/api/flows/:id', route(async (req, res) => {
+  const images = await imagesUnder('f.id = $1', [req.params.id]);
   await db.query('DELETE FROM flows WHERE id = $1', [req.params.id]);
+  await cloud.remove(images);
   await clearDeadBranches();
   res.json({ ok: true });
 }));
@@ -251,31 +264,30 @@ app.patch('/api/screens/:id', route(async (req, res) => {
 }));
 
 app.delete('/api/screens/:id', route(async (req, res) => {
+  const images = await imagesUnder('s.id = $1', [req.params.id]);
   await db.query('DELETE FROM screens WHERE id = $1', [req.params.id]);
+  await cloud.remove(images);
   await clearDeadBranches();
   res.json({ ok: true });
 }));
 
-// ---------------------------------------------------------------- screen images (stored in Postgres)
-
-app.get('/api/screens/:id/image', route(async (req, res) => {
-  const img = await one('SELECT mime, data FROM screen_images WHERE screen_id = $1', [req.params.id]);
-  res.set('Cache-Control', 'public, max-age=31536000, immutable').type(img.mime).send(img.data);
-}));
+// ---------------------------------------------------------------- screen images (stored in Cloudinary)
 
 app.post('/api/screens/:id/image', route(async (req, res) => {
   await one('SELECT id FROM screens WHERE id = $1', [req.params.id]);
-  const match = /^data:image\/(png|jpeg|webp|gif);base64,([A-Za-z0-9+/=]+)$/.exec(req.body.dataUrl || '');
-  if (!match) throw new HttpError(400, 'Please upload a PNG, JPG, WEBP or GIF image');
-  await db.query(
-    `INSERT INTO screen_images (screen_id, mime, data, updated_at) VALUES ($1, $2, $3, now())
-     ON CONFLICT (screen_id) DO UPDATE SET mime = EXCLUDED.mime, data = EXCLUDED.data, updated_at = now()`,
-    [req.params.id, IMAGE_TYPES[match[1]], Buffer.from(match[2], 'base64')]);
+  if (!cloud.configured()) throw new HttpError(503, 'Image storage is not set up. Add the Cloudinary keys to .env and restart.');
+  if (!/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(req.body.dataUrl || '')) {
+    throw new HttpError(400, 'Please upload a PNG, JPG, WEBP or GIF image');
+  }
+  const { url, publicId } = await cloud.upload(req.body.dataUrl, req.params.id);
+  await db.query('UPDATE screens SET image_url = $2, image_public_id = $3 WHERE id = $1', [req.params.id, url, publicId]);
   res.json(await getScreen(req.params.id));
 }));
 
 app.delete('/api/screens/:id/image', route(async (req, res) => {
-  await db.query('DELETE FROM screen_images WHERE screen_id = $1', [req.params.id]);
+  const screen = await one('SELECT image_public_id FROM screens WHERE id = $1', [req.params.id]);
+  await db.query('UPDATE screens SET image_url = NULL, image_public_id = NULL WHERE id = $1', [req.params.id]);
+  await cloud.remove([screen.image_public_id]);
   res.json(await getScreen(req.params.id));
 }));
 
@@ -301,9 +313,6 @@ app.post('/api/screens/:id/copy', route(async (req, res) => {
         `INSERT INTO screens (id, flow_id, name, page, device, wireframe, link_id, sort_order)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [id, flowId, source.name, source.page, source.device, source.wireframe, linkId, Date.now() + i]);
-      await client.query(
-        'INSERT INTO screen_images (screen_id, mime, data) SELECT $1, mime, data FROM screen_images WHERE screen_id = $2',
-        [id, source.id]);
       if (req.body.withIssues) {
         await client.query(
           `INSERT INTO comments (id, screen_id, text, priority, assignee, remarks)
@@ -315,6 +324,18 @@ app.post('/api/screens/:id/copy', route(async (req, res) => {
     }
     return created;
   });
+
+  // each copy gets its own Cloudinary image, so replacing one never changes the other
+  if (source.image_url && cloud.configured()) {
+    await Promise.all(ids.map(async (id) => {
+      try {
+        const { url, publicId } = await cloud.upload(source.image_url, id);
+        await db.query('UPDATE screens SET image_url = $2, image_public_id = $3 WHERE id = $1', [id, url, publicId]);
+      } catch (err) {
+        console.error(`Copying image for screen ${id} failed:`, err.message);
+      }
+    }));
+  }
 
   res.status(201).json(await Promise.all(ids.map(getScreen)));
 }));
@@ -361,12 +382,17 @@ app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
   const status = err.status || err.statusCode || 500;
-  if (status >= 500) console.error(err);
-  res.status(status).json({ error: status >= 500 ? 'Server error' : err.message });
+  // our own messages (e.g. "image storage not set up", "image upload failed") are safe to show
+  const expose = status < 500 || err instanceof HttpError || err.expose;
+  if (!expose) console.error(err);
+  res.status(status).json({ error: expose ? err.message : 'Server error' });
 });
 
 db.init()
-  .then(() => app.listen(PORT, () => console.log(`Task sheet running at http://localhost:${PORT}`)))
+  .then(() => app.listen(PORT, () => {
+    console.log(`Task sheet running at http://localhost:${PORT}`);
+    if (!cloud.configured()) console.log('Image uploads are off: add the Cloudinary keys to .env to turn them on.');
+  }))
   .catch((err) => {
     console.error('Could not connect to the database:', err.message);
     process.exit(1);

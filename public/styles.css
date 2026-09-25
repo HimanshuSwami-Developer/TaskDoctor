@@ -258,3 +258,18 @@ button.is-busy::after, label.is-busy::after {
 }
 .btn-primary.is-busy::after { border-color: rgba(255, 255, 255, .35); border-top-color: #fff; }
 select.is-busy, input.is-busy, textarea.is-busy { opacity: .55; cursor: progress; }
+
+/* ---------- dialogs (alert / confirm / input) ---------- */
+.dialog-overlay { position: fixed; inset: 0; z-index: 90; display: flex; align-items: flex-start; justify-content: center; padding: 14vh 16px 16px; background: rgba(15, 23, 42, .45); }
+.dialog-overlay.hidden { display: none; }
+.dialog-card { width: 100%; max-width: 440px; border-radius: 10px; background: #fff; box-shadow: 0 24px 60px rgba(15, 23, 42, .3); animation: dialogIn .16s ease-out; }
+@keyframes dialogIn { from { opacity: 0; transform: translateY(8px) scale(.98); } }
+.dialog-icon { display: grid; place-items: center; width: 36px; height: 36px; flex-shrink: 0; border-radius: 50%; }
+.dialog-icon.danger { background: #fef2f2; color: #dc2626; }
+.dialog-error { padding: 8px 10px; border-radius: 6px; background: #fef2f2; color: #b91c1c; font-size: 13px; }
+.dialog-error.hidden { display: none; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; padding: 12px 20px; border-top: 1px solid #f1f5f9; background: #f8fafc; border-radius: 0 0 10px 10px; }
+.btn-danger-solid { display: inline-flex; align-items: center; gap: 6px; border-radius: 6px; padding: 7px 12px; font-size: 13px; font-weight: 500; background: #dc2626; color: #fff; }
+.btn-danger-solid:hover { background: #b91c1c; }
+.btn-danger-solid.is-busy::after { border-color: rgba(255, 255, 255, .35); border-top-color: #fff; }
+@media (prefers-reduced-motion: reduce) { .dialog-card { animation: none; } }
