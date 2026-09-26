@@ -40,13 +40,25 @@ async function upload(source, screenId) {
   }
 }
 
+/** Upload a flow's screen recording (raw bytes). One video per flow, so replacing overwrites it. */
+function uploadVideo(buffer, flowId) {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder: FOLDER, public_id: `flow-${flowId}`, overwrite: true, invalidate: true, resource_type: 'video' },
+      (err, r) => (err
+        ? reject(Object.assign(new Error(`Video upload failed: ${reason(err)}`), { status: 502, expose: true }))
+        : resolve({ url: r.secure_url, publicId: r.public_id })));
+    stream.end(buffer);
+  });
+}
+
 /** Best-effort delete; a failure here never blocks deleting data. */
-async function remove(publicIds) {
+async function remove(publicIds, resourceType = 'image') {
   const ids = [...new Set(publicIds.filter(Boolean))];
   if (!ids.length || !configured()) return;
   try {
     for (let i = 0; i < ids.length; i += 100) {
-      await cloudinary.api.delete_resources(ids.slice(i, i + 100), { invalidate: true });
+      await cloudinary.api.delete_resources(ids.slice(i, i + 100), { invalidate: true, resource_type: resourceType });
     }
   } catch (err) {
     console.error('Cloudinary delete failed:', reason(err));
@@ -55,4 +67,4 @@ async function remove(publicIds) {
 
 const ping = () => cloudinary.api.ping();
 
-module.exports = { FOLDER, configured, upload, remove, ping, reason };
+module.exports = { FOLDER, configured, upload, uploadVideo, remove, ping, reason };

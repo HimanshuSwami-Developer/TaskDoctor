@@ -310,3 +310,37 @@ select.is-busy, input.is-busy, textarea.is-busy { opacity: .55; cursor: progress
 .btn-danger-solid:hover { background: #b91c1c; }
 .btn-danger-solid.is-busy::after { border-color: rgba(255, 255, 255, .35); border-top-color: #fff; }
 @media (prefers-reduced-motion: reduce) { .dialog-card { animation: none; } }
+
+/* ---------- sign in, account, admin ---------- */
+.login { position: fixed; inset: 0; z-index: 100; display: flex; align-items: flex-start; justify-content: center; padding: 14vh 16px 16px; background: #f8fafc; }
+.login.hidden { display: none; }
+.account { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; color: #334155; }
+.access-tag { padding: 1px 7px; border-radius: 99px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.access-view  { background: #f1f5f9; color: #475569; }
+.access-edit  { background: #f0f9ff; color: #075985; }
+.access-full  { background: #f0fdf4; color: #166534; }
+.access-super { background: #eef2ff; color: #3730a3; }
+.admin-list { border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }
+.admin-row { display: flex; align-items: center; gap: 8px; padding: 10px 12px; }
+.admin-row + .admin-row { border-top: 1px solid #f1f5f9; }
+.admin-row.on { background: #eef2ff; }
+.access-opt { display: flex; align-items: flex-start; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+.access-opt:hover { background: #f8fafc; }
+.access-opt:has(input:checked) { background: #eef2ff; }
+
+/* numbered flows */
+.flow-no { display: inline-grid; place-items: center; min-width: 24px; height: 24px; padding: 0 6px; border-radius: 6px; background: #eef2ff; color: #4338ca; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.icon-btn:disabled { opacity: .35; cursor: default; background: none; }
+
+/* branch paths: flows that continue from a condition's branch */
+.flow.path { margin-left: calc(var(--depth, 1) * 28px); padding-left: 14px; border-left: 2px dashed #c7d2fe; }
+.flow-no.path { background: #f5f3ff; color: #6d28d9; }
+.flow.flash { background: #eef2ff; border-radius: 8px; transition: background .3s; }
+.flow-end { align-self: center; flex-shrink: 0; padding: 4px 10px; border-radius: 99px; background: #e2e8f0; color: #475569; font-size: 11px; font-weight: 700; letter-spacing: .05em; }
+.cond-tag.mt-0 { margin-top: 0; }
+
+/* flow video */
+.video-btn { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 99px; font-size: 12px; font-weight: 500; cursor: pointer; background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; }
+.video-btn:hover { background: #e0e7ff; }
+.video-btn.add { background: #fff; color: #64748b; border-style: dashed; border-color: #cbd5e1; }
+.video-btn.add:hover { color: #4338ca; border-color: #a5b4fc; }

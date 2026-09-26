@@ -22,11 +22,18 @@ $(function () {
     copy: 'M9 9h11v11H9zM5 15H4V4h11v1',
     locate: 'M12 2v4M12 18v4M2 12h4M18 12h4M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z',
     plus: 'M12 5v14M5 12h14',
+    up: 'M18 15l-6-6-6 6',
+    video: 'M23 7l-7 5 7 5V7zM1 5h15v14H1z',
+    play: 'M6 4l14 8-14 8z',
+    download: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3',
+    down: 'M6 9l6 6 6-6',
+    user: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8z',
     link: 'M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7',
   };
   const icon = (name, size = 16) =>
     `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${PATHS[name]}"/></svg>`;
 
+  let me = null; // signed-in login: { id, username, name, access, allProducts, productIds }
   let products = [];
   let statuses = []; // issue status tags, incl. removed ones (flag deleted) that some issues may still use
   let productId = storage('get', 'productId'); // remembered per browser
@@ -44,6 +51,8 @@ $(function () {
   const flipped = new Set(); // cards turned to the issues side
 
   // ---------------------------------------------------------------- helpers
+
+  const $doc = $(document);
 
   function storage(op, key, value) {
     try {
@@ -66,6 +75,11 @@ $(function () {
   const productOf = (moduleId) => products.find((p) => p.modules.some((m) => m.id === moduleId));
   const prio = (c) => (PRIORITY[c.priority] ? c.priority : 'medium');
   const isCondition = (s) => s.type === 'condition';
+  // Path flows that continue from one branch of a condition
+  const pathsOf = (condId, branchId) => allModules.flatMap((m) => m.flows).filter((f) => f.fromConditionId === condId && f.fromBranchId === branchId);
+  // Every screen inside a condition's paths (and nested paths)
+  const pathScreens = (c) => (c.branches || []).flatMap((b) => pathsOf(c.id, b.id))
+    .flatMap((f) => f.screens.flatMap((x) => (isCondition(x) ? pathScreens(x) : [x])));
   const onlyScreens = (list) => list.filter((s) => !isCondition(s));
   const statusOf = (id) => statuses.find((x) => x.id === id) || { id, label: id, color: 'slate', deleted: true };
   const activeStatuses = () => statuses.filter((x) => !x.deleted);
@@ -95,6 +109,33 @@ $(function () {
       if (x.linkId === s.linkId && x.id !== s.id) out.push({ screen: x, flow: f, module: m, product: p });
     }))));
     return out;
+  }
+
+  // ---------------------------------------------------------------- access (the server enforces it; the UI only hides what you can't use)
+
+  const LEVELS = { view: 1, edit: 2, full: 3, super: 4 };
+  const ACCESS = {
+    view: { label: 'View only', hint: 'Can see everything in their apps, cannot change anything.' },
+    edit: { label: 'Edit', hint: 'Can add and update issues, statuses, assignees and screens. Cannot create or delete modules, flows or screens.' },
+    full: { label: 'Full', hint: 'Can do everything inside their apps: create, edit and delete modules, flows, screens and issues.' },
+    super: { label: 'Super admin', hint: 'Everything in every app, plus this admin dashboard and the status tags.' },
+  };
+  const can = (level) => Boolean(me) && LEVELS[me.access] >= LEVELS[level];
+
+  // Controls that need a higher level are removed; view-only logins get read-only inputs.
+  const NEEDS = {
+    super: '[data-action="add-product"], [data-rename-product], [data-delete-product], [data-action="manage-statuses"], [data-action="admin"]',
+    full: `[data-action="add-module"], [data-rename-module], [data-delete-module], [data-action="add-flow"], [data-rename-flow],
+      [data-delete-flow], [data-move-flow], [data-extend-path], .add-screen, [data-delete-screen], [data-copy-screen], [data-delete-comment]`,
+    edit: '.add-comment, [data-action="writer"], [data-remove-video], [data-remove-image], [data-add-branch], [data-remove-branch], [data-rename-condition], [data-edit-screen], [data-remove-person]',
+  };
+  function applyAccess() {
+    const $root = $('#products, #summary, #account, #tabs, #board, #popupBody, #sheetBody, #bugsBody, #videoBody');
+    Object.entries(NEEDS).forEach(([level, selector]) => { if (!can(level)) $root.find(selector).remove(); });
+    if (can('edit')) return;
+    $root.find('[data-upload], [data-upload-video]').closest('label').remove();
+    $root.find('[data-status], [data-resolve], [data-device], [data-wireframe], [data-branch-label], [data-branch-target], [data-field], [data-cycle-priority], .people-input')
+      .prop('disabled', true);
   }
 
   // ---------------------------------------------------------------- loading indicators
@@ -149,6 +190,7 @@ $(function () {
     return $.ajax({ method, url, contentType: 'application/json', data: data && JSON.stringify(data) })
       .always(() => { setBusy(el, false); stopLoading(); })
       .fail((xhr) => {
+        if (xhr.status === 401 && url !== '/api/login') { showLogin(); return; }
         if (opts.silent) return;
         if (xhr.status === 0 && method === 'GET') return; // offline on load: shown in the page instead
         dialog.alert(errorText(xhr));
@@ -397,19 +439,20 @@ $(function () {
   let loaded = false;
 
   function load() {
-    return $.when(api('GET', '/api/board'), api('GET', '/api/statuses'))
-      .done(([data], [tags]) => {
+    return $.when(api('GET', '/api/me'), api('GET', '/api/board'), api('GET', '/api/statuses'))
+      .done(([user], [data], [tags]) => {
         loaded = true;
+        me = user;
         products = data;
         statuses = tags;
         allModules = products.flatMap((p) => p.modules);
         selectProduct(products.some((p) => p.id === productId) ? productId : products[0] && products[0].id);
         render();
         if (!$('#statusModal').hasClass('hidden')) renderStatuses();
-        if (bugsView) renderBugs();
+        if (bugsView) { renderBugs(); applyAccess(); }
       })
-      .fail(() => {
-        if (loaded) return;
+      .fail((xhr) => {
+        if (loaded || xhr.status === 401) return;
         $('#products, #summary').empty();
         $('#board').html(`
           <div class="mx-auto mt-16 max-w-sm text-center">
@@ -444,6 +487,7 @@ $(function () {
     if (sheetId && !opts.skipSheet) renderSheet();
 
     renderProducts();
+    renderAccount();
     const screens = onlyScreens(allScreens(modules));
     const issues = screens.flatMap((s) => s.comments);
     const count = (st) => issues.filter((c) => c.status === st).length;
@@ -461,7 +505,7 @@ $(function () {
     if (!productId) {
       $('#board').html(`
         <div class="mx-auto mt-16 max-w-sm text-center">
-          <p class="text-slate-500">No products yet. Add one, e.g. Finzoom, Findost or IPO.</p>
+          <p class="text-slate-500">${can('super') ? 'No products yet. Add one, e.g. Finzoom, Findost or IPO.' : 'No apps are shared with your login yet. Ask an admin for access.'}</p>
           <button class="btn-primary mt-4" data-action="add-product">Add product</button>
         </div>`);
       afterRender(saved);
@@ -480,6 +524,7 @@ $(function () {
     }
 
     const mScreens = onlyScreens(allScreens([m]));
+    const top = m.flows.filter((f) => !f.parentFlowId); // path flows are drawn under their condition's flow
     const mIssues = mScreens.flatMap((s) => s.comments);
     const done = mIssues.filter((c) => c.resolved).length;
     const pct = mIssues.length ? Math.round((done / mIssues.length) * 100) : 0;
@@ -488,7 +533,7 @@ $(function () {
       <div class="mb-6 flex flex-wrap items-center gap-4">
         <div>
           <h2 class="text-xl font-semibold text-slate-900">${esc(m.name)}</h2>
-          <p class="text-sm text-slate-500">${m.flows.length} flows · ${mScreens.length} screens</p>
+          <p class="text-sm text-slate-500">${top.length} flows${top.length < m.flows.length ? ` · ${m.flows.length - top.length} paths` : ''} · ${mScreens.length} screens</p>
         </div>
         <div class="flex items-center gap-2 text-sm text-slate-600">
           <div class="h-2 w-40 overflow-hidden rounded-full bg-slate-200"><div class="h-full bg-green-600" style="width:${pct}%"></div></div>
@@ -500,23 +545,57 @@ $(function () {
           <button class="btn-primary" data-action="add-flow" data-module="${m.id}">+ Add flow</button>
         </div>
       </div>
-      ${m.flows.map(flowHtml).join('') || '<p class="py-10 text-center text-slate-500">No flows in this module.</p>'}
+      ${top.map((f, i) => flowTree(f, String(i + 1), i, top.length)).join('') || '<p class="py-10 text-center text-slate-500">No flows in this module.</p>'}
     `);
     initDragging();
     afterRender(saved);
   }
 
-  function flowHtml(f) {
+  // Flows of a module in reading order with their number: 1, 1.1 (branch path), 1.1.1 …, 2 …
+  function numberedFlows(m) {
+    const out = [];
+    const walk = (f, no) => {
+      out.push({ flow: f, no });
+      let k = 0;
+      f.screens.filter(isCondition).forEach((c) => (c.branches || []).forEach((b) =>
+        pathsOf(c.id, b.id).forEach((path) => walk(path, `${no}.${(k += 1)}`))));
+    };
+    m.flows.filter((f) => !f.parentFlowId).forEach((f, i) => walk(f, String(i + 1)));
+    return out;
+  }
+
+  // A flow followed by the paths of its conditions' branches, numbered 1 → 1.1, 1.2 → 1.1.1 …
+  function flowTree(f, no, i, total, from) {
+    let html = flowHtml(f, no, i, total, from);
+    let k = 0;
+    f.screens.filter(isCondition).forEach((c) => (c.branches || []).forEach((b) => pathsOf(c.id, b.id).forEach((path) => {
+      k += 1;
+      html += flowTree(path, `${no}.${k}`, 0, 0, { condition: c, branch: b });
+    })));
+    return html;
+  }
+
+  function flowHtml(f, no, i, total, from) {
     const screens = onlyScreens(f.screens);
     const issues = screens.flatMap((s) => s.comments);
     const done = issues.filter((c) => c.resolved).length;
+    const depth = no.split('.').length - 1;
     return `
-      <section class="flow">
+      <section class="flow ${from ? 'path' : ''}" data-flow-id="${f.id}" style="${depth ? `--depth:${depth}` : ''}">
         <div class="flow-head">
+          <span class="flow-no ${from ? 'path' : ''}">${no}</span>
           <h3 class="text-base font-semibold text-slate-900">${esc(f.name)}</h3>
+          ${from ? `<span class="cond-tag tone-${tone(from.branch.label)} mt-0"><span class="dot"></span>from ${esc(from.condition.name)} = ${esc(from.branch.label || '—')}</span>` : ''}
           <span class="text-sm text-slate-500">${screens.length} screens · ${done}/${issues.length} issues complete</span>
+          ${f.video
+            ? `<button class="video-btn" data-play-video="${f.id}" title="Play this flow's video">${icon('play', 12)} Video</button>`
+            : `<label class="video-btn add" title="Upload a screen recording of this flow">${icon('video', 12)} Add video
+                <input type="file" accept="video/mp4,video/quicktime,video/webm,video/*" class="hidden" data-upload-video="${f.id}"></label>`}
           <button class="icon-btn" data-rename-flow="${f.id}" title="Rename flow">${icon('edit', 14)}</button>
           <button class="icon-btn danger" data-delete-flow="${f.id}" title="Delete flow">${icon('trash', 14)}</button>
+          ${from ? '' : `
+          <button class="icon-btn" data-move-flow="${f.id}" data-move="-1" title="Move up" ${i === 0 ? 'disabled' : ''}>${icon('up', 14)}</button>
+          <button class="icon-btn" data-move-flow="${f.id}" data-move="1" title="Move down" ${i === total - 1 ? 'disabled' : ''}>${icon('down', 14)}</button>`}
           <div class="ml-auto flex gap-1">
             <button class="icon-btn border border-slate-200 bg-white" data-scroll="${f.id}" data-dir="-1" title="Scroll left">${icon('left')}</button>
             <button class="icon-btn border border-slate-200 bg-white" data-scroll="${f.id}" data-dir="1" title="Scroll right">${icon('right')}</button>
@@ -524,6 +603,7 @@ $(function () {
         </div>
         <div class="screens" data-flow="${f.id}">
           ${f.screens.map(screenHtml).join('')}
+          ${from ? '<span class="flow-end">END</span>' : ''}
           <form class="add-screen" data-flow="${f.id}">
             <span class="text-sm font-medium text-slate-700">New screen</span>
             <input name="name" class="input text-sm" placeholder="Name">
@@ -549,6 +629,7 @@ $(function () {
             <p class="text-[11px] font-semibold uppercase tracking-wide text-indigo-600">Condition</p>
             <h4 class="truncate text-sm font-semibold text-slate-900">${esc(c.name)}</h4>
           </div>
+          <button class="icon-btn" data-copy-screen="${c.id}" title="Copy condition and its paths to other flows">${icon('copy', 14)}</button>
           <button class="icon-btn" data-rename-condition="${c.id}" title="Rename">${icon('edit', 14)}</button>
           <button class="icon-btn danger" data-delete-screen="${c.id}" title="Delete condition">${icon('trash', 14)}</button>
         </div>
@@ -565,6 +646,13 @@ $(function () {
                 <select class="input min-w-0 flex-1 py-1 text-sm" data-branch-target>${targetOptions(b.targetId)}</select>
                 ${b.targetId ? `<button class="icon-btn sm" data-locate="${b.targetId}" title="Go to screen">${icon('locate', 14)}</button>` : ''}
               </div>
+              ${pathsOf(c.id, b.id).map((path) => `
+                <div class="flex items-center gap-2 text-xs">
+                  <span class="font-medium text-slate-500">Path</span>
+                  <button class="min-w-0 flex-1 truncate text-left font-medium text-indigo-600 hover:underline" data-goto-flow="${path.id}">${esc(path.name)}</button>
+                  <span class="shrink-0 text-slate-400">${onlyScreens(path.screens).length} screens</span>
+                </div>`).join('') || `
+                <button class="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:underline" data-extend-path="${c.id}" data-branch-id="${b.id}">${icon('plus', 12)} Extend path</button>`}
             </li>`).join('')}
         </ul>
         <button class="mt-2 inline-flex items-center gap-1 text-sm font-medium text-indigo-600 hover:underline" data-add-branch="${c.id}">${icon('plus', 14)} Add branch</button>
@@ -646,6 +734,7 @@ $(function () {
       refocus = null;
     }
     flashId = null;
+    applyAccess();
   }
 
   function autoGrow(el) {
@@ -786,8 +875,9 @@ $(function () {
 
   function openCopy(id) {
     const s = findScreen(id);
-    const hasIt = (f) => f.screens.some((x) => x.id === s.id || (s.linkId && x.linkId === s.linkId));
-    const openCount = s.comments.filter((c) => !c.resolved).length;
+    const cond = isCondition(s);
+    const hasIt = (f) => (cond ? f.id === s.flowId : f.screens.some((x) => x.id === s.id || (s.linkId && x.linkId === s.linkId)));
+    const openCount = (cond ? pathScreens(s) : [s]).flatMap((x) => x.comments).filter((c) => !c.resolved).length;
 
     $('#copyForm').data('screen', s.id).html(`
       <div class="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
@@ -795,7 +885,9 @@ $(function () {
         <button type="button" class="icon-btn" data-close-copy title="Close">${icon('close', 18)}</button>
       </div>
       <div class="max-h-[55vh] space-y-4 overflow-y-auto px-5 py-4">
-        <p class="text-xs text-slate-500">Name, page, platform, wireframe and image are copied. Each copy has its own issues.</p>
+        <p class="text-xs text-slate-500">${cond
+          ? 'The condition, its branches and every branch path with its screens (page, platform, wireframe, image) are copied. Each copy has its own issues.'
+          : 'Name, page, platform, wireframe and image are copied. Each copy has its own issues.'}</p>
         ${products.flatMap((p) => p.modules.map((m) => ({ p, m }))).map(({ p, m }) => `
           <div>
             <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">${esc(p.name)} › ${esc(m.name)}</p>
@@ -804,7 +896,7 @@ $(function () {
               return `<label class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm ${disabled ? 'text-slate-400' : 'cursor-pointer hover:bg-slate-50'}">
                 <input type="checkbox" name="flowIds" value="${f.id}" class="h-4 w-4 accent-indigo-600" ${disabled ? 'disabled' : ''}>
                 <span class="flex-1">${esc(f.name)}</span>
-                ${disabled ? '<span class="text-xs">Already has this screen</span>' : `<span class="text-xs text-slate-400">${onlyScreens(f.screens).length} screens</span>`}
+                ${disabled ? `<span class="text-xs">${cond ? 'This condition is here' : 'Already has this screen'}</span>` : `<span class="text-xs text-slate-400">${onlyScreens(f.screens).length} screens</span>`}
               </label>`;
             }).join('') || '<p class="px-2 text-sm text-slate-400">No flows</p>'}
           </div>`).join('')}
@@ -875,6 +967,7 @@ $(function () {
   function openBugs(status) {
     bugsView = { status, filter: 'open' };
     renderBugs();
+    applyAccess();
     $('#bugsModal').removeClass('hidden');
     $('body').addClass('overflow-hidden');
   }
@@ -942,6 +1035,343 @@ $(function () {
     unlockScroll();
   }
 
+  // ---------------------------------------------------------------- account + sign in
+
+  function renderAccount() {
+    if (!me) { $('#account').empty(); return; }
+    $('#account').html(`
+      <span class="account" title="${esc(ACCESS[me.access].hint)}">${icon('user', 14)} ${esc(me.name || me.username)}
+        <span class="access-tag access-${me.access}">${ACCESS[me.access].label}</span></span>
+      <button class="btn-primary px-3 py-1 text-xs" data-action="writer" title="Write an issue on any screen">${icon('plus', 12)} Write issue</button>
+      <a class="btn-secondary px-3 py-1 text-xs" href="/api/export" title="Download every task as an Excel sheet">${icon('download', 12)} Excel</a>
+      <button class="btn-secondary px-3 py-1 text-xs" data-action="admin">Admin</button>
+      <button class="tab-add" data-action="logout">Sign out</button>`);
+  }
+
+  function showLogin() {
+    if (!$('#login').hasClass('hidden')) return;
+    $('.overlay, .sheet, .dialog-overlay').addClass('hidden');
+    $('#login').removeClass('hidden');
+    $('#loginForm .dialog-error').addClass('hidden');
+    setTimeout(() => $('#loginForm [name=username]').trigger('focus'), 30);
+  }
+
+  $('#loginForm').on('submit', function (e) {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(this));
+    const $err = $(this).find('.dialog-error').addClass('hidden');
+    api('POST', '/api/login', data, null, QUIET)
+      .done(() => { $('#login').addClass('hidden'); this.reset(); location.reload(); })
+      .fail((xhr) => $err.text(errorText(xhr)).removeClass('hidden'));
+  });
+  $doc.on('click', '[data-action="logout"]', () => api('POST', '/api/logout').always(() => location.reload()));
+
+  // ---------------------------------------------------------------- admin dashboard (super admins): logins + app access
+
+  let users = [];
+  let editing = null; // user being edited, null = new login
+
+  function renderAdmin() {
+    const u = users.find((x) => x.id === editing) || null;
+    const access = u ? u.access : 'view';
+    const all = u ? u.allProducts : false;
+    const appNames = (x) => (x.allProducts ? 'All apps' : x.productIds.map((id) => (products.find((p) => p.id === id) || {}).name).filter(Boolean).join(', ') || 'No apps');
+    $('#adminBody').html(`
+      <div class="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
+        <h3 class="min-w-0 flex-1 text-base font-semibold text-slate-900">Logins and access</h3>
+        <button class="icon-btn" data-close-admin title="Close">${icon('close', 18)}</button>
+      </div>
+      <div class="grid gap-5 p-5 md:grid-cols-[1fr_340px]">
+        <div class="min-w-0">
+          <div class="admin-list">
+            ${users.map((x) => `
+              <div class="admin-row ${x.id === editing ? 'on' : ''}">
+                <div class="min-w-0 flex-1">
+                  <p class="truncate text-sm font-medium text-slate-900">${esc(x.name || x.username)} ${x.id === me.id ? '<span class="text-xs font-normal text-slate-400">(you)</span>' : ''}</p>
+                  <p class="truncate text-xs text-slate-500"><span class="font-mono">${esc(x.username)}</span> · ${esc(appNames(x))}</p>
+                </div>
+                <span class="access-tag access-${x.access}">${ACCESS[x.access].label}</span>
+                <button class="icon-btn" data-admin-edit="${x.id}" title="Edit">${icon('edit', 14)}</button>
+                ${x.id === me.id ? '<span class="w-7"></span>' : `<button class="icon-btn danger" data-admin-delete="${x.id}" title="Delete login">${icon('trash', 14)}</button>`}
+              </div>`).join('')}
+          </div>
+        </div>
+        <form id="adminForm" class="space-y-3" autocomplete="off">
+          <h4 class="text-sm font-semibold text-slate-900">${u ? `Edit ${esc(u.username)}` : 'New login'}</h4>
+          <label class="block"><span class="field-label">Username</span>
+            <input class="input w-full" name="username" value="${esc(u ? u.username : '')}" ${u ? 'disabled' : ''} placeholder="e.g. priya.qa" maxlength="40"></label>
+          <label class="block"><span class="field-label">Name</span>
+            <input class="input w-full" name="name" value="${esc(u ? u.name : '')}" placeholder="e.g. Priya Sharma" maxlength="80"></label>
+          <label class="block"><span class="field-label">${u ? 'New password' : 'Password'}</span>
+            <input class="input w-full" type="password" name="password" autocomplete="new-password" placeholder="${u ? 'Leave blank to keep the current one' : 'At least 8 characters'}"></label>
+          <div><span class="field-label">Access</span>
+            ${Object.entries(ACCESS).map(([k, a]) => `
+              <label class="access-opt">
+                <input type="radio" name="access" value="${k}" class="mt-0.5 accent-indigo-600" ${k === access ? 'checked' : ''} ${u && u.id === me.id && k !== 'super' ? 'disabled' : ''}>
+                <span><span class="text-sm font-medium text-slate-900">${a.label}</span><span class="block text-xs text-slate-500">${a.hint}</span></span>
+              </label>`).join('')}
+          </div>
+          <div><span class="field-label">Apps this login can open</span>
+            <label class="flex items-center gap-2 py-1 text-sm"><input type="checkbox" name="allProducts" class="h-4 w-4 accent-indigo-600" ${all ? 'checked' : ''}> All apps (also new ones)</label>
+            ${products.map((p) => `
+              <label class="flex items-center gap-2 py-1 pl-6 text-sm"><input type="checkbox" name="productIds" value="${p.id}" class="h-4 w-4 accent-indigo-600" ${u && u.productIds.includes(p.id) ? 'checked' : ''}> ${esc(p.name)}</label>`).join('') || '<p class="pl-6 text-xs text-slate-400">No apps yet</p>'}
+          </div>
+          <p class="dialog-error hidden"></p>
+          <div class="flex justify-end gap-2 pt-1">
+            ${u ? '<button type="button" class="btn-secondary" data-admin-new>Cancel</button>' : ''}
+            <button class="btn-primary">${u ? 'Save changes' : 'Create login'}</button>
+          </div>
+        </form>
+      </div>`);
+    syncAppBoxes();
+  }
+
+  // Super admins and "All apps" logins see every app, so the single-app boxes don't apply.
+  function syncAppBoxes() {
+    const $f = $('#adminForm');
+    const isSuper = $f.find('[name=access]:checked').val() === 'super';
+    $f.find('[name=allProducts]').prop('disabled', isSuper);
+    if (isSuper) $f.find('[name=allProducts]').prop('checked', true);
+    $f.find('[name=productIds]').prop('disabled', $f.find('[name=allProducts]').is(':checked'));
+  }
+
+  const loadUsers = () => api('GET', '/api/users').done((list) => { users = list; renderAdmin(); });
+
+  function openAdmin() {
+    editing = null;
+    loadUsers().done(() => {
+      $('#adminModal').removeClass('hidden');
+      $('body').addClass('overflow-hidden');
+    });
+  }
+
+  function closeAdmin() {
+    $('#adminModal').addClass('hidden');
+    unlockScroll();
+  }
+
+  $doc.on('click', '[data-action="admin"]', openAdmin);
+  $doc.on('click', '[data-close-admin]', closeAdmin);
+  $('#adminModal').on('mousedown', function (e) { if (e.target === this) closeAdmin(); });
+  $doc.on('click', '[data-admin-edit]', function () { editing = $(this).data('admin-edit'); renderAdmin(); });
+  $doc.on('click', '[data-admin-new]', () => { editing = null; renderAdmin(); });
+  $doc.on('change', '#adminForm [name=access], #adminForm [name=allProducts]', syncAppBoxes);
+  $doc.on('submit', '#adminForm', function (e) {
+    e.preventDefault();
+    const $f = $(this);
+    const body = {
+      name: $f.find('[name=name]').val().trim(),
+      access: $f.find('[name=access]:checked').val(),
+      allProducts: $f.find('[name=allProducts]').is(':checked'),
+      productIds: $f.find('[name=productIds]:checked').map((i, el) => el.value).get(),
+    };
+    const pass = $f.find('[name=password]').val();
+    if (pass) body.password = pass;
+    if (!editing) body.username = $f.find('[name=username]').val().trim();
+    const $err = $f.find('.dialog-error').addClass('hidden');
+    const self = editing === me.id;
+    api(editing ? 'PATCH' : 'POST', editing ? `/api/users/${editing}` : '/api/users', body, null, QUIET)
+      .done(() => {
+        toast(editing ? 'Saved' : 'Login created');
+        editing = null;
+        loadUsers();
+        if (self) load();
+      })
+      .fail((xhr) => $err.text(errorText(xhr)).removeClass('hidden'));
+  });
+  $doc.on('click', '[data-admin-delete]', function () {
+    const u = users.find((x) => x.id === $(this).data('admin-delete'));
+    dialog.confirm({
+      title: `Delete login “${u.username}”?`,
+      message: 'They will be signed out and cannot sign in again. Their issues and history stay.',
+      confirmText: 'Delete',
+      danger: true,
+      onConfirm: () => api('DELETE', `/api/users/${u.id}`, null, null, QUIET).done(() => { if (editing === u.id) editing = null; loadUsers(); }),
+    });
+  });
+
+  // ---------------------------------------------------------------- flow videos
+
+  let videoFlowId = null;
+
+  function renderVideo() {
+    const f = findFlow(videoFlowId);
+    if (!f || !f.video) { closeVideo(); return; }
+    $('#videoBody').html(`
+      <div class="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
+        <h3 class="min-w-0 flex-1 truncate text-base font-semibold text-slate-900">${esc(f.name)} — Video</h3>
+        <label class="btn-secondary">${icon('upload', 14)} Replace
+          <input type="file" accept="video/mp4,video/quicktime,video/webm,video/*" class="hidden" data-upload-video="${f.id}"></label>
+        <button class="btn-secondary" data-remove-video="${f.id}">Remove</button>
+        <button class="icon-btn" data-close-video title="Close">${icon('close', 18)}</button>
+      </div>
+      <div class="bg-slate-900 p-3"><video class="mx-auto max-h-[75vh] w-full rounded" src="${esc(f.video)}" controls autoplay playsinline></video></div>`);
+    applyAccess();
+  }
+
+  function openVideo(id) {
+    videoFlowId = id;
+    renderVideo();
+    $('#videoModal').removeClass('hidden');
+    $('body').addClass('overflow-hidden');
+  }
+
+  function closeVideo() {
+    videoFlowId = null;
+    $('#videoBody').empty(); // stops playback
+    $('#videoModal').addClass('hidden');
+    unlockScroll();
+  }
+
+  $doc.on('click', '[data-play-video]', function () { openVideo($(this).data('play-video')); });
+  $doc.on('click', '[data-close-video]', closeVideo);
+  $('#videoModal').on('mousedown', function (e) { if (e.target === this) closeVideo(); });
+  $doc.on('click', '[data-remove-video]', function () {
+    const id = $(this).data('remove-video');
+    dialog.confirm({
+      title: 'Remove this video?', message: 'The flow will have no video until you upload one again.', confirmText: 'Remove', danger: true,
+      onConfirm: () => api('DELETE', `/api/flows/${id}/video`, null, null, QUIET).done(() => { closeVideo(); load(); }),
+    });
+  });
+
+  // Sent as the raw file (not JSON) with upload progress on the button.
+  $doc.on('change', '[data-upload-video]', function () {
+    const id = $(this).data('upload-video');
+    const file = this.files[0];
+    this.value = '';
+    if (!file) return;
+    if (!/^video\//.test(file.type)) { dialog.alert('Please choose a video file (MP4, MOV or WEBM).', 'Not a video'); return; }
+    if (file.size > 100 * 1024 * 1024) { dialog.alert('Please choose a video under 100 MB.', 'Video too large'); return; }
+    const label = this.closest('label');
+    const $label = $(label);
+    const before = $label.contents().filter((i, n) => n.nodeType === 3).last();
+    const show = (t) => before.length && (before[0].textContent = ` ${t} `);
+    setBusy(label, true);
+    startLoading();
+    $.ajax({
+      method: 'POST', url: `/api/flows/${id}/video`, data: file, processData: false, contentType: file.type,
+      xhr: () => {
+        const xhr = new XMLHttpRequest();
+        xhr.upload.addEventListener('progress', (e) => { if (e.lengthComputable) show(`Uploading ${Math.round((e.loaded / e.total) * 100)}%`); });
+        return xhr;
+      },
+    })
+      .always(() => { setBusy(label, false); stopLoading(); })
+      .done(() => { toast('Video uploaded'); load().done(() => { if (videoFlowId) renderVideo(); }); })
+      .fail((xhr) => {
+        show('Add video');
+        if (xhr.status === 401) showLogin();
+        else dialog.alert(xhr.status === 413 ? 'Please choose a video under 100 MB.' : errorText(xhr), 'Upload failed');
+      });
+  });
+
+  // ---------------------------------------------------------------- issue writer: pick app → flow → screen, write the issue
+
+  const writer = { productId: null, flowId: null, screenId: null };
+
+  function writerFlows() {
+    const p = products.find((x) => x.id === writer.productId);
+    return p ? p.modules.map((m) => ({ m, list: numberedFlows(m) })) : [];
+  }
+
+  function writerScreens() {
+    const f = findFlow(writer.flowId);
+    return f ? onlyScreens(f.screens) : [];
+  }
+
+  function renderWriterScreens() {
+    const list = writerScreens();
+    if (!list.some((x) => x.id === writer.screenId)) writer.screenId = list[0] ? list[0].id : null;
+    $('#writerForm [name=screen]').html(list.length
+      ? list.map((x, i) => `<option value="${x.id}" ${x.id === writer.screenId ? 'selected' : ''}>${String(i + 1).padStart(2, '0')} · ${esc(x.name)}${x.page ? ` (${esc(x.page)})` : ''}</option>`).join('')
+      : '<option value="">No screens in this flow</option>').prop('disabled', !list.length);
+    $('#writerForm [type=submit]').prop('disabled', !list.length);
+  }
+
+  function renderWriterFlows() {
+    const groups = writerFlows();
+    const all = groups.flatMap((g) => g.list.map((x) => x.flow));
+    if (!all.some((f) => f.id === writer.flowId)) writer.flowId = all[0] ? all[0].id : null;
+    $('#writerForm [name=flow]').html(groups.map(({ m, list }) => `<optgroup label="${esc(m.name)}">${list.map(({ flow, no }) =>
+      `<option value="${flow.id}" ${flow.id === writer.flowId ? 'selected' : ''}>${no} · ${esc(flow.name)}</option>`).join('')}</optgroup>`).join('')
+      || '<option value="">No flows yet</option>').prop('disabled', !all.length);
+    renderWriterScreens();
+  }
+
+  function openWriter() {
+    writer.productId = products.some((p) => p.id === writer.productId) ? writer.productId : productId;
+    // start from the module on screen
+    const m = modules.find((x) => x.id === activeId);
+    if (writer.productId === productId && m && !m.flows.some((f) => f.id === writer.flowId)) writer.flowId = m.flows[0] && m.flows[0].id;
+    $('#writerForm').html(`
+      <div class="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
+        <h3 class="min-w-0 flex-1 text-base font-semibold text-slate-900">Write an issue</h3>
+        <button type="button" class="icon-btn" data-close-writer title="Close">${icon('close', 18)}</button>
+      </div>
+      <div class="space-y-3 px-5 py-4">
+        ${products.length > 1 ? `<label class="block"><span class="field-label">App</span>
+          <select class="input w-full" name="product">${products.map((p) => `<option value="${p.id}" ${p.id === writer.productId ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>` : ''}
+        <label class="block"><span class="field-label">Flow name</span><select class="input w-full" name="flow"></select></label>
+        <label class="block"><span class="field-label">Screen name</span><select class="input w-full" name="screen"></select></label>
+        <label class="block"><span class="field-label">Issue</span>
+          <textarea class="input w-full" name="text" rows="3" maxlength="1000" placeholder="What is wrong?"></textarea></label>
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block"><span class="field-label">Priority</span><select class="input w-full" name="priority">${priorityOptions('medium')}</select></label>
+          <label class="block"><span class="field-label">Status</span><select class="input w-full" name="status">${activeStatuses().map((x) => `<option value="${esc(x.id)}">${esc(x.label)}</option>`).join('')}</select></label>
+        </div>
+        <div><span class="field-label">Assign to</span>${peopleBox([], '', 'text-sm')}</div>
+        <label class="block"><span class="field-label">Remarks <span class="font-normal text-slate-400">(optional)</span></span>
+          <input class="input w-full" name="remarks" maxlength="1000" autocomplete="off"></label>
+        <p class="dialog-error hidden"></p>
+      </div>
+      <div class="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-3">
+        <button type="button" class="btn-secondary" data-close-writer>Close</button>
+        <button class="btn-primary">Add issue</button>
+      </div>`);
+    renderWriterFlows();
+    $('#writerModal').removeClass('hidden');
+    $('body').addClass('overflow-hidden');
+    setTimeout(() => $('#writerForm [name=text]').trigger('focus'), 30);
+  }
+
+  function closeWriter() {
+    $('#writerModal').addClass('hidden');
+    unlockScroll();
+  }
+
+  $doc.on('click', '[data-action="writer"]', openWriter);
+  $doc.on('click', '[data-close-writer]', closeWriter);
+  $('#writerModal').on('mousedown', function (e) { if (e.target === this) closeWriter(); });
+  $doc.on('change', '#writerForm [name=product]', function () { writer.productId = this.value; writer.flowId = null; renderWriterFlows(); });
+  $doc.on('change', '#writerForm [name=flow]', function () { writer.flowId = this.value; writer.screenId = null; renderWriterScreens(); });
+  $doc.on('change', '#writerForm [name=screen]', function () { writer.screenId = this.value; });
+  $('#writerForm').on('submit', function (e) {
+    e.preventDefault();
+    const $f = $(this);
+    const $err = $f.find('.dialog-error').addClass('hidden');
+    const text = $f.find('[name=text]').val().trim();
+    if (!writer.screenId) return;
+    if (!text) { $err.text('Issue is required.').removeClass('hidden'); $f.find('[name=text]').trigger('focus'); return; }
+    const screen = findScreen(writer.screenId);
+    api('POST', `/api/screens/${writer.screenId}/comments`, {
+      text,
+      priority: $f.find('[name=priority]').val(),
+      status: $f.find('[name=status]').val(),
+      assignees: peopleOf($f.find('.people')),
+      remarks: $f.find('[name=remarks]').val().trim(),
+    }, null, QUIET)
+      .done((c) => {
+        flashId = c.id;
+        toast(`Issue added to ${screen.name}`);
+        // ready for the next one on the same screen
+        $f.find('[name=text], [name=remarks], .people-input').val('');
+        $f.find('.person').remove();
+        $f.find('[name=text]').trigger('focus');
+        load();
+      })
+      .fail((xhr) => $err.text(errorText(xhr)).removeClass('hidden'));
+  });
+
   // ---------------------------------------------------------------- drag & drop
 
   function saveOrder(listEl) {
@@ -950,6 +1380,7 @@ $(function () {
   }
 
   function initDragging() {
+    if (!can('edit')) return;
     $('.screens').each(function () {
       Sortable.create(this, {
         group: 'screens',
@@ -971,8 +1402,6 @@ $(function () {
   }
 
   // ---------------------------------------------------------------- events
-
-  const $doc = $(document);
 
   function submitForm(selector, handler) {
     $doc.on('submit', selector, function (e) {
@@ -1101,6 +1530,38 @@ $(function () {
     api('PATCH', `/api/comments/${c.id}`, { priority: order[(order.indexOf(prio(c)) + 1) % order.length] }).done(load);
   });
 
+  // condition branch → its own path flow
+  $doc.on('click', '[data-extend-path]', function () {
+    const c = findScreen($(this).data('extend-path'));
+    const b = c.branches.find((x) => x.id === $(this).data('branch-id'));
+    const f = findFlow(c.flowId);
+    ask({
+      title: `Path for “${b.label || 'this branch'}”`,
+      fields: [{ name: 'name', label: 'Path name', value: `${f.name} › ${b.label || 'Path'}`, required: true }],
+      confirmText: 'Create path',
+      save: (v) => api('POST', `/api/screens/${c.id}/branches/${b.id}/path`, v, null, QUIET)
+        .done((path) => load().done(() => gotoFlow(path.id))),
+    });
+  });
+  function gotoFlow(id) {
+    const $f = $(`.flow[data-flow-id="${id}"]`);
+    if (!$f.length) return;
+    $f[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+    $f.addClass('flash');
+    setTimeout(() => $f.removeClass('flash'), 1600);
+  }
+  $doc.on('click', '[data-goto-flow]', function () { gotoFlow($(this).data('goto-flow')); });
+
+  $doc.on('click', '[data-move-flow]', function () {
+    const m = modules.find((x) => x.id === activeId);
+    const ids = m.flows.map((f) => f.id);
+    const from = ids.indexOf($(this).data('move-flow'));
+    const to = from + Number($(this).data('move'));
+    if (from < 0 || to < 0 || to >= ids.length) return;
+    [ids[from], ids[to]] = [ids[to], ids[from]];
+    api('PUT', `/api/modules/${m.id}/flow-order`, { ids }).done(load);
+  });
+
   $doc.on('click', '[data-scroll]', function () {
     $(`.screens[data-flow="${$(this).data('scroll')}"]`)[0].scrollBy({ left: Number($(this).data('dir')) * 330, behavior: 'smooth' });
   });
@@ -1163,8 +1624,17 @@ $(function () {
   });
   $doc.on('click', '[data-remove-branch]', function () {
     const id = $(this).closest('.card').data('id');
-    const remove = $(this).data('remove-branch');
-    saveBranches(id, readBranches(id).filter((b) => b.id !== remove));
+    const gone = $(this).data('remove-branch');
+    const paths = pathsOf(id, gone);
+    const save = () => saveBranches(id, readBranches(id).filter((b) => b.id !== gone));
+    if (!paths.length) { save(); return; }
+    dialog.confirm({
+      title: 'Remove this branch?',
+      message: `Its path “${paths[0].name}” and the screens in it will be removed from the sheet too.`,
+      confirmText: 'Remove',
+      danger: true,
+      onConfirm: save,
+    });
   });
   $doc.on('click', '[data-rename-condition]', function () {
     const c = findScreen($(this).data('rename-condition'));
@@ -1180,7 +1650,7 @@ $(function () {
 
   // issues by status
   $doc.on('click', '[data-bugs]', function () { openBugs(String($(this).data('bugs'))); });
-  $doc.on('click', '[data-bugs-filter]', function () { bugsView.filter = $(this).data('bugs-filter'); renderBugs(); });
+  $doc.on('click', '[data-bugs-filter]', function () { bugsView.filter = $(this).data('bugs-filter'); renderBugs(); applyAccess(); });
   $doc.on('click', '[data-close-bugs]', closeBugs);
   $('#bugsModal').on('mousedown', function (e) { if (e.target === this) closeBugs(); });
   $doc.on('click', '[data-go-screen]', function () { goToScreen($(this).data('go-screen')); });
@@ -1301,6 +1771,9 @@ $(function () {
     else if (!$('#copyModal').hasClass('hidden')) closeCopy();
     else if (!$('#statusModal').hasClass('hidden')) closeStatuses();
     else if (bugsView) closeBugs();
+    else if (!$('#adminModal').hasClass('hidden')) closeAdmin();
+    else if (videoFlowId) closeVideo();
+    else if (!$('#writerModal').hasClass('hidden')) closeWriter();
     else if (sheetId) closeSheet();
     else if (openId) closePopup();
   });

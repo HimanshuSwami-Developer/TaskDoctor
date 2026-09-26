@@ -118,6 +118,41 @@ UPDATE comments SET assignees = ARRAY[assignee], assignee = '' WHERE assignee <>
 ALTER TABLE comments ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'pending';
 ALTER TABLE comments ADD COLUMN IF NOT EXISTS status_date timestamptz;
 UPDATE comments SET status = 'complete', status_date = coalesce(status_date, created_at) WHERE resolved AND status = 'pending';
+
+-- Logins. access: view | edit | full | super. A login sees the products in product_ids, or every product
+-- when all_products is set (super admins always see everything).
+CREATE TABLE IF NOT EXISTS users (
+  id            text PRIMARY KEY,
+  username      text NOT NULL,
+  name          text NOT NULL DEFAULT '',
+  password_hash text NOT NULL,
+  access        text NOT NULL DEFAULT 'view' CHECK (access IN ('view', 'edit', 'full', 'super')),
+  all_products  boolean NOT NULL DEFAULT false,
+  product_ids   text[] NOT NULL DEFAULT '{}',
+  is_deleted    boolean NOT NULL DEFAULT false,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS users_username_idx ON users (lower(username)) WHERE NOT is_deleted;
+
+-- Signed-in sessions (token hash only). Signing out / password changes expire them, rows are kept.
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash  text PRIMARY KEY,
+  user_id     text NOT NULL REFERENCES users(id),
+  expires_at  timestamptz NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id);
+
+-- Branch paths: a flow that continues from one branch of a condition (e.g. "Sign Up › Success").
+-- It sits under its parent flow and is shown only while that condition and branch exist.
+ALTER TABLE flows ADD COLUMN IF NOT EXISTS parent_flow_id text;
+ALTER TABLE flows ADD COLUMN IF NOT EXISTS from_condition_id text;
+ALTER TABLE flows ADD COLUMN IF NOT EXISTS from_branch_id text;
+CREATE INDEX IF NOT EXISTS flows_condition_idx ON flows(from_condition_id);
+
+-- One screen recording per flow / path, stored in Cloudinary
+ALTER TABLE flows ADD COLUMN IF NOT EXISTS video_url text;
+ALTER TABLE flows ADD COLUMN IF NOT EXISTS video_public_id text;
 `;
 
 const query = (text, params) => pool.query(text, params);
