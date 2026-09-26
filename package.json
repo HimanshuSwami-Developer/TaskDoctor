@@ -1,7 +1,7 @@
 {
-  "name": "product-task-sheet",
+  "name": "task-doctor",
   "version": "1.0.0",
-  "description": "Product task sheet — modules, flows, screens, conditions and issues, stored in Neon Postgres",
+  "description": "Task Doctor — product modules, flows, screens, conditions and issues, stored in Neon Postgres",
   "main": "server.js",
   "private": true,
   "scripts": {

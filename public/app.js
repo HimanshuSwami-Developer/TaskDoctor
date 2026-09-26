@@ -1,4 +1,4 @@
-/* Product Task Sheet — jQuery front-end */
+/* Task Doctor — jQuery front-end */
 $(function () {
   const COLORS = ['slate', 'amber', 'sky', 'indigo', 'violet', 'pink', 'red', 'teal', 'green'];
   const WIREFRAMES = { form: 'Form', list: 'List', dashboard: 'Dashboard', detail: 'Detail' };
@@ -22,12 +22,13 @@ $(function () {
     copy: 'M9 9h11v11H9zM5 15H4V4h11v1',
     locate: 'M12 2v4M12 18v4M2 12h4M18 12h4M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z',
     plus: 'M12 5v14M5 12h14',
+    link: 'M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7',
   };
   const icon = (name, size = 16) =>
     `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${PATHS[name]}"/></svg>`;
 
   let products = [];
-  let statuses = []; // status tags, incl. removed ones (flag deleted) that some screens may still use
+  let statuses = []; // issue status tags, incl. removed ones (flag deleted) that some issues may still use
   let productId = storage('get', 'productId'); // remembered per browser
   let modules = []; // modules of the selected product
   let allModules = []; // modules of every product (lookups, copies, links)
@@ -35,6 +36,7 @@ $(function () {
   let openId = null; // screen in the large popup
   let sheetId = null; // screen whose issue sheet is open
   let sheetFilter = 'all';
+  let bugsView = null; // { status, filter } of the issues-by-status popup; status '' = every issue
   let dragging = false;
   let flashId = null; // newly added issue
   let refocus = null; // keep the cursor in the add box after adding
@@ -51,6 +53,10 @@ $(function () {
     }
   }
 
+  // Page scroll comes back once no popup, sheet or dialog is open.
+  const unlockScroll = () => {
+    if (!$('.overlay:not(.hidden), .sheet:not(.hidden), .dialog-overlay:not(.hidden)').length) $('body').removeClass('overflow-hidden');
+  };
   const esc = (s) => $('<div>').text(s == null ? '' : s).html();
   const fmtDate = (d) => new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
   const allScreens = (list) => list.flatMap((m) => m.flows).flatMap((f) => f.screens);
@@ -163,7 +169,7 @@ $(function () {
 
     function close(value) {
       $('#dialog').addClass('hidden');
-      if (!openId && !sheetId && $('#copyModal').hasClass('hidden') && $('#statusModal').hasClass('hidden')) $('body').removeClass('overflow-hidden');
+      unlockScroll();
       const resolve = resolver;
       resolver = null;
       busy = false;
@@ -255,11 +261,11 @@ $(function () {
     toast.t = setTimeout(() => $('#toast').addClass('hidden'), 1500);
   }
 
-  // Pending shows today's date; every other status keeps the date it was set.
-  function dateText(s) {
-    if (s.status === 'pending') return `Today · ${fmtDate(new Date())}`;
-    const word = { testing: 'Released', complete: 'Completed' }[s.status] || statusOf(s.status).label;
-    return s.statusDate ? `${word} ${fmtDate(s.statusDate)}` : word;
+  // Issue status date: Pending shows today's date; every other status keeps the date it was set.
+  function dateText(c) {
+    if (c.status === 'pending') return `Today · ${fmtDate(new Date())}`;
+    const word = { testing: 'Released', complete: 'Completed' }[c.status] || statusOf(c.status).label;
+    return c.statusDate ? `${word} ${fmtDate(c.statusDate)}` : word;
   }
 
   // Open issues first (urgent → low), fixed issues last.
@@ -317,12 +323,12 @@ $(function () {
 
   const fileInput = (s) => `<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden" data-upload="${s.id}">`;
 
-  // A screen still on a removed status keeps showing it until another one is picked.
-  function statusSelect(s) {
-    const current = statusOf(s.status);
+  // Status of one issue. An issue still on a removed status keeps showing it until another one is picked.
+  function statusSelect(c, extra = '') {
+    const current = statusOf(c.status);
     const options = current.deleted ? [current, ...activeStatuses()] : activeStatuses();
-    return `<select class="status st-${current.color}" data-status="${s.id}">
-      ${options.map((x) => `<option value="${esc(x.id)}" ${x.id === s.status ? 'selected' : ''}>${esc(x.label)}${x.deleted ? ' (removed)' : ''}</option>`).join('')}
+    return `<select class="status st-${current.color} ${extra}" data-status="${c.id}" title="${esc(dateText(c))}">
+      ${options.map((x) => `<option value="${esc(x.id)}" ${x.id === c.status ? 'selected' : ''}>${esc(x.label)}${x.deleted ? ' (removed)' : ''}</option>`).join('')}
     </select>`;
   }
 
@@ -352,6 +358,7 @@ $(function () {
         <div class="min-w-0 flex-1">
           <div class="bug-meta">
             <button class="prio-tag ${p}" data-cycle-priority="${c.id}" title="Change priority"><span class="dot bg-${p}"></span>${PRIORITY[p].label}</button>
+            ${statusSelect(c, 'sm')}
             ${(c.assignees || []).map((n) => `<span class="assignee">${esc(n)}</span>`).join('')}
             ${c.remarks && !full ? `<span class="text-slate-400" title="Has remarks">${icon('note', 12)}</span>` : ''}
           </div>
@@ -399,13 +406,14 @@ $(function () {
         selectProduct(products.some((p) => p.id === productId) ? productId : products[0] && products[0].id);
         render();
         if (!$('#statusModal').hasClass('hidden')) renderStatuses();
+        if (bugsView) renderBugs();
       })
       .fail(() => {
         if (loaded) return;
         $('#products, #summary').empty();
         $('#board').html(`
           <div class="mx-auto mt-16 max-w-sm text-center">
-            <p class="text-slate-600">Could not load the task sheet.</p>
+            <p class="text-slate-600">Could not load Task Doctor.</p>
             <button class="btn-primary mt-4" data-action="retry">Retry</button>
           </div>`);
       });
@@ -437,12 +445,13 @@ $(function () {
 
     renderProducts();
     const screens = onlyScreens(allScreens(modules));
-    const count = (st) => screens.filter((s) => s.status === st).length;
-    const openIssues = screens.flatMap((s) => s.comments).filter((c) => !c.resolved).length;
+    const issues = screens.flatMap((s) => s.comments);
+    const count = (st) => issues.filter((c) => c.status === st).length;
+    const openIssues = issues.filter((c) => !c.resolved).length;
     const shown = statuses.filter((x) => !x.deleted || count(x.id));
     $('#summary').html(
-      shown.map((x) => `<span class="stat"><span class="dot st st-${x.color}"></span>${esc(x.label)} <b>${count(x.id)}</b></span>`).join('') +
-      `<span class="stat"><span class="dot dot-issues"></span>Open issues <b>${openIssues}</b></span>` +
+      shown.map((x) => `<button class="stat" data-bugs="${esc(x.id)}" title="${esc(x.label)} issues"><span class="dot st st-${x.color}"></span>${esc(x.label)} <b>${count(x.id)}</b></button>`).join('') +
+      `<button class="stat" data-bugs="" title="All open issues"><span class="dot dot-issues"></span>Open issues <b>${openIssues}</b></button>` +
       '<button class="tab-add" data-action="manage-statuses">Statuses</button>');
 
     $('#tabs').html(productId ? modules.map((m) =>
@@ -471,8 +480,9 @@ $(function () {
     }
 
     const mScreens = onlyScreens(allScreens([m]));
-    const done = mScreens.filter((s) => s.status === 'complete').length;
-    const pct = mScreens.length ? Math.round((done / mScreens.length) * 100) : 0;
+    const mIssues = mScreens.flatMap((s) => s.comments);
+    const done = mIssues.filter((c) => c.resolved).length;
+    const pct = mIssues.length ? Math.round((done / mIssues.length) * 100) : 0;
 
     $('#board').html(`
       <div class="mb-6 flex flex-wrap items-center gap-4">
@@ -482,7 +492,7 @@ $(function () {
         </div>
         <div class="flex items-center gap-2 text-sm text-slate-600">
           <div class="h-2 w-40 overflow-hidden rounded-full bg-slate-200"><div class="h-full bg-green-600" style="width:${pct}%"></div></div>
-          <span>${done}/${mScreens.length} complete</span>
+          <span>${done}/${mIssues.length} issues complete</span>
         </div>
         <div class="ml-auto flex gap-2">
           <button class="btn-secondary" data-rename-module="${m.id}">Rename</button>
@@ -498,12 +508,13 @@ $(function () {
 
   function flowHtml(f) {
     const screens = onlyScreens(f.screens);
-    const done = screens.filter((s) => s.status === 'complete').length;
+    const issues = screens.flatMap((s) => s.comments);
+    const done = issues.filter((c) => c.resolved).length;
     return `
       <section class="flow">
         <div class="flow-head">
           <h3 class="text-base font-semibold text-slate-900">${esc(f.name)}</h3>
-          <span class="text-sm text-slate-500">${screens.length} screens · ${done} complete</span>
+          <span class="text-sm text-slate-500">${screens.length} screens · ${done}/${issues.length} issues complete</span>
           <button class="icon-btn" data-rename-flow="${f.id}" title="Rename flow">${icon('edit', 14)}</button>
           <button class="icon-btn danger" data-delete-flow="${f.id}" title="Delete flow">${icon('trash', 14)}</button>
           <div class="ml-auto flex gap-1">
@@ -588,10 +599,6 @@ $(function () {
               ${deviceToggle(s)}
               <label class="icon-btn border border-slate-200" title="Upload image">${icon('upload', 14)}${fileInput(s)}</label>
             </div>
-            <div class="flex flex-wrap items-center gap-2 px-3 pt-3">
-              ${statusSelect(s)}
-              <span class="date">${dateText(s)}</span>
-            </div>
             <div class="card-foot">
               <button class="issues-btn ${open ? 'has-open' : ''}" data-flip="${s.id}">${icon('flip', 14)} Issues <span class="count">${open} open</span></button>
               <button class="icon-btn ml-auto" data-copy-screen="${s.id}" title="Copy to other flows">${icon('copy', 14)}</button>
@@ -658,6 +665,8 @@ $(function () {
         </label>
         <div><span class="cell-label">Priority</span>
           <select class="input w-full text-sm" data-field="priority" data-id="${c.id}">${priorityOptions(p)}</select></div>
+        <div><span class="cell-label">Status</span>
+          ${statusSelect(c, 'w-full')}<span class="date mt-1 block">${dateText(c)}</span></div>
         <div><span class="cell-label">Issue</span>
           <textarea class="input cell-text w-full text-sm ${c.resolved ? 'text-slate-400 line-through' : ''}" rows="1" data-field="text" data-id="${c.id}">${esc(c.text)}</textarea></div>
         <div><span class="cell-label">Assigned to</span>
@@ -682,7 +691,7 @@ $(function () {
       <div class="flex flex-wrap items-center gap-4 border-b border-slate-200 px-5 py-4">
         <div class="min-w-0 flex-1">
           <h3 class="truncate text-lg font-semibold text-slate-900">${esc(s.name)} — Issues</h3>
-          <p class="text-sm text-slate-500">${esc(s.page || '—')} · ${esc(statusOf(s.status).label)} · ${dateText(s)}</p>
+          <p class="text-sm text-slate-500">${esc(s.page || '—')}</p>
         </div>
         <div class="seg">
           ${[['all', 'All'], ['open', 'Open'], ['fixed', 'Fixed']].map(([k, label]) =>
@@ -690,12 +699,13 @@ $(function () {
         </div>
         <button class="icon-btn" data-close-sheet title="Close">${icon('close', 18)}</button>
       </div>
-      <div class="sheet-cols"><span>Fixed</span><span>Priority</span><span>Issue</span><span>Assigned to</span><span>Remarks</span><span>Added</span></div>
+      <div class="sheet-cols"><span>Fixed</span><span>Priority</span><span>Status</span><span>Issue</span><span>Assigned to</span><span>Remarks</span><span>Added</span></div>
       <div class="sheet-rows" id="sheetRows">
         ${rows.map(sheetRow).join('') || '<p class="py-12 text-center text-sm text-slate-400">No issues</p>'}
       </div>
       <form class="add-comment sheet-add" data-screen="${s.id}">
         <select name="priority" class="input text-sm">${priorityOptions('medium')}</select>
+        <select name="status" class="input text-sm" title="Status">${activeStatuses().map((x) => `<option value="${esc(x.id)}">${esc(x.label)}</option>`).join('')}</select>
         <input name="text" class="input text-sm" placeholder="Issue" autocomplete="off">
         ${peopleBox([], '', 'text-sm')}
         <input name="remarks" class="input text-sm" placeholder="Remarks" autocomplete="off">
@@ -715,7 +725,7 @@ $(function () {
   function closeSheet() {
     sheetId = null;
     $('#sheet').addClass('hidden');
-    if (!openId) $('body').removeClass('overflow-hidden');
+    unlockScroll();
   }
 
   // ---------------------------------------------------------------- screen popup
@@ -753,10 +763,6 @@ $(function () {
               ${s.image ? `<button class="btn-secondary" data-remove-image="${s.id}">Remove</button>` : ''}
             </div>
           </div>
-          <div>
-            <span class="field-label">Status</span>
-            <div class="flex flex-wrap items-center gap-2">${statusSelect(s)}<span class="date">${dateText(s)}</span></div>
-          </div>
           <div class="border-t border-slate-200 pt-4">${issuesPanel(s, true)}</div>
         </div>
       </div>`);
@@ -773,7 +779,7 @@ $(function () {
   function closePopup() {
     openId = null;
     $('#popup').addClass('hidden');
-    if (!sheetId) $('body').removeClass('overflow-hidden');
+    unlockScroll();
   }
 
   // ---------------------------------------------------------------- copy screen to other flows
@@ -789,7 +795,7 @@ $(function () {
         <button type="button" class="icon-btn" data-close-copy title="Close">${icon('close', 18)}</button>
       </div>
       <div class="max-h-[55vh] space-y-4 overflow-y-auto px-5 py-4">
-        <p class="text-xs text-slate-500">Name, page, platform, wireframe and image are copied. Each copy has its own status (starts as Pending) and its own issues.</p>
+        <p class="text-xs text-slate-500">Name, page, platform, wireframe and image are copied. Each copy has its own issues.</p>
         ${products.flatMap((p) => p.modules.map((m) => ({ p, m }))).map(({ p, m }) => `
           <div>
             <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">${esc(p.name)} › ${esc(m.name)}</p>
@@ -814,7 +820,83 @@ $(function () {
 
   function closeCopy() {
     $('#copyModal').addClass('hidden');
-    if (!openId && !sheetId) $('body').removeClass('overflow-hidden');
+    unlockScroll();
+  }
+
+  // ---------------------------------------------------------------- issues by status (header counts open this)
+
+  function renderBugs() {
+    const { status, filter } = bugsView;
+    if (!productId) { closeBugs(); return; }
+    const rows = [];
+    modules.forEach((m) => m.flows.forEach((f) => onlyScreens(f.screens).forEach((s) => {
+      sortIssues(s.comments).forEach((c) => { if (!status || c.status === status) rows.push({ c, s, f, m }); });
+    })));
+    const counts = { open: rows.filter((x) => !x.c.resolved).length, fixed: rows.filter((x) => x.c.resolved).length, all: rows.length };
+    // a single status needs no Open / Fixed split
+    const list = status ? rows : rows.filter(({ c }) => filter === 'all' || (filter === 'open' ? !c.resolved : c.resolved));
+    const screenCount = new Set(list.map((x) => x.s.id)).size;
+    const tag = status && statusOf(status);
+
+    $('#bugsBody').html(`
+      <div class="flex flex-wrap items-center gap-3 border-b border-slate-200 px-5 py-4">
+        <div class="min-w-0 flex-1">
+          <h3 class="flex items-center gap-2 text-lg font-semibold text-slate-900">
+            ${tag ? `<span class="dot st st-${tag.color}"></span>${esc(tag.label)} issues` : 'All issues'}
+          </h3>
+          <p class="text-sm text-slate-500">${list.length} issue${list.length === 1 ? '' : 's'} on ${screenCount} screen${screenCount === 1 ? '' : 's'}</p>
+        </div>
+        ${status ? '' : `<div class="seg">
+          ${[['open', 'Open'], ['fixed', 'Fixed'], ['all', 'All']].map(([k, label]) =>
+            `<button data-bugs-filter="${k}" class="${filter === k ? 'on' : ''}">${label} (${counts[k]})</button>`).join('')}
+        </div>`}
+        <button class="icon-btn" data-close-bugs title="Close">${icon('close', 18)}</button>
+      </div>
+      <div class="bugs-cols"><span>Module › Flow › Screen</span><span>Priority</span><span>Status</span><span>Issue</span><span>Assigned to</span><span></span></div>
+      <div class="bugs-rows">
+        ${list.map(({ c, s, f, m }) => {
+          const p = prio(c);
+          return `
+          <div class="bugs-row ${p} ${c.resolved ? 'fixed' : ''}">
+            <div class="min-w-0">
+              <p class="truncate text-xs text-slate-500">${esc(m.name)} › ${esc(f.name)}</p>
+              <p class="truncate text-sm font-medium text-slate-900">${esc(s.name)}</p>
+            </div>
+            <div><span class="prio-tag ${p}"><span class="dot bg-${p}"></span>${PRIORITY[p].label}</span></div>
+            <div>${statusSelect(c, 'w-full')}<span class="date mt-1 block">${dateText(c)}</span></div>
+            <p class="text-sm ${c.resolved ? 'text-slate-400 line-through' : 'text-slate-700'}">${esc(c.text)}${c.remarks ? `<span class="remark">${esc(c.remarks)}</span>` : ''}</p>
+            <div class="flex flex-wrap gap-1">${(c.assignees || []).map((n) => `<span class="person">${esc(n)}</span>`).join('') || '<span class="text-xs text-slate-400">Unassigned</span>'}</div>
+            <button class="icon-btn border border-slate-200 bg-white" data-go-screen="${s.id}" title="Go to screen">${icon('link', 14)}</button>
+          </div>`;
+        }).join('') || `<p class="py-12 text-center text-sm text-slate-400">No ${status || filter === 'all' ? '' : `${filter} `}issues</p>`}
+      </div>`);
+  }
+
+  function openBugs(status) {
+    bugsView = { status, filter: 'open' };
+    renderBugs();
+    $('#bugsModal').removeClass('hidden');
+    $('body').addClass('overflow-hidden');
+  }
+
+  function closeBugs() {
+    bugsView = null;
+    $('#bugsModal').addClass('hidden');
+    unlockScroll();
+  }
+
+  // Close the popup, switch to the screen's module and point at its card.
+  function goToScreen(id) {
+    const m = modules.find((x) => allScreens([x]).some((s) => s.id === id));
+    if (!m) return;
+    closeBugs();
+    activeId = m.id;
+    render();
+    const $card = $(`.card[data-id="${id}"]`);
+    if (!$card.length) return;
+    $card[0].scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+    $card.addClass('highlight');
+    setTimeout(() => $card.removeClass('highlight'), 1600);
   }
 
   // ---------------------------------------------------------------- manage status tags
@@ -824,7 +906,7 @@ $(function () {
   </select>`;
 
   function renderStatuses() {
-    const used = (id) => allScreens(allModules).filter((s) => !isCondition(s) && s.status === id).length;
+    const used = (id) => allIssues().filter((c) => c.status === id).length;
     $('#statusBody').html(`
       <div class="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
         <h3 class="min-w-0 flex-1 text-base font-semibold text-slate-900">Status tags</h3>
@@ -835,7 +917,7 @@ $(function () {
           <div class="status-row">
             ${colorPick(x.color, `data-status-color="${esc(x.id)}"`)}
             <input class="input min-w-0 flex-1 text-sm" value="${esc(x.label)}" maxlength="40" data-status-label="${esc(x.id)}">
-            <span class="w-16 shrink-0 text-right text-xs text-slate-400">${used(x.id)} screens</span>
+            <span class="w-16 shrink-0 text-right text-xs text-slate-400">${used(x.id)} issues</span>
             ${x.builtIn
               ? '<span class="icon-btn cursor-default text-slate-300" title="Built in, cannot be removed">—</span>'
               : `<button class="icon-btn danger" data-delete-status="${esc(x.id)}" title="Remove status">${icon('trash', 14)}</button>`}
@@ -846,7 +928,7 @@ $(function () {
         <input name="label" class="input min-w-0 flex-1 text-sm" placeholder="New status, e.g. In review" maxlength="40" autocomplete="off">
         <button class="btn-primary">Add</button>
       </form>
-      <p class="px-5 pb-4 text-xs text-slate-500">Pending and Complete are built in. Screens on a removed status keep it until you pick another.</p>`);
+      <p class="px-5 pb-4 text-xs text-slate-500">Every issue has one of these. Pending and Complete (same as ticking Fixed) are built in. Issues on a removed status keep it until you pick another.</p>`);
   }
 
   function openStatuses() {
@@ -857,7 +939,7 @@ $(function () {
 
   function closeStatuses() {
     $('#statusModal').addClass('hidden');
-    if (!openId && !sheetId) $('body').removeClass('overflow-hidden');
+    unlockScroll();
   }
 
   // ---------------------------------------------------------------- drag & drop
@@ -991,7 +1073,7 @@ $(function () {
   });
 
   $doc.on('change', '[data-status]', function () {
-    api('PATCH', `/api/screens/${$(this).data('status')}`, { status: $(this).val() }).done(load);
+    api('PATCH', `/api/comments/${$(this).data('status')}`, { status: $(this).val() }).done(load);
   });
   $doc.on('change', '[data-resolve]', function () {
     api('PATCH', `/api/comments/${$(this).data('resolve')}`, { resolved: this.checked }).done(load);
@@ -1096,6 +1178,13 @@ $(function () {
     setTimeout(() => $card.removeClass('highlight'), 1600);
   });
 
+  // issues by status
+  $doc.on('click', '[data-bugs]', function () { openBugs(String($(this).data('bugs'))); });
+  $doc.on('click', '[data-bugs-filter]', function () { bugsView.filter = $(this).data('bugs-filter'); renderBugs(); });
+  $doc.on('click', '[data-close-bugs]', closeBugs);
+  $('#bugsModal').on('mousedown', function (e) { if (e.target === this) closeBugs(); });
+  $doc.on('click', '[data-go-screen]', function () { goToScreen($(this).data('go-screen')); });
+
   // status tags
   $doc.on('click', '[data-action="manage-statuses"]', openStatuses);
   $doc.on('click', '[data-close-statuses]', closeStatuses);
@@ -1117,7 +1206,7 @@ $(function () {
   });
   $doc.on('click', '[data-delete-status]', function () {
     const x = statusOf($(this).data('delete-status'));
-    remove({ title: `Remove status “${x.label}”?`, message: 'It will no longer be offered. Screens already on it keep it until you change them.', confirmText: 'Remove', url: `/api/statuses/${x.id}` });
+    remove({ title: `Remove status “${x.label}”?`, message: 'It will no longer be offered. Issues already on it keep it until you change them.', confirmText: 'Remove', url: `/api/statuses/${x.id}` });
   });
 
   // copy to flows
@@ -1211,6 +1300,7 @@ $(function () {
     if (dialog.isOpen()) dialog.cancel();
     else if (!$('#copyModal').hasClass('hidden')) closeCopy();
     else if (!$('#statusModal').hasClass('hidden')) closeStatuses();
+    else if (bugsView) closeBugs();
     else if (sheetId) closeSheet();
     else if (openId) closePopup();
   });

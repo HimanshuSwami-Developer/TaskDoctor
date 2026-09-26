@@ -1,4 +1,4 @@
-# Product Task Sheet
+# Task Doctor
 
 Track **products → modules → flows → screens** (e.g. Finzoom, Findost, IPO), with issues logged against each screen.
 
@@ -32,14 +32,15 @@ Nothing is ever deleted from the database: deleting a product, module, flow, scr
   - Each target screen shows "If Mandate status = Success". The locate button jumps to the target.
 - **Copy to flows:** use the copy button on a card, or *Copy to flows* in the large view, to reuse a screen in other flows or modules.
   - The name, page, platform, wireframe and image are copied.
-  - Each copy has its own status (it starts as Pending) and its own issues. You can choose to copy the open issues too.
+  - Each copy has its own issues. You can choose to copy the open issues too (with their status).
   - The large view shows "Also in: …" with links to the other copies.
 - **Issues sit on the back of each card.** Click *Issues* to flip the card.
-  - Each issue has a priority (Urgent / High / Medium / Low), one or more assignees and remarks. Urgent and High are listed first.
+  - Each issue has a status, a priority (Urgent / High / Medium / Low), one or more assignees and remarks. Urgent and High are listed first.
+  - Ticking *Fixed* sets the issue to Complete; unticking puts it back to Pending.
   - Type a name and press Enter (or a comma) to assign someone; add as many people as you need and remove one with ×.
   - The card outline shows the most urgent open issue.
   - The expand button opens the full-screen **issue sheet**, where every field is editable.
-- **Status and date:**
+- **Issue status and date** (screens have no status; every issue has its own):
 
 | Status | Date shown |
 |---|---|
@@ -48,7 +49,8 @@ Nothing is ever deleted from the database: deleting a product, module, flow, scr
 | Complete | The date it was completed (fixed) |
 | Any status you add | The date it was set (fixed) |
 
-- **Status tags:** the *Statuses* button in the header adds, renames, recolours and removes statuses. Pending and Complete are built in and cannot be removed. Screens already on a removed status keep it until you pick another one.
+- **Issues by status:** click a status count in the header (or *Open issues*) to see every issue with that status: module › flow › screen, priority, status, issue and assignees. The link icon at the end jumps to that screen.
+- **Status tags:** the *Statuses* button in the header adds, renames, recolours and removes statuses. Pending and Complete are built in and cannot be removed. Issues already on a removed status keep it until you pick another one.
 
 ## Files
 

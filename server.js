@@ -43,6 +43,13 @@ function people(value) {
   return [...new Set(list.map((x) => text(x, 60)).filter(Boolean))].slice(0, 10);
 }
 
+// Issue status → the columns to save. Pending has no date (shown as today); any other status freezes the date it was set.
+async function statusFields(status) {
+  const { rows } = await db.query('SELECT id FROM statuses WHERE id = $1 AND NOT is_deleted', [status]);
+  if (!rows[0]) throw new HttpError(400, 'Invalid status');
+  return { status, status_date: status === 'pending' ? null : new Date(), resolved: status === 'complete' };
+}
+
 // Express 4 does not catch rejected promises — forward them to the error handler.
 const route = (fn) => (req, res, next) => fn(req, res).catch(next);
 
@@ -76,7 +83,8 @@ const toFlow = (r) => ({ id: r.id, moduleId: r.module_id, name: r.name, order: r
 const toStatus = (r) => ({ id: r.id, label: r.label, color: r.color, builtIn: BUILT_IN_STATUSES.includes(r.id), deleted: r.is_deleted });
 const toComment = (r) => ({
   id: r.id, screenId: r.screen_id, text: r.text, priority: r.priority,
-  assignees: r.assignees, remarks: r.remarks, resolved: r.resolved, createdAt: r.created_at,
+  assignees: r.assignees, remarks: r.remarks, status: r.status, statusDate: r.status_date,
+  resolved: r.status === 'complete', createdAt: r.created_at,
 });
 
 function toScreen(r) {
@@ -92,8 +100,6 @@ function toScreen(r) {
     device: r.device,
     wireframe: r.wireframe,
     image: r.image_url || null, // Cloudinary URL (contains a version, so replaced images are not cached)
-    status: r.status,
-    statusDate: r.status_date,
     linkId: r.link_id,
     order: r.sort_order,
   };
@@ -132,7 +138,7 @@ app.get('/api/board', route(async (req, res) => {
 
 // ---------------------------------------------------------------- status tags
 
-// Deleted statuses are returned too (flagged) so screens still on one can show its name.
+// Status tags of issues. Deleted ones are returned too (flagged) so issues still on one can show its name.
 app.get('/api/statuses', route(async (req, res) => {
   const { rows } = await db.query('SELECT * FROM statuses ORDER BY sort_order, created_at');
   res.json(rows.map(toStatus));
@@ -156,7 +162,7 @@ app.patch('/api/statuses/:id', route(async (req, res) => {
   res.json(toStatus(await live('statuses', req.params.id, '*')));
 }));
 
-// Screens already on a removed status keep it until someone picks another one.
+// Issues already on a removed status keep it until someone picks another one.
 app.delete('/api/statuses/:id', route(async (req, res) => {
   if (BUILT_IN_STATUSES.includes(req.params.id)) throw new HttpError(400, 'Pending and Complete cannot be removed');
   await softDelete('statuses', req.params.id);
@@ -266,14 +272,6 @@ app.patch('/api/screens/:id', route(async (req, res) => {
   if (b.device !== undefined) fields.device = oneOf(b.device, DEVICES, 'device');
   if (b.wireframe !== undefined) fields.wireframe = oneOf(b.wireframe, WIREFRAMES, 'wireframe');
 
-  // Pending → no stored date (the sheet shows today). Any other status → date frozen when set.
-  if (b.status !== undefined && b.status !== screen.status) {
-    const { rows } = await db.query('SELECT id FROM statuses WHERE id = $1 AND NOT is_deleted', [b.status]);
-    if (!rows[0]) throw new HttpError(400, 'Invalid status');
-    fields.status = b.status;
-    fields.status_date = b.status === 'pending' ? null : new Date();
-  }
-
   if (b.branches !== undefined) {
     if (screen.type !== 'condition' || !Array.isArray(b.branches)) throw new HttpError(400, 'Invalid branches');
     const wanted = b.branches.map((x) => x && x.targetId).filter((x) => typeof x === 'string');
@@ -318,7 +316,7 @@ app.delete('/api/screens/:id/image', route(async (req, res) => {
 
 // ---------------------------------------------------------------- copy a screen into other flows
 
-// Each copy is independent: its own status (starts Pending), image and issues.
+// Each copy is independent: its own image and issues.
 // Copies share a link_id so the UI can show where else the screen is used.
 app.post('/api/screens/:id/copy', route(async (req, res) => {
   const source = await live('screens', req.params.id, '*');
@@ -340,8 +338,8 @@ app.post('/api/screens/:id/copy', route(async (req, res) => {
         [id, flowId, source.name, source.page, source.device, source.wireframe, linkId, Date.now() + i]);
       if (req.body.withIssues) {
         await client.query(
-          `INSERT INTO comments (id, screen_id, text, priority, assignees, remarks)
-           SELECT gen_random_uuid()::text, $1, text, priority, assignees, remarks
+          `INSERT INTO comments (id, screen_id, text, priority, assignees, remarks, status, status_date)
+           SELECT gen_random_uuid()::text, $1, text, priority, assignees, remarks, status, status_date
            FROM comments WHERE screen_id = $2 AND NOT resolved AND NOT is_deleted`,
           [id, source.id]);
       }
@@ -369,8 +367,10 @@ app.post('/api/screens/:id/copy', route(async (req, res) => {
 
 app.post('/api/screens/:id/comments', route(async (req, res) => {
   await live('screens', req.params.id);
+  const s = await statusFields(req.body.status || 'pending');
   const { rows } = await db.query(
-    `INSERT INTO comments (id, screen_id, text, priority, assignees, remarks) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+    `INSERT INTO comments (id, screen_id, text, priority, assignees, remarks, status, status_date, resolved)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
     [
       randomUUID(),
       req.params.id,
@@ -378,19 +378,22 @@ app.post('/api/screens/:id/comments', route(async (req, res) => {
       PRIORITIES.includes(req.body.priority) ? req.body.priority : 'medium',
       people(req.body.assignees),
       text(req.body.remarks, 1000),
+      s.status, s.status_date, s.resolved,
     ]);
   res.status(201).json(toComment(rows[0]));
 }));
 
 app.patch('/api/comments/:id', route(async (req, res) => {
   const b = req.body;
+  const issue = await live('comments', req.params.id, 'status');
   const fields = {};
-  if (b.resolved !== undefined) fields.resolved = Boolean(b.resolved);
+  // The "Fixed" tick is a shortcut: ticked → Complete, unticked → back to Pending.
+  const status = b.status !== undefined ? b.status : b.resolved !== undefined ? (b.resolved ? 'complete' : 'pending') : undefined;
+  if (status !== undefined && status !== issue.status) Object.assign(fields, await statusFields(status));
   if (b.priority !== undefined) fields.priority = oneOf(b.priority, PRIORITIES, 'priority');
   if (b.text !== undefined) fields.text = required(text(b.text, 1000), 'Issue');
   if (b.assignees !== undefined) fields.assignees = people(b.assignees);
   if (b.remarks !== undefined) fields.remarks = text(b.remarks, 1000);
-  await live('comments', req.params.id);
   await update('comments', req.params.id, fields);
   res.json(toComment(await one('SELECT * FROM comments WHERE id = $1', [req.params.id])));
 }));
@@ -415,7 +418,7 @@ app.use((err, req, res, next) => {
 
 db.init()
   .then(() => app.listen(PORT, () => {
-    console.log(`Task sheet running at http://localhost:${PORT}`);
+    console.log(`Task Doctor running at http://localhost:${PORT}`);
     if (!cloud.configured()) console.log('Image uploads are off: add the Cloudinary keys to .env to turn them on.');
   }))
   .catch((err) => {

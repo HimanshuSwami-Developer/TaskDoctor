@@ -112,6 +112,12 @@ ALTER TABLE comments ADD COLUMN IF NOT EXISTS is_deleted boolean NOT NULL DEFAUL
 -- An issue can be assigned to several people (was: one "assignee" text). Old values move into the list once.
 ALTER TABLE comments ADD COLUMN IF NOT EXISTS assignees text[] NOT NULL DEFAULT '{}';
 UPDATE comments SET assignees = ARRAY[assignee], assignee = '' WHERE assignee <> '';
+
+-- Status lives on each issue now (screens.status / status_date are no longer used, kept for history).
+-- "resolved" mirrors status = 'complete'; issues fixed before this change become Complete.
+ALTER TABLE comments ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'pending';
+ALTER TABLE comments ADD COLUMN IF NOT EXISTS status_date timestamptz;
+UPDATE comments SET status = 'complete', status_date = coalesce(status_date, created_at) WHERE resolved AND status = 'pending';
 `;
 
 const query = (text, params) => pool.query(text, params);
