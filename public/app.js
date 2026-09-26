@@ -1,6 +1,6 @@
 /* Product Task Sheet — jQuery front-end */
 $(function () {
-  const STATUS = { pending: 'Pending', testing: 'Release for Testing', complete: 'Complete' };
+  const COLORS = ['slate', 'amber', 'sky', 'indigo', 'violet', 'pink', 'red', 'teal', 'green'];
   const WIREFRAMES = { form: 'Form', list: 'List', dashboard: 'Dashboard', detail: 'Detail' };
   const PRIORITY = {
     urgent: { label: 'Urgent', rank: 0 },
@@ -27,6 +27,7 @@ $(function () {
     `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${PATHS[name]}"/></svg>`;
 
   let products = [];
+  let statuses = []; // status tags, incl. removed ones (flag deleted) that some screens may still use
   let productId = storage('get', 'productId'); // remembered per browser
   let modules = []; // modules of the selected product
   let allModules = []; // modules of every product (lookups, copies, links)
@@ -60,6 +61,8 @@ $(function () {
   const prio = (c) => (PRIORITY[c.priority] ? c.priority : 'medium');
   const isCondition = (s) => s.type === 'condition';
   const onlyScreens = (list) => list.filter((s) => !isCondition(s));
+  const statusOf = (id) => statuses.find((x) => x.id === id) || { id, label: id, color: 'slate', deleted: true };
+  const activeStatuses = () => statuses.filter((x) => !x.deleted);
 
   // Branch colour from its label: success / pending / fail / other
   function tone(label) {
@@ -160,7 +163,7 @@ $(function () {
 
     function close(value) {
       $('#dialog').addClass('hidden');
-      if (!openId && !sheetId && $('#copyModal').hasClass('hidden')) $('body').removeClass('overflow-hidden');
+      if (!openId && !sheetId && $('#copyModal').hasClass('hidden') && $('#statusModal').hasClass('hidden')) $('body').removeClass('overflow-hidden');
       const resolve = resolver;
       resolver = null;
       busy = false;
@@ -252,10 +255,11 @@ $(function () {
     toast.t = setTimeout(() => $('#toast').addClass('hidden'), 1500);
   }
 
-  // Pending shows today's date; released / completed keep the date they were set.
+  // Pending shows today's date; every other status keeps the date it was set.
   function dateText(s) {
     if (s.status === 'pending') return `Today · ${fmtDate(new Date())}`;
-    return `${s.status === 'testing' ? 'Released' : 'Completed'} ${fmtDate(s.statusDate)}`;
+    const word = { testing: 'Released', complete: 'Completed' }[s.status] || statusOf(s.status).label;
+    return s.statusDate ? `${word} ${fmtDate(s.statusDate)}` : word;
   }
 
   // Open issues first (urgent → low), fixed issues last.
@@ -313,11 +317,26 @@ $(function () {
 
   const fileInput = (s) => `<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden" data-upload="${s.id}">`;
 
+  // A screen still on a removed status keeps showing it until another one is picked.
   function statusSelect(s) {
-    return `<select class="status status-${s.status}" data-status="${s.id}">
-      ${Object.entries(STATUS).map(([k, label]) => `<option value="${k}" ${k === s.status ? 'selected' : ''}>${label}</option>`).join('')}
+    const current = statusOf(s.status);
+    const options = current.deleted ? [current, ...activeStatuses()] : activeStatuses();
+    return `<select class="status st-${current.color}" data-status="${s.id}">
+      ${options.map((x) => `<option value="${esc(x.id)}" ${x.id === s.status ? 'selected' : ''}>${esc(x.label)}${x.deleted ? ' (removed)' : ''}</option>`).join('')}
     </select>`;
   }
+
+  // Several people per issue: chips + a text box (Enter or comma adds, × removes).
+  // data-people holds the issue id when the chips save straight away (issue sheet); empty in add forms.
+  const chip = (name) => `<span class="person">${esc(name)}<button type="button" data-remove-person title="Remove">${icon('close', 10)}</button></span>`;
+  const peopleBox = (names, commentId = '', extra = '') => `
+    <div class="people ${extra}" data-people="${commentId}">
+      ${(names || []).map(chip).join('')}
+      <input class="people-input" list="people" placeholder="${names && names.length ? 'Add person' : commentId ? 'Unassigned' : 'Assign to'}" maxlength="60" autocomplete="off">
+    </div>`;
+  const chipsOf = ($box) => $box.find('.person').map((i, el) => $(el).text().trim()).get();
+  // chips plus anything typed but not yet added
+  const peopleOf = ($box) => [...new Set(chipsOf($box).concat(($box.find('.people-input').val() || '').split(',').map((x) => x.trim()).filter(Boolean)))];
 
   const priorityOptions = (selected) =>
     Object.entries(PRIORITY).map(([k, v]) => `<option value="${k}" ${k === selected ? 'selected' : ''}>${v.label}</option>`).join('');
@@ -333,7 +352,7 @@ $(function () {
         <div class="min-w-0 flex-1">
           <div class="bug-meta">
             <button class="prio-tag ${p}" data-cycle-priority="${c.id}" title="Change priority"><span class="dot bg-${p}"></span>${PRIORITY[p].label}</button>
-            ${c.assignee ? `<span class="assignee">${esc(c.assignee)}</span>` : ''}
+            ${(c.assignees || []).map((n) => `<span class="assignee">${esc(n)}</span>`).join('')}
             ${c.remarks && !full ? `<span class="text-slate-400" title="Has remarks">${icon('note', 12)}</span>` : ''}
           </div>
           <p class="bug-text ${full ? '' : 'clamp'}" ${big ? '' : `data-expand="${c.id}"`}>${esc(c.text)}</p>
@@ -361,7 +380,7 @@ $(function () {
           <select name="priority" class="prio-select" title="Priority">${priorityOptions('medium')}</select>
           <input name="text" class="input min-w-0 flex-1 text-sm" placeholder="Add issue" autocomplete="off">
           <button class="btn-primary px-3">Add</button>
-          <input name="assignee" list="people" class="input w-full text-xs" placeholder="Assign to" autocomplete="off">
+          ${peopleBox([], '', 'w-full text-xs')}
         </form>
       </div>`;
   }
@@ -371,13 +390,15 @@ $(function () {
   let loaded = false;
 
   function load() {
-    return api('GET', '/api/board')
-      .done((data) => {
+    return $.when(api('GET', '/api/board'), api('GET', '/api/statuses'))
+      .done(([data], [tags]) => {
         loaded = true;
         products = data;
+        statuses = tags;
         allModules = products.flatMap((p) => p.modules);
         selectProduct(products.some((p) => p.id === productId) ? productId : products[0] && products[0].id);
         render();
+        if (!$('#statusModal').hasClass('hidden')) renderStatuses();
       })
       .fail(() => {
         if (loaded) return;
@@ -418,12 +439,11 @@ $(function () {
     const screens = onlyScreens(allScreens(modules));
     const count = (st) => screens.filter((s) => s.status === st).length;
     const openIssues = screens.flatMap((s) => s.comments).filter((c) => !c.resolved).length;
-    $('#summary').html([
-      ['pending', 'Pending', count('pending')],
-      ['testing', 'In testing', count('testing')],
-      ['complete', 'Complete', count('complete')],
-      ['issues', 'Open issues', openIssues],
-    ].map(([k, label, n]) => `<span class="stat"><span class="dot dot-${k}"></span>${label} <b>${n}</b></span>`).join(''));
+    const shown = statuses.filter((x) => !x.deleted || count(x.id));
+    $('#summary').html(
+      shown.map((x) => `<span class="stat"><span class="dot st st-${x.color}"></span>${esc(x.label)} <b>${count(x.id)}</b></span>`).join('') +
+      `<span class="stat"><span class="dot dot-issues"></span>Open issues <b>${openIssues}</b></span>` +
+      '<button class="tab-add" data-action="manage-statuses">Statuses</button>');
 
     $('#tabs').html(productId ? modules.map((m) =>
       `<button class="tab ${m.id === activeId ? 'active' : ''}" data-tab="${m.id}">${esc(m.name)}<span class="count">${onlyScreens(allScreens([m])).length}</span></button>`
@@ -553,7 +573,7 @@ $(function () {
     return `
       <div class="card ${flipped.has(s.id) ? 'flipped' : ''} ${top ? `ring-${top}` : ''}" data-id="${s.id}">
         <div class="card-inner">
-          <div class="card-face card-front status-${s.status}">
+          <div class="card-face card-front">
             <div class="preview">
               ${device(s, 'sm')}
               <span class="step">${String(i + 1).padStart(2, '0')}</span>
@@ -610,7 +630,7 @@ $(function () {
       $(rows).find('textarea').each((i, el) => autoGrow(el));
     }
 
-    const people = [...new Set(allIssues().map((c) => c.assignee).filter(Boolean))].sort();
+    const people = [...new Set(allIssues().flatMap((c) => c.assignees || []))].sort();
     $('#people').html(people.map((n) => `<option value="${esc(n)}"></option>`).join(''));
 
     if (refocus) {
@@ -641,7 +661,7 @@ $(function () {
         <div><span class="cell-label">Issue</span>
           <textarea class="input cell-text w-full text-sm ${c.resolved ? 'text-slate-400 line-through' : ''}" rows="1" data-field="text" data-id="${c.id}">${esc(c.text)}</textarea></div>
         <div><span class="cell-label">Assigned to</span>
-          <input class="input w-full text-sm" list="people" data-field="assignee" data-id="${c.id}" value="${esc(c.assignee || '')}" placeholder="Unassigned" autocomplete="off"></div>
+          ${peopleBox(c.assignees, c.id, 'text-sm')}</div>
         <div><span class="cell-label">Remarks</span>
           <textarea class="input cell-text w-full text-sm" rows="1" data-field="remarks" data-id="${c.id}">${esc(c.remarks || '')}</textarea></div>
         <div class="flex items-center justify-between gap-2 pt-2 text-xs text-slate-400 md:flex-col md:items-end md:pt-1">
@@ -662,7 +682,7 @@ $(function () {
       <div class="flex flex-wrap items-center gap-4 border-b border-slate-200 px-5 py-4">
         <div class="min-w-0 flex-1">
           <h3 class="truncate text-lg font-semibold text-slate-900">${esc(s.name)} — Issues</h3>
-          <p class="text-sm text-slate-500">${esc(s.page || '—')} · ${STATUS[s.status]} · ${dateText(s)}</p>
+          <p class="text-sm text-slate-500">${esc(s.page || '—')} · ${esc(statusOf(s.status).label)} · ${dateText(s)}</p>
         </div>
         <div class="seg">
           ${[['all', 'All'], ['open', 'Open'], ['fixed', 'Fixed']].map(([k, label]) =>
@@ -677,7 +697,7 @@ $(function () {
       <form class="add-comment sheet-add" data-screen="${s.id}">
         <select name="priority" class="input text-sm">${priorityOptions('medium')}</select>
         <input name="text" class="input text-sm" placeholder="Issue" autocomplete="off">
-        <input name="assignee" list="people" class="input text-sm" placeholder="Assign to" autocomplete="off">
+        ${peopleBox([], '', 'text-sm')}
         <input name="remarks" class="input text-sm" placeholder="Remarks" autocomplete="off">
         <button class="btn-primary justify-center">Add issue</button>
       </form>`);
@@ -797,6 +817,49 @@ $(function () {
     if (!openId && !sheetId) $('body').removeClass('overflow-hidden');
   }
 
+  // ---------------------------------------------------------------- manage status tags
+
+  const colorPick = (value, attrs) => `<select class="color-pick st-${value}" title="Colour" ${attrs}>
+    ${COLORS.map((c) => `<option value="${c}" ${c === value ? 'selected' : ''}>${c[0].toUpperCase()}${c.slice(1)}</option>`).join('')}
+  </select>`;
+
+  function renderStatuses() {
+    const used = (id) => allScreens(allModules).filter((s) => !isCondition(s) && s.status === id).length;
+    $('#statusBody').html(`
+      <div class="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
+        <h3 class="min-w-0 flex-1 text-base font-semibold text-slate-900">Status tags</h3>
+        <button class="icon-btn" data-close-statuses title="Close">${icon('close', 18)}</button>
+      </div>
+      <div class="px-5 py-3">
+        ${activeStatuses().map((x) => `
+          <div class="status-row">
+            ${colorPick(x.color, `data-status-color="${esc(x.id)}"`)}
+            <input class="input min-w-0 flex-1 text-sm" value="${esc(x.label)}" maxlength="40" data-status-label="${esc(x.id)}">
+            <span class="w-16 shrink-0 text-right text-xs text-slate-400">${used(x.id)} screens</span>
+            ${x.builtIn
+              ? '<span class="icon-btn cursor-default text-slate-300" title="Built in, cannot be removed">—</span>'
+              : `<button class="icon-btn danger" data-delete-status="${esc(x.id)}" title="Remove status">${icon('trash', 14)}</button>`}
+          </div>`).join('')}
+      </div>
+      <form id="addStatus" class="flex items-center gap-2 border-t border-slate-200 px-5 py-3">
+        ${colorPick('indigo', 'name="color"')}
+        <input name="label" class="input min-w-0 flex-1 text-sm" placeholder="New status, e.g. In review" maxlength="40" autocomplete="off">
+        <button class="btn-primary">Add</button>
+      </form>
+      <p class="px-5 pb-4 text-xs text-slate-500">Pending and Complete are built in. Screens on a removed status keep it until you pick another.</p>`);
+  }
+
+  function openStatuses() {
+    renderStatuses();
+    $('#statusModal').removeClass('hidden');
+    $('body').addClass('overflow-hidden');
+  }
+
+  function closeStatuses() {
+    $('#statusModal').addClass('hidden');
+    if (!openId && !sheetId) $('body').removeClass('overflow-hidden');
+  }
+
   // ---------------------------------------------------------------- drag & drop
 
   function saveOrder(listEl) {
@@ -839,7 +902,7 @@ $(function () {
   }
 
   submitForm('.add-screen', ($f, d) => api('POST', `/api/flows/${$f.data('flow')}/screens`, d));
-  submitForm('.add-comment', ($f, d) => api('POST', `/api/screens/${$f.data('screen')}/comments`, d).done((c) => {
+  submitForm('.add-comment', ($f, d) => api('POST', `/api/screens/${$f.data('screen')}/comments`, { ...d, assignees: peopleOf($f.find('.people')) }).done((c) => {
     flashId = c.id;
     refocus = { screen: $f.data('screen'), where: $f.closest('#sheet').length ? '#sheet' : $f.closest('#popup').length ? '#popup' : '#board' };
   }));
@@ -1033,6 +1096,30 @@ $(function () {
     setTimeout(() => $card.removeClass('highlight'), 1600);
   });
 
+  // status tags
+  $doc.on('click', '[data-action="manage-statuses"]', openStatuses);
+  $doc.on('click', '[data-close-statuses]', closeStatuses);
+  $('#statusModal').on('mousedown', function (e) { if (e.target === this) closeStatuses(); });
+  $doc.on('change', '[data-status-color]', function () {
+    api('PATCH', `/api/statuses/${$(this).data('status-color')}`, { color: $(this).val() }).done(load);
+  });
+  $doc.on('change', '[data-status-label]', function () {
+    const label = $(this).val().trim();
+    const x = statusOf($(this).data('status-label'));
+    if (!label) { $(this).val(x.label); return; }
+    api('PATCH', `/api/statuses/${x.id}`, { label }).done(() => { toast('Saved'); load(); });
+  });
+  $doc.on('submit', '#addStatus', function (e) {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(this));
+    if (!data.label.trim()) return;
+    api('POST', '/api/statuses', data).done(load);
+  });
+  $doc.on('click', '[data-delete-status]', function () {
+    const x = statusOf($(this).data('delete-status'));
+    remove({ title: `Remove status “${x.label}”?`, message: 'It will no longer be offered. Screens already on it keep it until you change them.', confirmText: 'Remove', url: `/api/statuses/${x.id}` });
+  });
+
   // copy to flows
   $doc.on('click', '[data-copy-screen]', function () { openCopy($(this).data('copy-screen')); });
   $doc.on('click', '[data-close-copy]', closeCopy);
@@ -1081,10 +1168,49 @@ $(function () {
       .fail(() => load());
   });
 
+  // assignees
+  function savePeople($box) {
+    const id = $box.data('people');
+    if (!id) return;
+    const assignees = chipsOf($box);
+    api('PATCH', `/api/comments/${id}`, { assignees }, $box.find('.people-input')[0])
+      .done(() => {
+        allIssues().find((x) => x.id === id).assignees = assignees;
+        render({ skipSheet: true });
+        toast('Saved');
+      })
+      .fail(() => load());
+  }
+  function addPeople(input) {
+    const $box = $(input).closest('.people');
+    const names = input.value.split(',').map((x) => x.trim()).filter(Boolean);
+    input.value = '';
+    const fresh = names.filter((n) => !chipsOf($box).some((x) => x.toLowerCase() === n.toLowerCase()));
+    if (!fresh.length) return;
+    $(input).before(fresh.map(chip).join(''));
+    input.placeholder = 'Add person';
+    savePeople($box);
+  }
+  $doc.on('keydown', '.people-input', function (e) {
+    if ((e.key === 'Enter' || e.key === ',') && this.value.trim()) { e.preventDefault(); addPeople(this); }
+    else if (e.key === 'Backspace' && !this.value) {
+      const $last = $(this).prevAll('.person').first();
+      if ($last.length) { $last.remove(); savePeople($(this).closest('.people')); }
+    }
+  });
+  $doc.on('change', '.people-input', function () { if (this.value.trim()) addPeople(this); });
+  $doc.on('click', '[data-remove-person]', function () {
+    const $box = $(this).closest('.people');
+    $(this).closest('.person').remove();
+    savePeople($box);
+  });
+  $doc.on('click', '.people', function (e) { if (e.target === this) $(this).find('.people-input').trigger('focus'); });
+
   $doc.on('keydown', (e) => {
     if (e.key !== 'Escape') return;
     if (dialog.isOpen()) dialog.cancel();
     else if (!$('#copyModal').hasClass('hidden')) closeCopy();
+    else if (!$('#statusModal').hasClass('hidden')) closeStatuses();
     else if (sheetId) closeSheet();
     else if (openId) closePopup();
   });

@@ -16,7 +16,9 @@ npm install
 npm start        # or: node server — http://localhost:4000
 ```
 
-Tables: `products`, `modules`, `flows`, `screens` (including conditions, whose branches are stored as `jsonb`), and `comments`. Screens store their Cloudinary image URL and public id, and deleting a screen (or anything above it) also deletes its image from Cloudinary. Deleting a product, module or flow removes everything inside it.
+Tables: `products`, `modules`, `flows`, `screens` (including conditions, whose branches are stored as `jsonb`), `comments` and `statuses`. Screens store their Cloudinary image URL and public id.
+
+Nothing is ever deleted from the database: deleting a product, module, flow, screen, issue or status only sets `is_deleted = true` on that row (images stay in Cloudinary). Deleted rows, and everything inside a deleted product / module / flow, are hidden from the sheet.
 
 ## Features
 
@@ -33,7 +35,8 @@ Tables: `products`, `modules`, `flows`, `screens` (including conditions, whose b
   - Each copy has its own status (it starts as Pending) and its own issues. You can choose to copy the open issues too.
   - The large view shows "Also in: …" with links to the other copies.
 - **Issues sit on the back of each card.** Click *Issues* to flip the card.
-  - Each issue has a priority (Urgent / High / Medium / Low), an assignee and remarks. Urgent and High are listed first.
+  - Each issue has a priority (Urgent / High / Medium / Low), one or more assignees and remarks. Urgent and High are listed first.
+  - Type a name and press Enter (or a comma) to assign someone; add as many people as you need and remove one with ×.
   - The card outline shows the most urgent open issue.
   - The expand button opens the full-screen **issue sheet**, where every field is editable.
 - **Status and date:**
@@ -43,6 +46,9 @@ Tables: `products`, `modules`, `flows`, `screens` (including conditions, whose b
 | Pending | Always today's date |
 | Release for Testing | The date it was released (fixed) |
 | Complete | The date it was completed (fixed) |
+| Any status you add | The date it was set (fixed) |
+
+- **Status tags:** the *Statuses* button in the header adds, renames, recolours and removes statuses. Pending and Complete are built in and cannot be removed. Screens already on a removed status keep it until you pick another one.
 
 ## Files
 

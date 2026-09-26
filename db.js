@@ -85,6 +85,33 @@ CREATE TABLE IF NOT EXISTS comments (
   created_at  timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS comments_screen_idx ON comments(screen_id);
+
+-- Screen status tags, managed from the UI. "pending" and "complete" are built in and cannot be removed.
+CREATE TABLE IF NOT EXISTS statuses (
+  id          text PRIMARY KEY,
+  label       text NOT NULL,
+  color       text NOT NULL DEFAULT 'slate',
+  sort_order  bigint NOT NULL DEFAULT 0,
+  is_deleted  boolean NOT NULL DEFAULT false,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO statuses (id, label, color, sort_order) VALUES
+  ('pending', 'Pending', 'amber', 0),
+  ('testing', 'Release for Testing', 'sky', 1),
+  ('complete', 'Complete', 'green', 2)
+ON CONFLICT (id) DO NOTHING;
+ALTER TABLE screens DROP CONSTRAINT IF EXISTS screens_status_check;
+
+-- Soft delete: deleting anything only sets is_deleted = true, rows are never removed
+ALTER TABLE products ADD COLUMN IF NOT EXISTS is_deleted boolean NOT NULL DEFAULT false;
+ALTER TABLE modules  ADD COLUMN IF NOT EXISTS is_deleted boolean NOT NULL DEFAULT false;
+ALTER TABLE flows    ADD COLUMN IF NOT EXISTS is_deleted boolean NOT NULL DEFAULT false;
+ALTER TABLE screens  ADD COLUMN IF NOT EXISTS is_deleted boolean NOT NULL DEFAULT false;
+ALTER TABLE comments ADD COLUMN IF NOT EXISTS is_deleted boolean NOT NULL DEFAULT false;
+
+-- An issue can be assigned to several people (was: one "assignee" text). Old values move into the list once.
+ALTER TABLE comments ADD COLUMN IF NOT EXISTS assignees text[] NOT NULL DEFAULT '{}';
+UPDATE comments SET assignees = ARRAY[assignee], assignee = '' WHERE assignee <> '';
 `;
 
 const query = (text, params) => pool.query(text, params);
