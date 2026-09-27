@@ -29,8 +29,8 @@ Each login has an **access level** and the **apps** (products) it can open: a li
 
 | Access | Can do |
 |---|---|
-| View only | See everything in their apps. Nothing can be changed. |
-| Edit | Add and update issues (status, priority, assignees, remarks, Fixed), edit screens (name, page, platform, wireframe, image, condition branches) and drag cards. Cannot create or delete modules, flows or screens, or delete issues. |
+| View only | See the screens and flow videos in their apps. Issues are hidden completely (cards, issue counts, issue sheets, and the Excel *Issues* sheet). Nothing can be changed. |
+| Update tasks | Add and update issues (status, priority, assignees, remarks, Fixed) with *Write issue* or on the cards. Screens are read only: no editing names, pages, platform, wireframe, images, condition branches or videos, and no dragging cards. Cannot delete issues. |
 | Full | Everything inside their apps: create, rename, delete and reorder modules, flows, screens and issues, and copy screens. |
 | Super admin | Everything in every app, plus products, status tags and the admin dashboard. |
 
@@ -68,7 +68,7 @@ The server checks every request; apps a login cannot open are hidden from it com
 | Any status you add | The date it was set (fixed) |
 
 - **Issues by status:** click a status count in the header (or *Open issues*) to see every issue with that status: module › flow › screen, priority, status, issue and assignees. The link icon at the end jumps to that screen.
-- **Flow videos:** every flow and branch path has *Add video* in its header. Upload a screen recording (MP4, MOV or WEBM, up to 100 MB, stored in Cloudinary), then *Video* plays it, with Replace and Remove. Needs Edit access.
+- **Flow videos:** every flow and branch path has *Add video* in its header. Upload a screen recording (MP4, MOV or WEBM, up to 100 MB, stored in Cloudinary), then *Video* plays it, with Replace and Remove. Needs Full access to upload or remove; View only and Update tasks logins can watch it.
 - **Write issue** (header): pick the app, **flow name** and **screen name** from drop-downs, then write the issue with its priority, status, assignees and remarks. The form stays open for the next one.
 - **Excel** (header): downloads `task-doctor-<date>.xlsx` of everything your login can see. *Issues* sheet: app, module, flow no., flow, screen, page, issue, priority, status, status date, assignees, remarks, added on. *Screens* sheet: every screen with its open / total issues. Both have filters on the header row.
 - **Status tags:** the *Statuses* button in the header adds, renames, recolours and removes statuses. Pending and Complete are built in and cannot be removed. Issues already on a removed status keep it until you pick another one.

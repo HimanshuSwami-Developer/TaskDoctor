@@ -11,7 +11,8 @@ const scrypt = promisify(crypto.scrypt);
 const COOKIE = 'td_session';
 const SESSION_DAYS = 30;
 
-// view: read only · edit: update issues / statuses / screens, add issues · full: everything inside their apps
+// view: see screens + flow videos only (no issues) · edit: add / update issues only (no screen changes)
+// full: everything inside their apps
 // super: everything in every app + the admin dashboard
 const LEVELS = { view: 1, edit: 2, full: 3, super: 4 };
 

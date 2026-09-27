@@ -119,7 +119,7 @@ ALTER TABLE comments ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'pend
 ALTER TABLE comments ADD COLUMN IF NOT EXISTS status_date timestamptz;
 UPDATE comments SET status = 'complete', status_date = coalesce(status_date, created_at) WHERE resolved AND status = 'pending';
 
--- Logins. access: view | edit | full | super. A login sees the products in product_ids, or every product
+-- Logins. access: view (screens + videos, no issues) | edit (issues only) | full | super. A login sees the products in product_ids, or every product
 -- when all_products is set (super admins always see everything).
 CREATE TABLE IF NOT EXISTS users (
   id            text PRIMARY KEY,

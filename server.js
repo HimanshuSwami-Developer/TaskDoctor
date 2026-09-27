@@ -258,13 +258,14 @@ app.delete('/api/users/:id', route(async (req, res) => {
 // Everything a login can see: products → modules → flows (incl. branch paths) → screens → issues.
 async function loadBoard(user) {
   const everything = user.access === 'super' || user.all_products;
+  const seesIssues = auth.atLeast(user, 'edit'); // view-only logins see screens and videos, never issues
   const [products, modules, flows, screens, comments] = await Promise.all([
     db.query(`SELECT * FROM products WHERE NOT is_deleted ${everything ? '' : 'AND id = ANY($1)'} ORDER BY sort_order, created_at`,
       everything ? [] : [user.product_ids]),
     db.query('SELECT * FROM modules WHERE NOT is_deleted ORDER BY sort_order, created_at'),
     db.query('SELECT * FROM flows WHERE NOT is_deleted ORDER BY sort_order, created_at'),
     db.query(`${SCREEN_SELECT} WHERE NOT s.is_deleted ORDER BY s.sort_order, s.created_at`),
-    db.query('SELECT * FROM comments WHERE NOT is_deleted ORDER BY created_at'),
+    seesIssues ? db.query('SELECT * FROM comments WHERE NOT is_deleted ORDER BY created_at') : { rows: [] },
   ]);
   const commentsBy = {};
   comments.rows.forEach((c) => (commentsBy[c.screen_id] ||= []).push(toComment(c)));
@@ -321,6 +322,7 @@ app.get('/api/export', route(async (req, res) => {
 
   const book = new ExcelJS.Workbook();
   book.creator = 'Task Doctor';
+  const seesIssues = auth.atLeast(req.user, 'edit');
   const issues = book.addWorksheet('Issues', { views: [{ state: 'frozen', ySplit: 1 }] });
   issues.columns = [
     { header: 'App', key: 'app', width: 14 }, { header: 'Module', key: 'module', width: 16 },
@@ -337,7 +339,7 @@ app.get('/api/export', route(async (req, res) => {
     { header: 'Flow no.', key: 'no', width: 8 }, { header: 'Flow', key: 'flow', width: 26 },
     { header: 'Step', key: 'step', width: 6 }, { header: 'Screen', key: 'screen', width: 24 },
     { header: 'Page', key: 'page', width: 20 }, { header: 'Platform', key: 'device', width: 9 },
-    { header: 'Open issues', key: 'open', width: 11 }, { header: 'Total issues', key: 'total', width: 11 },
+    ...(seesIssues ? [{ header: 'Open issues', key: 'open', width: 11 }, { header: 'Total issues', key: 'total', width: 11 }] : []),
   ];
 
   board.forEach((p) => p.modules.forEach((m) => numberedFlows(m).forEach(({ flow, no }) => {
@@ -360,6 +362,7 @@ app.get('/api/export', route(async (req, res) => {
   });
   issues.getColumn('text').alignment = { wrapText: true, vertical: 'top' };
   issues.getColumn('remarks').alignment = { wrapText: true, vertical: 'top' };
+  if (!seesIssues) book.removeWorksheet(issues.id);
 
   const stamp = new Date().toISOString().slice(0, 10);
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -479,7 +482,7 @@ app.patch('/api/flows/:id', route(async (req, res) => {
 
 // Drag & drop: save the new card order of a flow (cards may come from another flow).
 app.put('/api/flows/:id/order', route(async (req, res) => {
-  const productId = await allowed(req, 'flows', req.params.id, 'edit');
+  const productId = await allowed(req, 'flows', req.params.id, 'full');
   const ids = Array.isArray(req.body.ids) ? req.body.ids.filter((x) => typeof x === 'string') : [];
   const { rows } = await db.query(
     `SELECT count(*)::int AS n FROM screens s JOIN flows f ON f.id = s.flow_id JOIN modules m ON m.id = f.module_id
@@ -502,7 +505,7 @@ app.delete('/api/flows/:id', route(async (req, res) => {
 // ---------------------------------------------------------------- flow videos (Cloudinary), raw file body up to 100 MB
 
 app.post('/api/flows/:id/video', express.raw({ type: 'video/*', limit: '100mb' }), route(async (req, res) => {
-  await allowed(req, 'flows', req.params.id, 'edit');
+  await allowed(req, 'flows', req.params.id, 'full');
   if (!cloud.configured()) throw new HttpError(503, 'Video storage is not set up. Add the Cloudinary keys to .env and restart.');
   if (!Buffer.isBuffer(req.body) || !req.body.length) throw new HttpError(400, 'Please upload a video file (MP4, MOV or WEBM)');
   const { url, publicId } = await cloud.uploadVideo(req.body, req.params.id);
@@ -511,7 +514,7 @@ app.post('/api/flows/:id/video', express.raw({ type: 'video/*', limit: '100mb' }
 }));
 
 app.delete('/api/flows/:id/video', route(async (req, res) => {
-  await allowed(req, 'flows', req.params.id, 'edit');
+  await allowed(req, 'flows', req.params.id, 'full');
   const flow = await live('flows', req.params.id, 'video_public_id');
   const { rows } = await db.query('UPDATE flows SET video_url = NULL, video_public_id = NULL WHERE id = $1 RETURNING *', [req.params.id]);
   await cloud.remove([flow.video_public_id], 'video');
@@ -541,7 +544,7 @@ app.post('/api/flows/:id/screens', route(async (req, res) => {
 }));
 
 app.patch('/api/screens/:id', route(async (req, res) => {
-  const productId = await allowed(req, 'screens', req.params.id, 'edit');
+  const productId = await allowed(req, 'screens', req.params.id, 'full');
   const screen = await live('screens', req.params.id, '*');
   const b = req.body;
   const fields = {};
@@ -594,7 +597,7 @@ app.delete('/api/screens/:id', route(async (req, res) => {
 // ---------------------------------------------------------------- screen images (stored in Cloudinary)
 
 app.post('/api/screens/:id/image', route(async (req, res) => {
-  await allowed(req, 'screens', req.params.id, 'edit');
+  await allowed(req, 'screens', req.params.id, 'full');
   if (!cloud.configured()) throw new HttpError(503, 'Image storage is not set up. Add the Cloudinary keys to .env and restart.');
   if (!/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(req.body.dataUrl || '')) {
     throw new HttpError(400, 'Please upload a PNG, JPG, WEBP or GIF image');
@@ -605,7 +608,7 @@ app.post('/api/screens/:id/image', route(async (req, res) => {
 }));
 
 app.delete('/api/screens/:id/image', route(async (req, res) => {
-  await allowed(req, 'screens', req.params.id, 'edit');
+  await allowed(req, 'screens', req.params.id, 'full');
   const screen = await live('screens', req.params.id, 'image_public_id');
   await db.query('UPDATE screens SET image_url = NULL, image_public_id = NULL WHERE id = $1', [req.params.id]);
   await cloud.remove([screen.image_public_id]);

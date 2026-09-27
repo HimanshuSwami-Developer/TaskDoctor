@@ -115,27 +115,30 @@ $(function () {
 
   const LEVELS = { view: 1, edit: 2, full: 3, super: 4 };
   const ACCESS = {
-    view: { label: 'View only', hint: 'Can see everything in their apps, cannot change anything.' },
-    edit: { label: 'Edit', hint: 'Can add and update issues, statuses, assignees and screens. Cannot create or delete modules, flows or screens.' },
+    view: { label: 'View only', hint: 'Can see screens and flow videos in their apps. Cannot see issues or change anything.' },
+    edit: { label: 'Update tasks', hint: 'Can add and update issues (status, priority, assignees, remarks). Cannot change screens, images or videos.' },
     full: { label: 'Full', hint: 'Can do everything inside their apps: create, edit and delete modules, flows, screens and issues.' },
     super: { label: 'Super admin', hint: 'Everything in every app, plus this admin dashboard and the status tags.' },
   };
   const can = (level) => Boolean(me) && LEVELS[me.access] >= LEVELS[level];
 
-  // Controls that need a higher level are removed; view-only logins get read-only inputs.
+  // Controls that need a higher level are removed; lower logins get read-only inputs.
+  // edit = issues only; screens, images, videos and card order need full. View-only logins don't see issues at all.
   const NEEDS = {
     super: '[data-action="add-product"], [data-rename-product], [data-delete-product], [data-action="manage-statuses"], [data-action="admin"]',
     full: `[data-action="add-module"], [data-rename-module], [data-delete-module], [data-action="add-flow"], [data-rename-flow],
-      [data-delete-flow], [data-move-flow], [data-extend-path], .add-screen, [data-delete-screen], [data-copy-screen], [data-delete-comment]`,
-    edit: '.add-comment, [data-action="writer"], [data-remove-video], [data-remove-image], [data-add-branch], [data-remove-branch], [data-rename-condition], [data-edit-screen], [data-remove-person]',
+      [data-delete-flow], [data-move-flow], [data-extend-path], .add-screen, [data-delete-screen], [data-copy-screen], [data-delete-comment],
+      [data-remove-video], [data-remove-image], [data-add-branch], [data-remove-branch], [data-rename-condition], [data-edit-screen]`,
+    edit: '.add-comment, [data-action="writer"], [data-remove-person], [data-bugs], [data-flip], [data-open-sheet], .issues-panel',
   };
   function applyAccess() {
     const $root = $('#products, #summary, #account, #tabs, #board, #popupBody, #sheetBody, #bugsBody, #videoBody');
     Object.entries(NEEDS).forEach(([level, selector]) => { if (!can(level)) $root.find(selector).remove(); });
-    if (can('edit')) return;
-    $root.find('[data-upload], [data-upload-video]').closest('label').remove();
-    $root.find('[data-status], [data-resolve], [data-device], [data-wireframe], [data-branch-label], [data-branch-target], [data-field], [data-cycle-priority], .people-input')
-      .prop('disabled', true);
+    if (!can('full')) {
+      $root.find('[data-upload], [data-upload-video]').closest('label').remove();
+      $root.find('[data-device], [data-wireframe], [data-branch-label], [data-branch-target]').prop('disabled', true);
+    }
+    if (!can('edit')) $root.find('[data-status], [data-resolve], [data-field], [data-cycle-priority], .people-input').prop('disabled', true);
   }
 
   // ---------------------------------------------------------------- loading indicators
@@ -852,7 +855,7 @@ $(function () {
               ${s.image ? `<button class="btn-secondary" data-remove-image="${s.id}">Remove</button>` : ''}
             </div>
           </div>
-          <div class="border-t border-slate-200 pt-4">${issuesPanel(s, true)}</div>
+          <div class="issues-panel border-t border-slate-200 pt-4">${issuesPanel(s, true)}</div>
         </div>
       </div>`);
   }
@@ -1380,7 +1383,7 @@ $(function () {
   }
 
   function initDragging() {
-    if (!can('edit')) return;
+    if (!can('full')) return;
     $('.screens').each(function () {
       Sortable.create(this, {
         group: 'screens',
