@@ -28,6 +28,7 @@ $(function () {
     download: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3',
     down: 'M6 9l6 6 6-6',
     user: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8z',
+    extend: 'M6 3v9a4 4 0 0 0 4 4h10M16 12l4 4-4 4',
     link: 'M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7',
   };
   const icon = (name, size = 16) =>
@@ -77,6 +78,12 @@ $(function () {
   const isCondition = (s) => s.type === 'condition';
   // Path flows that continue from one branch of a condition
   const pathsOf = (condId, branchId) => allModules.flatMap((m) => m.flows).filter((f) => f.fromConditionId === condId && f.fromBranchId === branchId);
+  // Path flows that branch off a plain screen
+  const pathsFrom = (screenId) => allModules.flatMap((m) => m.flows).filter((f) => f.fromScreenId === screenId);
+  // Paths leaving one step of a flow, in order: [{ path, from }] (from = { condition, branch } or { screen })
+  const pathsAt = (s) => (isCondition(s)
+    ? (s.branches || []).flatMap((b) => pathsOf(s.id, b.id).map((path) => ({ path, from: { condition: s, branch: b } })))
+    : pathsFrom(s.id).map((path) => ({ path, from: { screen: s } })));
   // Every screen inside a condition's paths (and nested paths)
   const pathScreens = (c) => (c.branches || []).flatMap((b) => pathsOf(c.id, b.id))
     .flatMap((f) => f.screens.flatMap((x) => (isCondition(x) ? pathScreens(x) : [x])));
@@ -128,7 +135,8 @@ $(function () {
     super: '[data-action="add-product"], [data-rename-product], [data-delete-product], [data-action="manage-statuses"], [data-action="admin"]',
     full: `[data-action="add-module"], [data-rename-module], [data-delete-module], [data-action="add-flow"], [data-rename-flow],
       [data-delete-flow], [data-move-flow], [data-extend-path], .add-screen, [data-delete-screen], [data-copy-screen], [data-delete-comment],
-      [data-remove-video], [data-remove-image], [data-add-branch], [data-remove-branch], [data-rename-condition], [data-edit-screen]`,
+      [data-remove-video], [data-remove-image], [data-add-branch], [data-remove-branch], [data-rename-condition], [data-edit-screen],
+      [data-extend-screen]`,
     edit: '.add-comment, [data-action="writer"], [data-remove-person], [data-bugs], [data-flip], [data-open-sheet], .issues-panel',
   };
   function applyAccess() {
@@ -554,27 +562,26 @@ $(function () {
     afterRender(saved);
   }
 
-  // Flows of a module in reading order with their number: 1, 1.1 (branch path), 1.1.1 …, 2 …
+  // Flows of a module in reading order with their number: 1, 1.1 (branch or screen path), 1.1.1 …, 2 …
   function numberedFlows(m) {
     const out = [];
     const walk = (f, no) => {
       out.push({ flow: f, no });
       let k = 0;
-      f.screens.filter(isCondition).forEach((c) => (c.branches || []).forEach((b) =>
-        pathsOf(c.id, b.id).forEach((path) => walk(path, `${no}.${(k += 1)}`))));
+      f.screens.forEach((s) => pathsAt(s).forEach(({ path }) => walk(path, `${no}.${(k += 1)}`)));
     };
     m.flows.filter((f) => !f.parentFlowId).forEach((f, i) => walk(f, String(i + 1)));
     return out;
   }
 
-  // A flow followed by the paths of its conditions' branches, numbered 1 → 1.1, 1.2 → 1.1.1 …
+  // A flow followed by the paths leaving its steps (condition branches, extended screens), numbered 1 → 1.1, 1.2 → 1.1.1 …
   function flowTree(f, no, i, total, from) {
     let html = flowHtml(f, no, i, total, from);
     let k = 0;
-    f.screens.filter(isCondition).forEach((c) => (c.branches || []).forEach((b) => pathsOf(c.id, b.id).forEach((path) => {
+    f.screens.forEach((s) => pathsAt(s).forEach(({ path, from: at }) => {
       k += 1;
-      html += flowTree(path, `${no}.${k}`, 0, 0, { condition: c, branch: b });
-    })));
+      html += flowTree(path, `${no}.${k}`, 0, 0, at);
+    }));
     return html;
   }
 
@@ -583,12 +590,16 @@ $(function () {
     const issues = screens.flatMap((s) => s.comments);
     const done = issues.filter((c) => c.resolved).length;
     const depth = no.split('.').length - 1;
+    const fromScreen = from && from.screen;
     return `
-      <section class="flow ${from ? 'path' : ''}" data-flow-id="${f.id}" style="${depth ? `--depth:${depth}` : ''}">
+      <section class="flow ${from ? 'path' : ''} ${fromScreen ? 'from-screen' : ''}" data-flow-id="${f.id}"
+        ${fromScreen ? `data-from-screen="${fromScreen.id}"` : ''} style="${depth ? `--depth:${depth}` : ''}">
+        ${fromScreen ? '<span class="elbow" aria-hidden="true"></span>' : ''}
         <div class="flow-head">
           <span class="flow-no ${from ? 'path' : ''}">${no}</span>
           <h3 class="text-base font-semibold text-slate-900">${esc(f.name)}</h3>
-          ${from ? `<span class="cond-tag tone-${tone(from.branch.label)} mt-0"><span class="dot"></span>from ${esc(from.condition.name)} = ${esc(from.branch.label || '—')}</span>` : ''}
+          ${fromScreen ? `<button class="cond-tag tone-other mt-0" data-locate="${fromScreen.id}" title="Go to the screen this flow starts from">${icon('extend', 12)} from ${esc(fromScreen.name)}</button>` : ''}
+          ${from && from.condition ? `<span class="cond-tag tone-${tone(from.branch.label)} mt-0"><span class="dot"></span>from ${esc(from.condition.name)} = ${esc(from.branch.label || '—')}</span>` : ''}
           <span class="text-sm text-slate-500">${screens.length} screens · ${done}/${issues.length} issues complete</span>
           ${f.video
             ? `<button class="video-btn" data-play-video="${f.id}" title="Play this flow's video">${icon('play', 12)} Video</button>`
@@ -693,6 +704,7 @@ $(function () {
             <div class="card-foot">
               <button class="issues-btn ${open ? 'has-open' : ''}" data-flip="${s.id}">${icon('flip', 14)} Issues <span class="count">${open} open</span></button>
               <button class="icon-btn ml-auto" data-copy-screen="${s.id}" title="Copy to other flows">${icon('copy', 14)}</button>
+              <button class="icon-btn" data-extend-screen="${s.id}" title="Extend a new flow from this screen">${icon('extend', 14)}</button>
               <button class="icon-btn" data-edit-screen="${s.id}" title="Edit screen">${icon('edit', 14)}</button>
               <button class="icon-btn danger" data-delete-screen="${s.id}" title="Delete screen">${icon('trash', 14)}</button>
             </div>
@@ -701,6 +713,35 @@ $(function () {
         </div>
       </div>`;
   }
+
+  // ---------------------------------------------------------------- screen paths: the "L" from a card down into its new flow
+
+  // Each screen path starts under its source card: a line runs down from the card, then turns right into the path.
+  // Parents come first in the page, so a nested path is placed after the path its card sits in.
+  function placeElbows() {
+    $('#board .flow.from-screen').each((i, sec) => {
+      const card = document.querySelector(`#board .card[data-id="${$(sec).data('from-screen')}"]`);
+      const elbow = sec.querySelector('.elbow');
+      const first = sec.querySelector('.screens > *');
+      sec.style.marginLeft = '0px';
+      if (!card || !elbow || !first) return;
+      const row = card.closest('.screens').getBoundingClientRect();
+      const c = card.getBoundingClientRect();
+      const base = sec.getBoundingClientRect();
+      // keep the start inside the row's visible part (the card may be scrolled away) and leave room for the path
+      const x = Math.min(Math.max(c.left + c.width / 2, row.left + 16), row.right - 16) - base.left;
+      sec.style.marginLeft = `${Math.max(0, Math.min(x, base.width - 360))}px`;
+      const top = c.bottom - sec.getBoundingClientRect().top;
+      const bottom = first.getBoundingClientRect().top - sec.getBoundingClientRect().top + 107; // card arrow height
+      elbow.style.top = `${top}px`;
+      elbow.style.height = `${Math.max(bottom - top, 24)}px`;
+    });
+  }
+  let elbowFrame = 0;
+  const queueElbows = () => { cancelAnimationFrame(elbowFrame); elbowFrame = requestAnimationFrame(placeElbows); };
+  window.addEventListener('resize', queueElbows);
+  // flow rows scroll sideways on their own; scroll events don't bubble, so listen while capturing
+  document.addEventListener('scroll', (e) => { if (e.target.classList && e.target.classList.contains('screens')) queueElbows(); }, true);
 
   // ---------------------------------------------------------------- scroll / focus preservation across re-renders
 
@@ -715,6 +756,7 @@ $(function () {
 
   function afterRender(saved) {
     $('.screens').each((i, el) => { el.scrollLeft = saved[`flow-${$(el).data('flow')}`] || 0; });
+    placeElbows();
     $('.bug-list').each((i, el) => {
       el.scrollTop = saved[`list-${$(el).closest('#popup').length}-${$(el).data('list')}`] || 0;
       const $new = $(el).children('.new');
@@ -1543,6 +1585,18 @@ $(function () {
       fields: [{ name: 'name', label: 'Path name', value: `${f.name} › ${b.label || 'Path'}`, required: true }],
       confirmText: 'Create path',
       save: (v) => api('POST', `/api/screens/${c.id}/branches/${b.id}/path`, v, null, QUIET)
+        .done((path) => load().done(() => gotoFlow(path.id))),
+    });
+  });
+  // plain screen → a new flow that continues from it
+  $doc.on('click', '[data-extend-screen]', function () {
+    const s = findScreen($(this).data('extend-screen'));
+    const f = findFlow(s.flowId);
+    ask({
+      title: `New flow from “${s.name}”`,
+      fields: [{ name: 'name', label: 'Flow name', value: `${f.name} › ${s.name}`, required: true }],
+      confirmText: 'Create flow',
+      save: (v) => api('POST', `/api/screens/${s.id}/extend`, v, null, QUIET)
         .done((path) => load().done(() => gotoFlow(path.id))),
     });
   });

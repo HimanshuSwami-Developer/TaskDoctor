@@ -126,6 +126,7 @@ const toModule = (r) => ({ id: r.id, productId: r.product_id, name: r.name, orde
 const toFlow = (r) => ({
   id: r.id, moduleId: r.module_id, name: r.name, order: r.sort_order,
   parentFlowId: r.parent_flow_id, fromConditionId: r.from_condition_id, fromBranchId: r.from_branch_id,
+  fromScreenId: r.from_screen_id,
   video: r.video_url || null,
 });
 const toUser = (r) => ({
@@ -271,13 +272,16 @@ async function loadBoard(user) {
   comments.rows.forEach((c) => (commentsBy[c.screen_id] ||= []).push(toComment(c)));
   const screensBy = {};
   screens.rows.forEach((s) => (screensBy[s.flow_id] ||= []).push({ ...toScreen(s), comments: commentsBy[s.id] || [] }));
-  // Path flows only show while their condition (in a shown flow) still has that branch; repeat for nested paths.
+  // Path flows only show while their condition (in a shown flow) still has that branch, and screen paths while
+  // their screen is in a shown flow; repeat for nested paths.
   let shownFlows = flows.rows;
   for (;;) {
     const ids = new Set(shownFlows.map((f) => f.id));
-    const branchesOf = new Map(screens.rows.filter((x) => x.type === 'condition' && ids.has(x.flow_id)).map((x) => [x.id, x.branches]));
-    const next = shownFlows.filter((f) => !f.from_condition_id
-      || (branchesOf.has(f.from_condition_id) && branchesOf.get(f.from_condition_id).some((b) => b.id === f.from_branch_id)));
+    const inShown = screens.rows.filter((x) => ids.has(x.flow_id));
+    const branchesOf = new Map(inShown.filter((x) => x.type === 'condition').map((x) => [x.id, x.branches]));
+    const plain = new Set(inShown.filter((x) => x.type !== 'condition').map((x) => x.id));
+    const next = shownFlows.filter((f) => (f.from_screen_id ? plain.has(f.from_screen_id) : !f.from_condition_id
+      || (branchesOf.has(f.from_condition_id) && branchesOf.get(f.from_condition_id).some((b) => b.id === f.from_branch_id))));
     if (next.length === shownFlows.length) break;
     shownFlows = next;
   }
@@ -300,15 +304,21 @@ app.get('/api/board', route(async (req, res) => res.json(await loadBoard(req.use
 
 // ---------------------------------------------------------------- Excel download of every task the login can see
 
-// Flows in reading order with their number: 1, 1.1 (a branch path), 1.1.1 …, 2 …
+// Flows in reading order with their number: 1, 1.1 (a branch or screen path), 1.1.1 …, 2 …
 function numberedFlows(module) {
   const out = [];
+  const pathsAt = (s) => module.flows.filter((f) => (s.type === 'condition'
+    ? s.branches.some((b) => f.fromConditionId === s.id && f.fromBranchId === b.id)
+    : f.fromScreenId === s.id));
   const walk = (flow, no) => {
     out.push({ flow, no });
     let k = 0;
-    flow.screens.filter((s) => s.type === 'condition').forEach((c) => c.branches.forEach((b) => module.flows
-      .filter((f) => f.fromConditionId === c.id && f.fromBranchId === b.id)
-      .forEach((path) => walk(path, `${no}.${(k += 1)}`))));
+    flow.screens.forEach((s) => {
+      const paths = pathsAt(s);
+      // a condition's paths follow its branch order
+      if (s.type === 'condition') paths.sort((a, b) => s.branches.findIndex((x) => x.id === a.fromBranchId) - s.branches.findIndex((x) => x.id === b.fromBranchId));
+      paths.forEach((path) => walk(path, `${no}.${(k += 1)}`));
+    });
   };
   module.flows.filter((f) => !f.parentFlowId).forEach((f, i) => walk(f, String(i + 1)));
   return out;
@@ -584,6 +594,20 @@ app.post('/api/screens/:id/branches/:branchId/path', route(async (req, res) => {
     `INSERT INTO flows (id, module_id, name, sort_order, parent_flow_id, from_condition_id, from_branch_id)
      VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
     [randomUUID(), flow.module_id, name, Date.now(), flow.id, cond.id, branch.id]);
+  res.status(201).json(toFlow(rows[0]));
+}));
+
+// Start a new flow from a plain screen, e.g. screens 1–3 are shared and a second journey continues from screen 4.
+app.post('/api/screens/:id/extend', route(async (req, res) => {
+  await allowed(req, 'screens', req.params.id, 'full');
+  const screen = await live('screens', req.params.id, '*');
+  if (screen.type === 'condition') throw new HttpError(400, 'Use Extend path on a branch of the condition');
+  const flow = await live('flows', screen.flow_id, '*');
+  const name = text(req.body.name) || `${flow.name} › ${screen.name}`;
+  const { rows } = await db.query(
+    `INSERT INTO flows (id, module_id, name, sort_order, parent_flow_id, from_screen_id)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+    [randomUUID(), flow.module_id, name, Date.now(), flow.id, screen.id]);
   res.status(201).json(toFlow(rows[0]));
 }));
 

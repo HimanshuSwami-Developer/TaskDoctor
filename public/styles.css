@@ -336,6 +336,17 @@ select.is-busy, input.is-busy, textarea.is-busy { opacity: .55; cursor: progress
 .flow.path { margin-left: calc(var(--depth, 1) * 28px); padding-left: 14px; border-left: 2px dashed #c7d2fe; }
 .flow-no.path { background: #f5f3ff; color: #6d28d9; }
 .flow.flash { background: #eef2ff; border-radius: 8px; transition: background .3s; }
+/* screen paths: indented under their source card (placeElbows sets margin-left), joined by an "L" line */
+.flow.path.from-screen { position: relative; margin-left: 0; padding-left: 0; border-left: 0; }
+.flow.from-screen > .flow-head, .flow.from-screen > .screens { padding-left: 34px; }
+.elbow {
+  position: absolute; left: -1px; width: 26px; pointer-events: none; z-index: 0;
+  border-left: 2px dashed #a5b4fc; border-bottom: 2px dashed #a5b4fc; border-bottom-left-radius: 10px;
+}
+.elbow::after {
+  content: ''; position: absolute; right: -4px; bottom: -6px; width: 8px; height: 8px;
+  border-top: 2px solid #818cf8; border-right: 2px solid #818cf8; transform: rotate(45deg);
+}
 .flow-end { align-self: center; flex-shrink: 0; padding: 4px 10px; border-radius: 99px; background: #e2e8f0; color: #475569; font-size: 11px; font-weight: 700; letter-spacing: .05em; }
 .cond-tag.mt-0 { margin-top: 0; }
 

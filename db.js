@@ -153,6 +153,11 @@ CREATE INDEX IF NOT EXISTS flows_condition_idx ON flows(from_condition_id);
 -- One screen recording per flow / path, stored in Cloudinary
 ALTER TABLE flows ADD COLUMN IF NOT EXISTS video_url text;
 ALTER TABLE flows ADD COLUMN IF NOT EXISTS video_public_id text;
+
+-- Screen paths: a flow that branches off a plain screen (drawn as an "L" under that card).
+-- It is shown only while that screen exists in a shown flow.
+ALTER TABLE flows ADD COLUMN IF NOT EXISTS from_screen_id text;
+CREATE INDEX IF NOT EXISTS flows_screen_idx ON flows(from_screen_id);
 `;
 
 const query = (text, params) => pool.query(text, params);
