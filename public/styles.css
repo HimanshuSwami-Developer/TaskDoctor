@@ -94,6 +94,26 @@ button.stat:hover { border-color: #a5b4fc; background: #f8fafc; color: #0f172a; 
   animation: nudge 1.8s ease-in-out infinite;
 }
 @keyframes nudge { 0%, 100% { transform: translateX(-2px); } 50% { transform: translateX(3px); } }
+/* "+" sitting on the arrow after a card: shows on hover, adds a condition between the two cards */
+.arrow-add {
+  position: absolute; top: 97px; right: -32px; z-index: 2; display: grid; place-items: center; width: 20px; height: 20px;
+  border: 1px solid #c7d2fe; border-radius: 99px; background: #fff; color: #4f46e5; opacity: 0; transition: opacity .15s;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, .12);
+}
+.card:hover > .arrow-add, .arrow-add:hover, .arrow-add:focus-visible { opacity: 1; }
+.arrow-add:hover { background: #eef2ff; }
+.sortable-drag .arrow-add, .sortable-ghost .arrow-add { display: none; }
+/* screen path wiring: drag the dot where the "L" leaves its card, a curved dashed wire follows, drop on a screen card */
+.elbow-grip {
+  position: absolute; z-index: 3; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 99px; cursor: grab; touch-action: none;
+  border: 2px solid #818cf8; background: #fff; box-shadow: 0 1px 3px rgba(15, 23, 42, .15); transition: transform .15s;
+}
+.elbow-grip:hover { transform: scale(1.3); background: #eef2ff; }
+.branch-wire { position: fixed; inset: 0; z-index: 80; width: 100vw; height: 100vh; pointer-events: none; overflow: visible; }
+.branch-wire .line { fill: none; stroke: #6366f1; stroke-width: 2; stroke-dasharray: 6 4; }
+.branch-wire .head { fill: none; stroke: #4f46e5; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+body.wiring, body.wiring * { cursor: crosshair !important; user-select: none; }
+.card.drop-target .card-face { box-shadow: 0 0 0 3px #6366f1; }
 .sortable-ghost { opacity: .35; }
 .sortable-ghost::after, .sortable-drag::after { display: none; }
 
@@ -103,8 +123,9 @@ button.stat:hover { border-color: #a5b4fc; background: #f8fafc; color: #0f172a; 
 }
 
 /* ---------- flip card: front = screen, back = issues ---------- */
-.card { position: relative; width: 290px; height: 380px; flex-shrink: 0; perspective: 1400px; }
-.card-inner { position: relative; width: 100%; height: 100%; transition: transform .5s ease; transform-style: preserve-3d; }
+/* the front sets the card's height (380px at least, taller when it has many condition tags); the back fills the same box */
+.card { position: relative; width: 290px; flex-shrink: 0; perspective: 1400px; }
+.card-inner { position: relative; width: 100%; min-height: 380px; transition: transform .5s ease; transform-style: preserve-3d; }
 .card.flipped .card-inner { transform: rotateY(180deg); }
 .card-face {
   position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden;
@@ -113,7 +134,7 @@ button.stat:hover { border-color: #a5b4fc; background: #f8fafc; color: #0f172a; 
   box-shadow: 0 1px 2px rgba(15, 23, 42, .06);
 }
 .card-back { transform: rotateY(180deg); }
-.card-front { cursor: pointer; }
+.card-front { position: relative; min-height: 380px; cursor: pointer; }
 .card-front:hover { box-shadow: 0 4px 14px rgba(15, 23, 42, .08); }
 
 /* priority outline = most urgent open issue */
@@ -222,7 +243,98 @@ button.stat:hover { border-color: #a5b4fc; background: #f8fafc; color: #0f172a; 
 .overlay { position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-start; justify-content: center; padding: 3vh 16px; background: rgba(15, 23, 42, .5); overflow-y: auto; }
 .overlay.hidden, .sheet.hidden { display: none; }
 .popup-card { width: 100%; max-width: 1100px; border-radius: 10px; background: #fff; box-shadow: 0 20px 50px rgba(15, 23, 42, .25); }
+/* ---------- flow diagram ---------- */
+.diagram-card { max-width: 100%; height: 94vh; display: flex; flex-direction: column; overflow: hidden; }
+.dg-scroll { flex: 1; min-height: 0; overflow: auto; background: #f8fafc radial-gradient(#e2e8f0 1px, transparent 1px) 0 0 / 18px 18px; }
+.dg-canvas { position: relative; }
+.dg-wires { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+.dg-edge { fill: none; stroke: #94a3b8; stroke-width: 2; }
+.dg-edge.ghost { stroke: #cbd5e1; stroke-dasharray: 4 4; }
+.dg-edge.path { stroke-dasharray: 6 4; }
+.dg-edge.branch { stroke-dasharray: 5 4; opacity: .9; }
+.dg-head { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.dg-lane { position: absolute; display: flex; align-items: center; gap: 6px; max-width: 160px; height: 22px; font-size: 12px; font-weight: 600; color: #334155; }
+.dg-lane .flow-no { min-width: 20px; height: 20px; font-size: 11px; }
+.dg-node {
+  position: absolute; display: flex; align-items: flex-start; gap: 8px; width: 190px; height: 76px; padding: 10px; cursor: pointer;
+  border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; box-shadow: 0 1px 2px rgba(15, 23, 42, .06); transition: box-shadow .15s;
+}
+.dg-node:hover { box-shadow: 0 4px 14px rgba(15, 23, 42, .1); }
+.dg-node.cond { align-items: center; border: 1.5px dashed #a5b4fc; background: #f5f7ff; }
+.dg-node.cond.active { box-shadow: 0 0 0 3px #c7d2fe; }
+.dg-node.ring-urgent { border-color: #dc2626; box-shadow: 0 0 0 1px #dc2626; }
+.dg-node.ring-high { border-color: #ea580c; box-shadow: 0 0 0 1px #ea580c; }
+.dg-node.ring-medium { border-color: #ca8a04; }
+.dg-node.ring-low { border-color: #93c5fd; }
+.dg-step { flex-shrink: 0; padding: 1px 5px; border: 1px solid #e2e8f0; border-radius: 4px; font-size: 10px; font-weight: 600; color: #475569; background: #f8fafc; }
+.dg-kind { font-size: 10px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: #4f46e5; }
+.dg-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 13px; font-weight: 600; color: #0f172a; }
+.dg-page { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-family: ui-monospace, monospace; font-size: 11px; color: #64748b; }
+.dg-open { margin-top: 2px; font-size: 11px; font-weight: 500; color: #b91c1c; }
+.dg-tools { position: absolute; right: 4px; bottom: 4px; display: flex; gap: 1px; padding: 1px; border-radius: 6px; background: #fff; opacity: 0; transition: opacity .15s; }
+.dg-node:hover .dg-tools, .dg-tools:focus-within { opacity: 1; }
+.dg-plus {
+  position: absolute; z-index: 2; display: grid; place-items: center; width: 20px; height: 20px; margin: -10px 0 0 -10px;
+  border: 1px solid #c7d2fe; border-radius: 99px; background: #fff; color: #4f46e5; box-shadow: 0 1px 4px rgba(15, 23, 42, .12);
+}
+.dg-plus:hover { background: #eef2ff; transform: scale(1.15); }
+.dg-add-end {
+  position: absolute; display: flex; align-items: center; justify-content: center; gap: 6px; width: 150px; height: 76px;
+  border: 1.5px dashed #cbd5e1; border-radius: 8px; font-size: 13px; font-weight: 500; color: #64748b; background: rgba(255, 255, 255, .6);
+}
+.dg-add-end:hover { border-color: #a5b4fc; color: #4338ca; background: #fff; }
+.dg-label {
+  position: absolute; z-index: 1; transform: translate(-50%, -50%); padding: 1px 7px; border-radius: 99px; pointer-events: none; white-space: nowrap;
+  border: 1px solid var(--tone); background: #fff; font-size: 11px; font-weight: 500; color: var(--tone);
+}
+.dg-pop, .dg-menu { position: absolute; z-index: 5; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; box-shadow: 0 12px 32px rgba(15, 23, 42, .2); }
+.dg-pop { width: 320px; cursor: default; }
+.dg-menu { display: flex; flex-direction: column; padding: 4px; min-width: 150px; }
+.dg-menu button { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 6px; font-size: 13px; font-weight: 500; color: #334155; text-align: left; }
+.dg-menu button:hover { background: #f1f5f9; }
+
+/* screen popup: ← → sit on the dialog's left and right edges, halfway down */
+.popup-nav {
+  position: absolute; top: 50%; z-index: 5; display: grid; place-items: center; width: 32px; height: 32px; transform: translateY(-50%);
+  border: 1px solid #e2e8f0; border-radius: 99px; background: #fff; color: #334155; box-shadow: 0 4px 14px rgba(15, 23, 42, .15);
+}
+.popup-nav.prev { left: -16px; }
+.popup-nav.next { right: -16px; }
+.popup-nav:hover:not(:disabled) { background: #eef2ff; color: #4338ca; border-color: #c7d2fe; }
+.popup-nav:disabled { opacity: .4; cursor: default; box-shadow: none; }
+.popup-choices {
+  position: absolute; top: 50%; right: 26px; z-index: 6; width: 340px; max-width: calc(100% - 52px); max-height: 60vh; overflow-y: auto;
+  transform: translateY(-50%); padding-bottom: 6px; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; box-shadow: 0 12px 32px rgba(15, 23, 42, .2);
+}
+.popup-choice { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 12px; }
+.popup-choice:hover { background: #f1f5f9; }
+.popup-choice kbd { flex-shrink: 0; min-width: 18px; padding: 0 4px; border: 1px solid #e2e8f0; border-radius: 4px; font-size: 10px; color: #64748b; text-align: center; }
+.cond-diamond.sm { width: 10px; height: 10px; margin: 0 2px; border-radius: 2px; }
 .popup-stage { display: flex; align-items: center; justify-content: center; padding: 20px; min-height: 60vh; border-radius: 8px; background: #f1f5f9; }
+/* nearly the whole screen (the overlay keeps 3vh above and below); the fields scroll, header and buttons stay put */
+.writer-card { max-width: min(1500px, 100%); height: 94vh; display: flex; flex-direction: column; }
+.writer-body { flex: 1; min-height: 0; overflow-y: auto; }
+/* one card per issue: where it is / the issue itself (widest, in the middle) / who and remarks */
+.writer-grid { display: flex; flex-direction: column; gap: 12px; }
+.writer-row { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; }
+.writer-line { display: grid; gap: 10px; align-items: start; }
+.writer-row textarea { resize: none; overflow: hidden; line-height: 20px; min-height: 34px; }
+.writer-actions { display: flex; justify-content: flex-end; gap: 2px; }
+@media (min-width: 768px) {
+  .writer-line.where { grid-template-columns: 1fr 1fr auto; }
+  .writer-line.where.multi { grid-template-columns: 1fr 1fr 1fr auto; }
+  .writer-line.what { grid-template-columns: 140px minmax(0, 1fr) 170px; }
+  .writer-line.who { grid-template-columns: 1fr 1fr; }
+  .writer-actions { align-self: end; padding-bottom: 3px; }
+}
+.writer-grid > .writer-row:not(:last-child) [data-add-issue] { display: none; }
+.writer-grid > .writer-row:only-child [data-remove-issue] { display: none; }
+.field-label { margin-bottom: 0; }
+.writer-row > .input { width: 100%; min-width: 0; }
+.writer-row textarea { resize: none; overflow: hidden; line-height: 20px; min-height: 34px; }
+.writer-actions { display: flex; gap: 2px; padding-top: 3px; }
+.writer-grid > .writer-row:not(:last-child) [data-add-issue] { visibility: hidden; }
+.writer-grid > .writer-labels + .writer-row:last-child [data-remove-issue] { display: none; }
 .field-label { display: block; margin-bottom: 6px; font-size: 12px; font-weight: 600; color: #475569; }
 
 /* ---------- issue sheet ---------- */
@@ -336,17 +448,15 @@ select.is-busy, input.is-busy, textarea.is-busy { opacity: .55; cursor: progress
 .flow.path { margin-left: calc(var(--depth, 1) * 28px); padding-left: 14px; border-left: 2px dashed #c7d2fe; }
 .flow-no.path { background: #f5f3ff; color: #6d28d9; }
 .flow.flash { background: #eef2ff; border-radius: 8px; transition: background .3s; }
-/* screen paths: indented under their source card (placeElbows sets margin-left), joined by an "L" line */
+/* screen paths: start at the left like the main row, joined to their source card by a dashed line (placeElbows) */
 .flow.path.from-screen { position: relative; margin-left: 0; padding-left: 0; border-left: 0; }
-.flow.from-screen > .flow-head, .flow.from-screen > .screens { padding-left: 34px; }
-.elbow {
-  position: absolute; left: -1px; width: 26px; pointer-events: none; z-index: 0;
-  border-left: 2px dashed #a5b4fc; border-bottom: 2px dashed #a5b4fc; border-bottom-left-radius: 10px;
-}
-.elbow::after {
-  content: ''; position: absolute; right: -4px; bottom: -6px; width: 8px; height: 8px;
-  border-top: 2px solid #818cf8; border-right: 2px solid #818cf8; transform: rotate(45deg);
-}
+/* one-line header: the name shrinks with an ellipsis instead of wrapping */
+.flow.from-screen > .flow-head { white-space: nowrap; }
+.flow.from-screen > .flow-head > * { flex-shrink: 0; }
+.flow.from-screen > .flow-head > h3 { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.elbow { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; z-index: 0; }
+.elbow .line { fill: none; stroke: #a5b4fc; stroke-width: 2; stroke-dasharray: 5 4; stroke-linejoin: round; }
+.elbow .head { fill: none; stroke: #818cf8; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .flow-end { align-self: center; flex-shrink: 0; padding: 4px 10px; border-radius: 99px; background: #e2e8f0; color: #475569; font-size: 11px; font-weight: 700; letter-spacing: .05em; }
 .cond-tag.mt-0 { margin-top: 0; }
 

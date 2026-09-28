@@ -29,6 +29,8 @@ $(function () {
     down: 'M6 9l6 6 6-6',
     user: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8z',
     extend: 'M6 3v9a4 4 0 0 0 4 4h10M16 12l4 4-4 4',
+    diagram: 'M3 3h7v6H3zM14 15h7v6h-7zM6.5 9v3a3 3 0 0 0 3 3H14',
+    minus: 'M5 12h14',
     link: 'M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7',
   };
   const icon = (name, size = 16) =>
@@ -136,15 +138,16 @@ $(function () {
     full: `[data-action="add-module"], [data-rename-module], [data-delete-module], [data-action="add-flow"], [data-rename-flow],
       [data-delete-flow], [data-move-flow], [data-extend-path], .add-screen, [data-delete-screen], [data-copy-screen], [data-delete-comment],
       [data-remove-video], [data-remove-image], [data-add-branch], [data-remove-branch], [data-rename-condition], [data-edit-screen],
-      [data-extend-screen]`,
+      [data-extend-screen], [data-insert-condition], [data-move-path],
+      [data-dg-insert], [data-dg-branch-add], [data-dg-branch-remove]`,
     edit: '.add-comment, [data-action="writer"], [data-remove-person], [data-bugs], [data-flip], [data-open-sheet], .issues-panel',
   };
   function applyAccess() {
-    const $root = $('#products, #summary, #account, #tabs, #board, #popupBody, #sheetBody, #bugsBody, #videoBody');
+    const $root = $('#products, #summary, #account, #tabs, #board, #popupBody, #sheetBody, #bugsBody, #videoBody, #diagramBody');
     Object.entries(NEEDS).forEach(([level, selector]) => { if (!can(level)) $root.find(selector).remove(); });
     if (!can('full')) {
       $root.find('[data-upload], [data-upload-video]').closest('label').remove();
-      $root.find('[data-device], [data-wireframe], [data-branch-label], [data-branch-target]').prop('disabled', true);
+      $root.find('[data-device], [data-wireframe], [data-branch-label], [data-branch-target], [data-dg-branch-label], [data-dg-branch-target]').prop('disabled', true);
     }
     if (!can('edit')) $root.find('[data-status], [data-resolve], [data-field], [data-cycle-priority], .people-input').prop('disabled', true);
   }
@@ -461,6 +464,7 @@ $(function () {
         render();
         if (!$('#statusModal').hasClass('hidden')) renderStatuses();
         if (bugsView) { renderBugs(); applyAccess(); }
+        if (diagram.flowId) renderDiagram();
       })
       .fail((xhr) => {
         if (loaded || xhr.status === 401) return;
@@ -594,13 +598,15 @@ $(function () {
     return `
       <section class="flow ${from ? 'path' : ''} ${fromScreen ? 'from-screen' : ''}" data-flow-id="${f.id}"
         ${fromScreen ? `data-from-screen="${fromScreen.id}"` : ''} style="${depth ? `--depth:${depth}` : ''}">
-        ${fromScreen ? '<span class="elbow" aria-hidden="true"></span>' : ''}
+        ${fromScreen ? `<svg class="elbow" aria-hidden="true"><path class="line"/><path class="head"/></svg>
+          <button class="elbow-grip" data-move-path="${f.id}" title="Drag onto another screen to start this flow from there"></button>` : ''}
         <div class="flow-head">
           <span class="flow-no ${from ? 'path' : ''}">${no}</span>
           <h3 class="text-base font-semibold text-slate-900">${esc(f.name)}</h3>
           ${fromScreen ? `<button class="cond-tag tone-other mt-0" data-locate="${fromScreen.id}" title="Go to the screen this flow starts from">${icon('extend', 12)} from ${esc(fromScreen.name)}</button>` : ''}
           ${from && from.condition ? `<span class="cond-tag tone-${tone(from.branch.label)} mt-0"><span class="dot"></span>from ${esc(from.condition.name)} = ${esc(from.branch.label || '—')}</span>` : ''}
           <span class="text-sm text-slate-500">${screens.length} screens · ${done}/${issues.length} issues complete</span>
+          <button class="video-btn" data-diagram="${f.id}" title="See this flow and its paths as a diagram">${icon('diagram', 12)} Diagram</button>
           ${f.video
             ? `<button class="video-btn" data-play-video="${f.id}" title="Play this flow's video">${icon('play', 12)} Video</button>`
             : `<label class="video-btn add" title="Upload a screen recording of this flow">${icon('video', 12)} Add video
@@ -637,6 +643,7 @@ $(function () {
 
     return `
       <div class="card cond" data-id="${c.id}">
+        ${arrowAdd(c)}
         <div class="flex items-center gap-2">
           <span class="cond-diamond"></span>
           <div class="min-w-0 flex-1">
@@ -673,6 +680,9 @@ $(function () {
       </div>`;
   }
 
+  // "+" on the arrow after a card: put a new condition between it and the next card
+  const arrowAdd = (s) => `<button class="arrow-add" data-insert-condition="${s.id}" title="Add a condition here">${icon('plus', 12)}</button>`;
+
   function conditionTags(s) {
     return incomingFor(s.id).map(({ condition, branch }) =>
       `<p class="cond-tag tone-${tone(branch.label)}"><span class="dot"></span>If ${esc(condition.name)} = ${esc(branch.label || '—')}</p>`).join('');
@@ -685,6 +695,7 @@ $(function () {
     const topCount = s.comments.filter((c) => !c.resolved && prio(c) === top).length;
     return `
       <div class="card ${flipped.has(s.id) ? 'flipped' : ''} ${top ? `ring-${top}` : ''}" data-id="${s.id}">
+        ${arrowAdd(s)}
         <div class="card-inner">
           <div class="card-face card-front">
             <div class="preview">
@@ -716,25 +727,29 @@ $(function () {
 
   // ---------------------------------------------------------------- screen paths: the "L" from a card down into its new flow
 
-  // Each screen path starts under its source card: a line runs down from the card, then turns right into the path.
-  // Parents come first in the page, so a nested path is placed after the path its card sits in.
+  // Each screen path starts at the left, like the main row, and is joined to its source card by a dashed line:
+  // down from the card, left along the gutter, down again, then right into the path's first card.
   function placeElbows() {
     $('#board .flow.from-screen').each((i, sec) => {
       const card = document.querySelector(`#board .card[data-id="${$(sec).data('from-screen')}"]`);
       const elbow = sec.querySelector('.elbow');
       const first = sec.querySelector('.screens > *');
-      sec.style.marginLeft = '0px';
       if (!card || !elbow || !first) return;
       const row = card.closest('.screens').getBoundingClientRect();
       const c = card.getBoundingClientRect();
       const base = sec.getBoundingClientRect();
-      // keep the start inside the row's visible part (the card may be scrolled away) and leave room for the path
+      const f = first.getBoundingClientRect();
+      // keep the start inside the row's visible part (the card may be scrolled away)
       const x = Math.min(Math.max(c.left + c.width / 2, row.left + 16), row.right - 16) - base.left;
-      sec.style.marginLeft = `${Math.max(0, Math.min(x, base.width - 360))}px`;
-      const top = c.bottom - sec.getBoundingClientRect().top;
-      const bottom = first.getBoundingClientRect().top - sec.getBoundingClientRect().top + 107; // card arrow height
-      elbow.style.top = `${top}px`;
-      elbow.style.height = `${Math.max(bottom - top, 24)}px`;
+      const top = c.bottom - base.top;
+      const turn = top + 14; // run left through the gap under the parent row
+      const gutter = -12; // board padding, left of both rows
+      const y = f.top - base.top + 107; // card arrow height
+      const end = f.left - base.left - 4;
+      elbow.querySelector('.line').setAttribute('d', `M${x} ${top}V${turn}H${gutter}V${y}H${end}`);
+      elbow.querySelector('.head').setAttribute('d', `M${end - 6} ${y - 5}L${end} ${y}L${end - 6} ${y + 5}`);
+      const grip = sec.querySelector('.elbow-grip');
+      if (grip) Object.assign(grip.style, { left: `${x}px`, top: `${top}px` });
     });
   }
   let elbowFrame = 0;
@@ -862,14 +877,339 @@ $(function () {
     unlockScroll();
   }
 
+  // ---------------------------------------------------------------- flow diagram: the flow and its paths as boxes and arrows
+  //
+  // Each flow is a lane (a row); a path lane starts under the step it leaves from. Everything done here — a box added
+  // on an arrow, a branch pointed at a screen, a rename — goes through the same API as the board, so the board's
+  // screens are created and changed along with the diagram.
+
+  const diagram = { flowId: null, zoom: 1, condId: null, menu: null }; // menu = { flowId, after }
+  const DG = { w: 190, h: 76, colW: 250, rowH: 230, pad: 48, title: 26, top: 90 };
+  const TONE_COLOR = { success: '#16a34a', pending: '#d97706', fail: '#dc2626', other: '#94a3b8' };
+  const dgX = (col) => DG.pad + col * DG.colW;
+  const dgY = (row) => DG.pad + DG.top + row * DG.rowH;
+
+  // Lanes in rows, laid out so nothing crosses:
+  // - a path lane starts one column right of the step it leaves; its arrow runs down a "trunk" under that step
+  //   (a column no lane below uses) and turns right into the lane's first box
+  // - paths are placed from the rightmost step back, so a trunk never passes a lane that starts left of it
+  // - branch arrows between steps of one lane arc above that lane, each on its own level (see renderDiagram)
+  // Numbers still read left to right, as on the board.
+  function diagramLayout(root) {
+    const m = allModules.find((x) => x.flows.some((f) => f.id === root.id));
+    const noOf = new Map(numberedFlows(m).map((x) => [x.flow.id, x.no]));
+    const lanes = [];
+    const nodes = new Map();
+    const walk = (f, col, from) => {
+      const lane = { flow: f, row: lanes.length, col, from, no: noOf.get(f.id) || '' };
+      lanes.push(lane);
+      f.screens.forEach((x, i) => nodes.set(x.id, { s: x, col: col + i, row: lane.row, lane }));
+      f.screens.map((x, i) => ({ x, i })).reverse().forEach(({ x, i }) =>
+        pathsAt(x).slice().reverse().forEach(({ path, from: at }) => walk(path, col + i + 1, { ...at, stepId: x.id })));
+    };
+    walk(root, 0, null);
+    const cols = Math.max(1, ...lanes.map((l) => l.col + l.flow.screens.length + 1));
+    return { m, lanes, nodes, width: dgX(cols) + DG.pad, height: dgY(lanes.length) - DG.top + DG.pad / 2 };
+  }
+
+  const bezierMid = (a, b, c, d) => [(a[0] + 3 * b[0] + 3 * c[0] + d[0]) / 8, (a[1] + 3 * b[1] + 3 * c[1] + d[1]) / 8];
+
+  function renderDiagram() {
+    const root = findFlow(diagram.flowId);
+    if (!root) { closeDiagram(); return; }
+    const { m, lanes, nodes, width, height } = diagramLayout(root);
+    const edges = [];
+    const labels = [];
+    const html = [];
+    const arrow = (x, y, dir, color) => {
+      const d = { right: `M${x - 7} ${y - 5}L${x} ${y}L${x - 7} ${y + 5}`, down: `M${x - 5} ${y - 7}L${x} ${y}L${x + 5} ${y - 7}`, up: `M${x - 5} ${y + 7}L${x} ${y}L${x + 5} ${y + 7}` }[dir];
+      edges.push(`<path class="dg-head" d="${d}" style="stroke:${color}"/>`);
+    };
+    const plus = (x, y, flowId, after, title) =>
+      html.push(`<button class="dg-plus" style="left:${x}px;top:${y}px" data-dg-insert="${flowId}" data-after="${after || ''}" title="${title}">${icon('plus', 12)}</button>`);
+
+    lanes.forEach((lane) => {
+      const { flow, row, col } = lane;
+      const y = dgY(row);
+      const mid = y + DG.h / 2;
+      html.push(`<div class="dg-lane" style="left:${dgX(col)}px;top:${y - DG.title}px" title="${esc(flow.name)}">
+        <span class="flow-no ${lane.from ? 'path' : ''}">${lane.no}</span><span class="truncate">${esc(flow.name)}</span></div>`);
+      // arrows along the lane, each with a "+" to put a screen or condition between the two steps
+      flow.screens.forEach((x, i) => {
+        const x0 = dgX(col + i) + DG.w;
+        if (i < flow.screens.length - 1) {
+          const x1 = dgX(col + i + 1);
+          edges.push(`<path class="dg-edge" d="M${x0} ${mid}H${x1 - 2}"/>`);
+          arrow(x1 - 1, mid, 'right', '#94a3b8');
+          plus((x0 + x1) / 2, mid, flow.id, x.id, 'Add a screen or condition here');
+        }
+      });
+      // the end of the lane: a dashed box to add the next step
+      const endCol = col + flow.screens.length;
+      const ex = dgX(endCol);
+      if (flow.screens.length) {
+        edges.push(`<path class="dg-edge ghost" d="M${ex - DG.colW + DG.w} ${mid}H${ex - 2}"/>`);
+      }
+      html.push(`<button class="dg-add-end" style="left:${ex}px;top:${y}px" data-dg-insert="${flow.id}" data-after="${flow.screens.length ? flow.screens[flow.screens.length - 1].id : ''}">
+        ${icon('plus', 14)} Add step</button>`);
+      // the arrow into this lane from the step it leaves
+      if (lane.from) {
+        const src = nodes.get(lane.from.stepId);
+        const sx = dgX(src.col) + DG.w / 2;
+        const sy = dgY(src.row) + DG.h;
+        const tx = dgX(col) - 2;
+        const b = lane.from.branch;
+        const color = b ? TONE_COLOR[tone(b.label)] : '#818cf8';
+        edges.push(`<path class="dg-edge path" d="M${sx} ${sy}V${mid - 12}Q${sx} ${mid} ${sx + 12} ${mid}H${tx}" style="stroke:${color}"/>`);
+        arrow(tx + 1, mid, 'right', color);
+        labels.push(`<span class="dg-label" style="left:${(sx + tx) / 2 + 6}px;top:${mid}px;--tone:${color}">${b ? esc(b.label || '—') : 'extends'}</span>`);
+      }
+    });
+
+    // steps; each condition's branches that show a screen in the same lane become arcs (drawn below)
+    const arcs = [];
+    nodes.forEach(({ s: x, col, row }) => {
+      const nx = dgX(col);
+      const ny = dgY(row);
+      const no = onlyScreens(findFlow(x.flowId).screens).findIndex((y) => y.id === x.id) + 1;
+      if (isCondition(x)) {
+        const branches = x.branches || [];
+        html.push(`<div class="dg-node cond ${diagram.condId === x.id ? 'active' : ''}" style="left:${nx}px;top:${ny}px" data-dg-cond="${x.id}" title="Edit branches">
+          <span class="cond-diamond sm"></span>
+          <div class="min-w-0 flex-1"><p class="dg-kind">Condition</p><p class="dg-name">${esc(x.name)}</p>
+            <p class="dg-page">${branches.length} branch${branches.length === 1 ? '' : 'es'}</p></div>
+          <div class="dg-tools">
+            <button class="icon-btn sm" data-rename-condition="${x.id}" title="Rename">${icon('edit', 12)}</button>
+            <button class="icon-btn sm danger" data-delete-screen="${x.id}" title="Delete condition">${icon('trash', 12)}</button>
+          </div>
+        </div>`);
+        branches.filter((b) => b.targetId && nodes.has(b.targetId) && nodes.get(b.targetId).row === row && b.targetId !== x.id)
+          .forEach((b) => arcs.push({ row, from: col, to: nodes.get(b.targetId).col, branch: b, condId: x.id }));
+      } else {
+        const top = topPriority(x);
+        const open = x.comments.filter((c) => !c.resolved).length;
+        html.push(`<div class="dg-node screen ${top ? `ring-${top}` : ''}" style="left:${nx}px;top:${ny}px" data-dg-open="${x.id}" title="Open screen">
+          <span class="dg-step">${String(no).padStart(2, '0')}</span>
+          <div class="min-w-0 flex-1"><p class="dg-name">${esc(x.name)}</p><p class="dg-page">${esc(x.page || '—')}</p>
+            ${open ? `<p class="dg-open">${open} open issue${open === 1 ? '' : 's'}</p>` : ''}</div>
+          <div class="dg-tools">
+            <button class="icon-btn sm" data-edit-screen="${x.id}" title="Edit screen">${icon('edit', 12)}</button>
+            <button class="icon-btn sm" data-extend-screen="${x.id}" title="Extend a new flow from this screen">${icon('extend', 12)}</button>
+            <button class="icon-btn sm danger" data-delete-screen="${x.id}" title="Delete screen">${icon('trash', 12)}</button>
+          </div>
+        </div>`);
+      }
+    });
+
+    // Branch arcs rise from the right part of the condition box and drop into the right part of the target box
+    // (clear of the lane title on the left). Legs sharing a box are spread apart; each arc takes the lowest level
+    // whose span is free in its lane, shorter arcs first, so arcs nest instead of crossing.
+    const legs = new Map();
+    const leg = (key) => { const n = legs.get(key) || 0; legs.set(key, n + 1); return n; };
+    const levels = new Map(); // row → [[lo, hi], …] per level
+    arcs.sort((p, q) => Math.abs(p.to - p.from) - Math.abs(q.to - q.from)).forEach((arc) => {
+      const color = TONE_COLOR[tone(arc.branch.label)];
+      const ax = dgX(arc.from) + DG.w - 20 - leg(`${arc.row}:${arc.from}`) * 12;
+      const bx = dgX(arc.to) + DG.w - 20 - leg(`${arc.row}:${arc.to}`) * 12 - (arc.to === arc.from ? 0 : 6);
+      const lo = Math.min(ax, bx) - 40;
+      const hi = Math.max(ax, bx) + 40;
+      const used = levels.get(arc.row) || [];
+      let lvl = used.findIndex((spans) => spans.every(([l, h]) => hi < l || lo > h));
+      if (lvl < 0) { lvl = used.length; used.push([]); }
+      used[lvl].push([lo, hi]);
+      levels.set(arc.row, used);
+      const ny = dgY(arc.row);
+      const top = ny - DG.title - 18 - Math.min(lvl, 3) * 16;
+      edges.push(`<path class="dg-edge branch" d="M${ax} ${ny}V${top + 8}Q${ax} ${top} ${ax + Math.sign(bx - ax) * 8} ${top}H${bx - Math.sign(bx - ax) * 8}Q${bx} ${top} ${bx} ${top + 8}V${ny - 3}" style="stroke:${color}"/>`);
+      arrow(bx, ny - 2, 'down', color);
+      labels.push(`<span class="dg-label" style="left:${(ax + bx) / 2}px;top:${top}px;--tone:${color}">${esc(arc.branch.label || '—')}</span>`);
+    });
+
+    // branch editor under the open condition
+    const cond = diagram.condId && nodes.get(diagram.condId);
+    if (cond && isCondition(cond.s)) html.push(diagramBranchEditor(cond, m));
+    else diagram.condId = null;
+    // "+" menu: what to add
+    if (diagram.menu) {
+      html.push(`<div class="dg-menu" style="left:${diagram.menu.x}px;top:${diagram.menu.y}px">
+        <button data-dg-new="screen">${icon('plus', 14)} Screen</button>
+        <button data-dg-new="condition"><span class="cond-diamond sm"></span> Condition</button>
+      </div>`);
+    }
+
+    const scroll = $('#diagramBody .dg-scroll')[0];
+    const at = scroll ? { left: scroll.scrollLeft, top: scroll.scrollTop } : null;
+    $('#diagramBody').html(`
+      <div class="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
+        <span class="text-indigo-600">${icon('diagram', 18)}</span>
+        <div class="min-w-0 flex-1">
+          <h3 class="truncate text-base font-semibold text-slate-900">${esc(root.name)} · Diagram</h3>
+          <p class="truncate text-xs text-slate-500">Click a screen to open it, a condition to edit its branches, + on an arrow to add a step. Changes update the screens.</p>
+        </div>
+        <div class="flex items-center gap-1">
+          <button class="icon-btn border border-slate-200 bg-white" data-dg-zoom="-1" title="Zoom out">${icon('minus', 14)}</button>
+          <button class="min-w-[52px] rounded-md px-2 py-1 text-xs font-medium tabular-nums text-slate-600 hover:bg-slate-100" data-dg-zoom="0" title="Reset zoom">${Math.round(diagram.zoom * 100)}%</button>
+          <button class="icon-btn border border-slate-200 bg-white" data-dg-zoom="1" title="Zoom in">${icon('plus', 14)}</button>
+        </div>
+        <button class="icon-btn" data-close-diagram title="Close">${icon('close', 18)}</button>
+      </div>
+      <div class="dg-scroll">
+        <div class="dg-canvas" style="width:${width}px;height:${height}px;zoom:${diagram.zoom}">
+          <svg class="dg-wires" width="${width}" height="${height}" aria-hidden="true">${edges.join('')}</svg>
+          ${html.join('')}
+          ${labels.join('')}
+        </div>
+      </div>`);
+    if (at) Object.assign($('#diagramBody .dg-scroll')[0], { scrollLeft: at.left, scrollTop: at.top });
+    applyAccess();
+  }
+
+  function diagramBranchEditor({ s: c, col, row }, m) {
+    const screens = m.flows.map((f) => ({ f, list: onlyScreens(f.screens) })).filter((g) => g.list.length);
+    const options = (selected) => '<option value="">Choose screen…</option>' + screens.map(({ f, list }) =>
+      `<optgroup label="${esc(f.name)}">${list.map((x) => `<option value="${x.id}" ${x.id === selected ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</optgroup>`).join('');
+    return `
+      <div class="dg-pop" style="left:${dgX(col)}px;top:${dgY(row) + DG.h + 10}px" data-dg-pop="${c.id}">
+        <div class="flex items-center gap-2 border-b border-slate-100 px-3 py-2">
+          <span class="cond-diamond sm"></span>
+          <p class="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900">${esc(c.name)}</p>
+          <button class="icon-btn sm" data-dg-cond-close title="Close">${icon('close', 12)}</button>
+        </div>
+        <ul class="space-y-2 p-3">
+          ${(c.branches || []).map((b) => `
+            <li class="branch tone-${tone(b.label)}">
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-medium text-slate-500">If</span>
+                <input class="input min-w-0 flex-1 py-1 text-sm" value="${esc(b.label)}" placeholder="e.g. Success" data-dg-branch-label="${b.id}">
+                <button class="icon-btn sm danger" data-dg-branch-remove="${b.id}" title="Remove branch">${icon('close', 12)}</button>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-medium text-slate-500">Show</span>
+                <select class="input min-w-0 flex-1 py-1 text-sm" data-dg-branch-target="${b.id}">${options(b.targetId)}</select>
+              </div>
+              ${pathsOf(c.id, b.id).map((path) => `<p class="truncate text-xs text-slate-500">Path: <span class="font-medium text-indigo-600">${esc(path.name)}</span></p>`).join('') || `
+                <button class="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:underline" data-extend-path="${c.id}" data-branch-id="${b.id}">${icon('plus', 12)} Extend path</button>`}
+            </li>`).join('')}
+        </ul>
+        <div class="px-3 pb-3"><button class="inline-flex items-center gap-1 text-sm font-medium text-indigo-600 hover:underline" data-dg-branch-add>${icon('plus', 14)} Add branch</button></div>
+      </div>`;
+  }
+
+  function openDiagram(id) {
+    Object.assign(diagram, { flowId: id, condId: null, menu: null });
+    renderDiagram();
+    $('#diagramModal').removeClass('hidden');
+    $('body').addClass('overflow-hidden');
+  }
+  function closeDiagram() {
+    Object.assign(diagram, { flowId: null, condId: null, menu: null });
+    $('#diagramModal').addClass('hidden');
+    unlockScroll();
+  }
+
+  // branches of the open condition, changed one field at a time
+  const dgBranches = () => (findScreen(diagram.condId).branches || []).map((b) => ({ id: b.id, label: b.label, targetId: b.targetId || null }));
+  const dgSaveBranches = (list) => api('PATCH', `/api/screens/${diagram.condId}`, { branches: list }).done(load);
+
+  // add a screen or condition to a flow, right after `after` (or at the end)
+  function dgAdd(kind, flowId, after) {
+    const place = (created) => {
+      const ids = findFlow(flowId).screens.map((x) => x.id);
+      const at = after ? ids.indexOf(after) + 1 : ids.length;
+      if (at >= ids.length) return $.Deferred().resolve().promise();
+      ids.splice(at, 0, created.id);
+      return api('PUT', `/api/flows/${flowId}/order`, { ids }, null, QUIET);
+    };
+    ask(kind === 'condition'
+      ? {
+        title: 'New condition',
+        fields: [{ name: 'name', label: 'Condition name', placeholder: 'e.g. Mandate status', required: true }],
+        confirmText: 'Add condition',
+        save: (v) => api('POST', `/api/flows/${flowId}/screens`, { type: 'condition', name: v.name }, null, QUIET).then(place).done(load),
+      }
+      : {
+        title: 'New screen',
+        fields: [
+          { name: 'name', label: 'Screen name', required: true },
+          { name: 'page', label: 'Page', placeholder: 'e.g. /signup/otp' },
+        ],
+        confirmText: 'Add screen',
+        save: (v) => api('POST', `/api/flows/${flowId}/screens`, v, null, QUIET).then(place).done(load),
+      });
+  }
+
+  $doc.on('click', '[data-diagram]', function () { openDiagram($(this).data('diagram')); });
+  $doc.on('click', '[data-close-diagram]', closeDiagram);
+  $('#diagramModal').on('mousedown', function (e) { if (e.target === this) closeDiagram(); });
+  $doc.on('click', '[data-dg-zoom]', function () {
+    const step = Number($(this).data('dg-zoom'));
+    diagram.zoom = step ? Math.min(1.5, Math.max(0.4, Math.round((diagram.zoom + step * 0.1) * 10) / 10)) : 1;
+    renderDiagram();
+  });
+  // clicks on the canvas: open a screen, open a condition's branches, or close what is open
+  $doc.on('click', '#diagramBody .dg-canvas', function (e) {
+    const $t = $(e.target);
+    if ($t.closest('.dg-pop, .dg-menu, .dg-tools, [data-dg-insert]').length) return;
+    const open = $t.closest('[data-dg-open]').data('dg-open');
+    const cond = $t.closest('[data-dg-cond]').data('dg-cond');
+    if (open) { openPopup(open); return; }
+    diagram.condId = cond && cond !== diagram.condId ? cond : null;
+    diagram.menu = null;
+    renderDiagram();
+  });
+  $doc.on('click', '[data-dg-cond-close]', () => { diagram.condId = null; renderDiagram(); });
+  $doc.on('click', '[data-dg-insert]', function (e) {
+    e.stopPropagation();
+    const canvas = $(this).closest('.dg-canvas')[0].getBoundingClientRect();
+    const r = this.getBoundingClientRect();
+    diagram.condId = null;
+    diagram.menu = {
+      flowId: $(this).data('dg-insert'),
+      after: $(this).data('after') || null,
+      x: (r.left - canvas.left) / diagram.zoom,
+      y: (r.bottom - canvas.top) / diagram.zoom + 6,
+    };
+    renderDiagram();
+  });
+  $doc.on('click', '[data-dg-new]', function () {
+    const { flowId, after } = diagram.menu;
+    diagram.menu = null;
+    renderDiagram();
+    dgAdd($(this).data('dg-new'), flowId, after);
+  });
+  $doc.on('change', '[data-dg-branch-label]', function () {
+    const id = $(this).data('dg-branch-label');
+    dgSaveBranches(dgBranches().map((b) => (b.id === id ? { ...b, label: this.value.trim() } : b)));
+  });
+  $doc.on('change', '[data-dg-branch-target]', function () {
+    const id = $(this).data('dg-branch-target');
+    dgSaveBranches(dgBranches().map((b) => (b.id === id ? { ...b, targetId: this.value || null } : b)));
+  });
+  $doc.on('click', '[data-dg-branch-add]', () => dgSaveBranches(dgBranches().concat({ label: '', targetId: null })));
+  $doc.on('click', '[data-dg-branch-remove]', function () {
+    const gone = $(this).data('dg-branch-remove');
+    const paths = pathsOf(diagram.condId, gone);
+    const save = () => dgSaveBranches(dgBranches().filter((b) => b.id !== gone));
+    if (!paths.length) { save(); return; }
+    dialog.confirm({
+      title: 'Remove this branch?',
+      message: `Its path “${paths[0].name}” and the screens in it will be removed from the sheet too.`,
+      confirmText: 'Remove',
+      danger: true,
+      onConfirm: save,
+    });
+  });
+
   // ---------------------------------------------------------------- screen popup
 
   function renderPopup() {
     const s = findScreen(openId);
     if (!s) { closePopup(); return; }
     const linked = linkedCopies(s);
+    const { prev, next, at, total } = popupSiblings(s);
     $('#popupBody').html(`
       <div class="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
+        <span class="shrink-0 rounded-md bg-slate-100 px-2 py-1 text-xs font-medium tabular-nums text-slate-500" title="Screen in this flow">${at} / ${total}</span>
         <div class="min-w-0 flex-1">
           <h3 class="truncate text-lg font-semibold text-slate-900">${esc(s.name)}</h3>
           <p class="truncate font-mono text-xs text-slate-500">${esc(s.page || '—')}</p>
@@ -899,7 +1239,43 @@ $(function () {
           </div>
           <div class="issues-panel border-t border-slate-200 pt-4">${issuesPanel(s, true)}</div>
         </div>
-      </div>`);
+      </div>
+      <button class="popup-nav prev" data-popup-go="${prev ? prev.id : ''}" title="Previous screen in this flow (←)" ${prev ? '' : 'disabled'}>${icon('left', 20)}</button>
+      ${next && next.condition
+        ? `<button class="popup-nav next" data-popup-choose title="${esc(next.condition.name)}: choose where to continue (→)">${icon('right', 20)}</button>
+          <div class="popup-choices hidden">
+            <p class="flex items-center gap-2 px-3 pb-1 pt-2 text-xs font-semibold text-slate-900"><span class="cond-diamond sm"></span>${esc(next.condition.name)}</p>
+            <p class="px-3 pb-2 text-xs text-slate-500">Continue with</p>
+            ${next.choices.map((c, k) => `
+              <button class="popup-choice" data-popup-go="${c.screen.id}">
+                <span class="cond-tag tone-${tone(c.branch.label)} mt-0"><span class="dot"></span>${esc(c.branch.label || '—')}</span>
+                <span class="min-w-0 flex-1 truncate text-left text-sm font-medium text-slate-900">${esc(c.screen.name)}</span>
+                ${c.flow && c.flow.id !== s.flowId ? `<span class="max-w-[90px] shrink-0 truncate text-xs text-slate-400">${esc(c.flow.name)}</span>` : ''}
+                <kbd>${k + 1}</kbd>
+              </button>`).join('') || '<p class="px-3 pb-3 text-sm text-slate-500">No branch leads to a screen yet.</p>'}
+          </div>`
+        : `<button class="popup-nav next" data-popup-go="${next ? next.id : ''}" title="Next screen in this flow (→)" ${next ? '' : 'disabled'}>${icon('right', 20)}</button>`}`);
+  }
+
+  // Where ← and → lead from a screen in its flow. Going back skips conditions; going forward into a condition
+  // offers its branches instead: each one's target screen and/or the first screen of its path.
+  function popupSiblings(s) {
+    const f = findFlow(s.flowId);
+    const steps = f ? f.screens : [s];
+    const list = onlyScreens(steps);
+    const i = steps.findIndex((x) => x.id === s.id);
+    const prev = steps.slice(0, i).reverse().find((x) => !isCondition(x));
+    let next = steps[i + 1];
+    if (next && isCondition(next)) {
+      const c = next;
+      const choices = (c.branches || []).flatMap((branch) => {
+        const target = branch.targetId && findScreen(branch.targetId);
+        const starts = pathsOf(c.id, branch.id).map((path) => onlyScreens(path.screens)[0]).filter(Boolean);
+        return [target, ...starts].filter(Boolean).map((screen) => ({ branch, screen, flow: findFlow(screen.flowId) }));
+      });
+      next = { condition: c, choices };
+    }
+    return { prev, next, at: list.findIndex((x) => x.id === s.id) + 1, total: list.length };
   }
 
   function openPopup(id) {
@@ -1310,38 +1686,70 @@ $(function () {
       });
   });
 
-  // ---------------------------------------------------------------- issue writer: pick app → flow → screen, write the issue
+  // ---------------------------------------------------------------- issue writer: one row per issue — app → flow → screen, issue, priority …
 
+  // what a new writer starts on; each row then keeps its own app / flow / screen
   const writer = { productId: null, flowId: null, screenId: null };
 
-  function writerFlows() {
-    const p = products.find((x) => x.id === writer.productId);
+  function writerFlows(pid) {
+    const p = products.find((x) => x.id === pid);
     return p ? p.modules.map((m) => ({ m, list: numberedFlows(m) })) : [];
   }
 
-  function writerScreens() {
-    const f = findFlow(writer.flowId);
-    return f ? onlyScreens(f.screens) : [];
-  }
-
-  function renderWriterScreens() {
-    const list = writerScreens();
-    if (!list.some((x) => x.id === writer.screenId)) writer.screenId = list[0] ? list[0].id : null;
-    $('#writerForm [name=screen]').html(list.length
-      ? list.map((x, i) => `<option value="${x.id}" ${x.id === writer.screenId ? 'selected' : ''}>${String(i + 1).padStart(2, '0')} · ${esc(x.name)}${x.page ? ` (${esc(x.page)})` : ''}</option>`).join('')
+  // Fill a row's flow and screen lists, keeping its picks where they still exist
+  function renderRowScreens($row) {
+    const f = findFlow($row.find('[name=flow]').val());
+    const list = f ? onlyScreens(f.screens) : [];
+    const keep = $row.data('screen');
+    const sid = list.some((x) => x.id === keep) ? keep : list[0] && list[0].id;
+    $row.data('screen', sid || null);
+    $row.find('[name=screen]').html(list.length
+      ? list.map((x, i) => `<option value="${x.id}" ${x.id === sid ? 'selected' : ''}>${String(i + 1).padStart(2, '0')} · ${esc(x.name)}${x.page ? ` (${esc(x.page)})` : ''}</option>`).join('')
       : '<option value="">No screens in this flow</option>').prop('disabled', !list.length);
-    $('#writerForm [type=submit]').prop('disabled', !list.length);
   }
 
-  function renderWriterFlows() {
-    const groups = writerFlows();
+  function renderRowFlows($row) {
+    const groups = writerFlows($row.find('[name=product]').val() || $row.data('product'));
     const all = groups.flatMap((g) => g.list.map((x) => x.flow));
-    if (!all.some((f) => f.id === writer.flowId)) writer.flowId = all[0] ? all[0].id : null;
-    $('#writerForm [name=flow]').html(groups.map(({ m, list }) => `<optgroup label="${esc(m.name)}">${list.map(({ flow, no }) =>
-      `<option value="${flow.id}" ${flow.id === writer.flowId ? 'selected' : ''}>${no} · ${esc(flow.name)}</option>`).join('')}</optgroup>`).join('')
+    const keep = $row.data('flow');
+    const fid = all.some((f) => f.id === keep) ? keep : all[0] && all[0].id;
+    $row.data('flow', fid || null);
+    $row.find('[name=flow]').html(groups.map(({ m, list }) => `<optgroup label="${esc(m.name)}">${list.map(({ flow, no }) =>
+      `<option value="${flow.id}" ${flow.id === fid ? 'selected' : ''}>${no} · ${esc(flow.name)}</option>`).join('')}</optgroup>`).join('')
       || '<option value="">No flows yet</option>').prop('disabled', !all.length);
-    renderWriterScreens();
+    renderRowScreens($row);
   }
+
+  // One issue as a card: where (app, flow, screen) / priority, issue, status / who (assign, remarks)
+  function writerRow(at) {
+    const field = (label, html) => `<label class="block min-w-0"><span class="field-label">${label}</span>${html}</label>`;
+    const $row = $(`
+      <div class="writer-row" data-product="${at.productId || ''}" data-flow="${at.flowId || ''}" data-screen="${at.screenId || ''}">
+        <div class="writer-line where ${products.length > 1 ? 'multi' : ''}">
+          ${products.length > 1 ? field('App', `<select class="input w-full" name="product">${products.map((p) =>
+            `<option value="${p.id}" ${p.id === at.productId ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>`) : ''}
+          ${field('Flow name', '<select class="input w-full" name="flow"></select>')}
+          ${field('Screen name', '<select class="input w-full" name="screen"></select>')}
+          <div class="writer-actions">
+            <button type="button" class="icon-btn" data-add-issue title="Add another issue">${icon('plus', 16)}</button>
+            <button type="button" class="icon-btn danger" data-remove-issue title="Remove this issue">${icon('close', 16)}</button>
+          </div>
+        </div>
+        <div class="writer-line what">
+          ${field('Priority', `<select class="input w-full" name="priority">${priorityOptions('medium')}</select>`)}
+          ${field('Issue', '<textarea class="input w-full" name="text" rows="1" maxlength="1000" placeholder="What is wrong?"></textarea>')}
+          ${field('Status', `<select class="input w-full" name="status">${activeStatuses().map((x) => `<option value="${esc(x.id)}">${esc(x.label)}</option>`).join('')}</select>`)}
+        </div>
+        <div class="writer-line who">
+          <div class="min-w-0"><span class="field-label">Assign to</span>${peopleBox([], '', 'text-sm')}</div>
+          ${field('Remarks <span class="font-normal text-slate-400">(optional)</span>', '<input class="input w-full" name="remarks" maxlength="1000" autocomplete="off">')}
+        </div>
+      </div>`);
+    renderRowFlows($row);
+    return $row;
+  }
+  const rowPlace = ($row) => ({ productId: $row.find('[name=product]').val() || $row.data('product'), flowId: $row.data('flow'), screenId: $row.data('screen') });
+  const growIssue = (el) => { el.style.height = 'auto'; el.style.height = `${el.scrollHeight + 2}px`; };
 
   function openWriter() {
     writer.productId = products.some((p) => p.id === writer.productId) ? writer.productId : productId;
@@ -1353,30 +1761,20 @@ $(function () {
         <h3 class="min-w-0 flex-1 text-base font-semibold text-slate-900">Write an issue</h3>
         <button type="button" class="icon-btn" data-close-writer title="Close">${icon('close', 18)}</button>
       </div>
-      <div class="space-y-3 px-5 py-4">
-        ${products.length > 1 ? `<label class="block"><span class="field-label">App</span>
-          <select class="input w-full" name="product">${products.map((p) => `<option value="${p.id}" ${p.id === writer.productId ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>` : ''}
-        <label class="block"><span class="field-label">Flow name</span><select class="input w-full" name="flow"></select></label>
-        <label class="block"><span class="field-label">Screen name</span><select class="input w-full" name="screen"></select></label>
-        <label class="block"><span class="field-label">Issue</span>
-          <textarea class="input w-full" name="text" rows="3" maxlength="1000" placeholder="What is wrong?"></textarea></label>
-        <div class="grid grid-cols-2 gap-3">
-          <label class="block"><span class="field-label">Priority</span><select class="input w-full" name="priority">${priorityOptions('medium')}</select></label>
-          <label class="block"><span class="field-label">Status</span><select class="input w-full" name="status">${activeStatuses().map((x) => `<option value="${esc(x.id)}">${esc(x.label)}</option>`).join('')}</select></label>
-        </div>
-        <div><span class="field-label">Assign to</span>${peopleBox([], '', 'text-sm')}</div>
-        <label class="block"><span class="field-label">Remarks <span class="font-normal text-slate-400">(optional)</span></span>
-          <input class="input w-full" name="remarks" maxlength="1000" autocomplete="off"></label>
+      <div class="writer-body px-5 py-4">
+        <div class="writer-grid"></div>
+      </div>
+      <div class="px-5">
         <p class="dialog-error hidden"></p>
       </div>
       <div class="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-3">
         <button type="button" class="btn-secondary" data-close-writer>Close</button>
-        <button class="btn-primary">Add issue</button>
+        <button class="btn-primary">Add issues</button>
       </div>`);
-    renderWriterFlows();
+    $('#writerForm .writer-grid').append(writerRow(writer));
     $('#writerModal').removeClass('hidden');
     $('body').addClass('overflow-hidden');
-    setTimeout(() => $('#writerForm [name=text]').trigger('focus'), 30);
+    setTimeout(() => $('#writerForm [name=text]').first().trigger('focus'), 30);
   }
 
   function closeWriter() {
@@ -1387,34 +1785,68 @@ $(function () {
   $doc.on('click', '[data-action="writer"]', openWriter);
   $doc.on('click', '[data-close-writer]', closeWriter);
   $('#writerModal').on('mousedown', function (e) { if (e.target === this) closeWriter(); });
-  $doc.on('change', '#writerForm [name=product]', function () { writer.productId = this.value; writer.flowId = null; renderWriterFlows(); });
-  $doc.on('change', '#writerForm [name=flow]', function () { writer.flowId = this.value; writer.screenId = null; renderWriterScreens(); });
-  $doc.on('change', '#writerForm [name=screen]', function () { writer.screenId = this.value; });
+  $doc.on('change', '#writerForm [name=product]', function () {
+    const $row = $(this).closest('.writer-row').data({ product: this.value, flow: null, screen: null });
+    renderRowFlows($row);
+    Object.assign(writer, rowPlace($row));
+  });
+  $doc.on('change', '#writerForm [name=flow]', function () {
+    const $row = $(this).closest('.writer-row').data({ flow: this.value, screen: null });
+    renderRowScreens($row);
+    Object.assign(writer, rowPlace($row));
+  });
+  $doc.on('change', '#writerForm [name=screen]', function () {
+    const $row = $(this).closest('.writer-row').data('screen', this.value);
+    Object.assign(writer, rowPlace($row));
+  });
+  $doc.on('input', '#writerForm [name=text]', function () { growIssue(this); });
+  // + → a fresh row on the same app / flow / screen, every other field back to its default
+  $doc.on('click', '#writerForm [data-add-issue]', function () {
+    const $at = $(this).closest('.writer-row');
+    writerRow(rowPlace($at)).insertAfter($at).find('[name=text]').trigger('focus');
+  });
+  $doc.on('click', '#writerForm [data-remove-issue]', function () {
+    const $row = $(this).closest('.writer-row');
+    const $near = $row.next('.writer-row').length ? $row.next() : $row.prev('.writer-row');
+    $near.find('[name=text]').trigger('focus');
+    $row.remove();
+  });
   $('#writerForm').on('submit', function (e) {
     e.preventDefault();
     const $f = $(this);
     const $err = $f.find('.dialog-error').addClass('hidden');
-    const text = $f.find('[name=text]').val().trim();
-    if (!writer.screenId) return;
-    if (!text) { $err.text('Issue is required.').removeClass('hidden'); $f.find('[name=text]').trigger('focus'); return; }
-    const screen = findScreen(writer.screenId);
-    api('POST', `/api/screens/${writer.screenId}/comments`, {
-      text,
-      priority: $f.find('[name=priority]').val(),
-      status: $f.find('[name=status]').val(),
-      assignees: peopleOf($f.find('.people')),
-      remarks: $f.find('[name=remarks]').val().trim(),
-    }, null, QUIET)
-      .done((c) => {
-        flashId = c.id;
-        toast(`Issue added to ${screen.name}`);
-        // ready for the next one on the same screen
-        $f.find('[name=text], [name=remarks], .people-input').val('');
-        $f.find('.person').remove();
-        $f.find('[name=text]').trigger('focus');
+    const $rows = $f.find('.writer-row').filter((i, el) => $(el).find('[name=text]').val().trim());
+    if (!$rows.length) { $err.text('Issue is required.').removeClass('hidden'); $f.find('[name=text]').first().trigger('focus'); return; }
+    const $lost = $rows.filter((i, el) => !$(el).data('screen'));
+    if ($lost.length) { $err.text('Pick a screen for every issue.').removeClass('hidden'); $lost.first().find('[name=screen]').trigger('focus'); return; }
+    // one at a time so the issues keep their order; a saved row leaves the form, a failed one stays to retry
+    let added = 0;
+    const next = (i) => {
+      if (i === $rows.length) {
+        toast(`${added === 1 ? 'Issue' : `${added} issues`} added`);
+        // ready for the next ones, on the last place used
+        const $grid = $f.find('.writer-grid');
+        if (!$grid.children('.writer-row').length) $grid.append(writerRow(writer));
+        $f.find('[name=text]').first().trigger('focus');
         load();
-      })
-      .fail((xhr) => $err.text(errorText(xhr)).removeClass('hidden'));
+        return;
+      }
+      const $row = $rows.eq(i);
+      api('POST', `/api/screens/${$row.data('screen')}/comments`, {
+        text: $row.find('[name=text]').val().trim(),
+        priority: $row.find('[name=priority]').val(),
+        status: $row.find('[name=status]').val(),
+        assignees: peopleOf($row.find('.people')),
+        remarks: $row.find('[name=remarks]').val().trim(),
+      }, null, QUIET)
+        .done((c) => { flashId = c.id; added += 1; Object.assign(writer, rowPlace($row)); $row.remove(); next(i + 1); })
+        .fail((xhr) => {
+          $err.text(errorText(xhr)).removeClass('hidden');
+          $row.find('[name=text]').trigger('focus');
+          if (added) load();
+        });
+    };
+    next(0);
   });
 
   // ---------------------------------------------------------------- drag & drop
@@ -1625,6 +2057,28 @@ $(function () {
 
   // popup
   $doc.on('click', '[data-close-popup]', closePopup);
+  $doc.on('click', '[data-popup-go]', function () { if ($(this).data('popup-go')) openPopup($(this).data('popup-go')); });
+  $doc.on('click', '[data-popup-choose]', (e) => { e.stopPropagation(); $('#popupBody .popup-choices').toggleClass('hidden'); });
+  $doc.on('click', '#popupBody', (e) => { if (!$(e.target).closest('.popup-choices').length) $('#popupBody .popup-choices').addClass('hidden'); });
+  // ← → step through the flow while the popup is on top and nothing is being typed
+  $doc.on('keydown', (e) => {
+    if (!openId || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || $(e.target).is('input, textarea, select, [contenteditable]')) return;
+    if (dialog.isOpen() || sheetId || videoFlowId || bugsView || $('#copyModal, #writerModal, #statusModal, #adminModal').not('.hidden').length) return;
+    const s = findScreen(openId);
+    const { prev, next } = s ? popupSiblings(s) : {};
+    const to = e.key === 'ArrowLeft' ? prev : next;
+    if (!to) return;
+    e.preventDefault();
+    if (to.condition) $('#popupBody .popup-choices').toggleClass('hidden');
+    else openPopup(to.id);
+  });
+  // 1…9 pick a branch while the condition's choices are open
+  $doc.on('keydown', (e) => {
+    const $open = $('#popupBody .popup-choices:not(.hidden)');
+    if (!openId || !$open.length || !/^[1-9]$/.test(e.key) || $(e.target).is('input, textarea, select')) return;
+    const $pick = $open.find('.popup-choice').eq(Number(e.key) - 1);
+    if ($pick.length) { e.preventDefault(); $pick.trigger('click'); }
+  });
   $('#popup').on('mousedown', function (e) { if (e.target === this) closePopup(); });
   $doc.on('click', '[data-device]', function () {
     api('PATCH', `/api/screens/${$(this).data('id')}`, { device: $(this).data('device') }).done(load);
@@ -1658,6 +2112,67 @@ $(function () {
     })).get();
   }
   const saveBranches = (id, branches) => api('PATCH', `/api/screens/${id}`, { branches }).done(load);
+
+  // new condition on the arrow after a card: create it, then slot it in right after that card
+  $doc.on('click', '[data-insert-condition]', function (e) {
+    e.stopPropagation();
+    const after = $(this).data('insert-condition');
+    const row = $(this).closest('.screens')[0];
+    ask({
+      title: `New condition after “${findScreen(after).name}”`,
+      fields: [{ name: 'name', label: 'Condition name', placeholder: 'e.g. Mandate status', required: true }],
+      confirmText: 'Add condition',
+      save: (v) => api('POST', `/api/flows/${$(row).data('flow')}/screens`, { type: 'condition', name: v.name }, null, QUIET).then((c) => {
+        const ids = $(row).children('.card').map((i, el) => $(el).data('id')).get();
+        ids.splice(ids.indexOf(after) + 1, 0, c.id);
+        return api('PUT', `/api/flows/${$(row).data('flow')}/order`, { ids }, null, QUIET);
+      }).done(load),
+    });
+  });
+
+  // Every flow inside a flow's tree: itself plus the paths leaving its steps, and theirs
+  const flowTreeIds = (f) => [f.id, ...f.screens.flatMap((x) => pathsAt(x).flatMap(({ path }) => flowTreeIds(path)))];
+
+  // drag the start of an "L" arrow onto another screen card: the path then starts from that screen
+  $doc.on('pointerdown', '[data-move-path]', function (e) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const grip = this;
+    const flow = findFlow($(grip).data('move-path'));
+    const own = new Set(flowTreeIds(flow));
+    const $svg = $('<svg class="branch-wire" aria-hidden="true"><path class="line"/><path class="head"/></svg>').appendTo('body');
+    let over = null;
+    const move = (ev) => {
+      const g = grip.getBoundingClientRect();
+      const x0 = g.left + g.width / 2;
+      const y0 = g.top + g.height / 2;
+      const { clientX: x, clientY: y } = ev;
+      const bend = Math.max(40, Math.abs(y - y0) / 2);
+      $svg.find('.line').attr('d', `M${x0} ${y0}C${x0} ${y0 - bend} ${x} ${y + bend} ${x} ${y}`);
+      $svg.find('.head').attr('d', `M${x - 5} ${y + 7}L${x} ${y}L${x + 5} ${y + 7}`);
+      const $card = $(document.elementFromPoint(x, y)).closest('#board .card:not(.cond)');
+      const s = $card.length && findScreen($card.data('id'));
+      const next = s && s.id !== flow.fromScreenId && !own.has(s.flowId) ? $card[0] : null;
+      if (next !== over) { $(over).removeClass('drop-target'); $(next).addClass('drop-target'); over = next; }
+    };
+    const up = () => {
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', up);
+      document.removeEventListener('pointercancel', up);
+      $svg.remove();
+      $(over).removeClass('drop-target');
+      $('body').removeClass('wiring');
+      if (!over) return;
+      const to = findScreen($(over).data('id'));
+      api('PUT', `/api/flows/${flow.id}/from-screen`, { screenId: to.id })
+        .done(() => { toast(`${flow.name} now starts from ${to.name}`); load(); });
+    };
+    $('body').addClass('wiring');
+    move(e);
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up);
+    document.addEventListener('pointercancel', up);
+  });
 
   $doc.on('click', '[data-add-condition]', function () {
     const $f = $(this).closest('form');
@@ -1832,7 +2347,10 @@ $(function () {
     else if (videoFlowId) closeVideo();
     else if (!$('#writerModal').hasClass('hidden')) closeWriter();
     else if (sheetId) closeSheet();
+    else if (openId && $('#popupBody .popup-choices:not(.hidden)').length) $('#popupBody .popup-choices').addClass('hidden');
     else if (openId) closePopup();
+    else if (diagram.flowId && (diagram.condId || diagram.menu)) { diagram.condId = null; diagram.menu = null; renderDiagram(); }
+    else if (diagram.flowId) closeDiagram();
   });
 
   load();

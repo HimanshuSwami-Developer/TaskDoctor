@@ -612,6 +612,27 @@ app.post('/api/screens/:id/extend', route(async (req, res) => {
 }));
 
 // Deleting a screen keeps its row, image and issues (only flagged is_deleted).
+// Move a screen path's start (its "L" arrow) onto another screen of the same module
+app.put('/api/flows/:id/from-screen', route(async (req, res) => {
+  await allowed(req, 'flows', req.params.id, 'full');
+  const flow = await live('flows', req.params.id, '*');
+  if (!flow.from_screen_id) throw new HttpError(400, 'Only a flow extended from a screen can be moved');
+  const screen = await live('screens', required(text(req.body.screenId), 'Screen'), '*');
+  if (screen.type === 'condition') throw new HttpError(400, 'Pick a screen, not a condition');
+  const from = await live('flows', screen.flow_id, '*');
+  if (from.module_id !== flow.module_id) throw new HttpError(400, 'Pick a screen in the same module');
+  // the new start can't sit inside this flow or any path that branches off it
+  const { rows } = await db.query(
+    `WITH RECURSIVE sub(id) AS (
+       SELECT $1::text
+       UNION
+       SELECT f.id FROM flows f JOIN screens s ON s.id IN (f.from_screen_id, f.from_condition_id) JOIN sub ON s.flow_id = sub.id
+       WHERE NOT f.is_deleted AND NOT s.is_deleted)
+     SELECT 1 FROM sub WHERE id = $2`, [flow.id, from.id]);
+  if (rows.length) throw new HttpError(400, 'A flow cannot start from one of its own screens');
+  res.json(toFlow(await one('UPDATE flows SET from_screen_id = $2, parent_flow_id = $3 WHERE id = $1 RETURNING *', [flow.id, screen.id, from.id])));
+}));
+
 app.delete('/api/screens/:id', route(async (req, res) => {
   await allowed(req, 'screens', req.params.id, 'full');
   await softDelete('screens', req.params.id);
