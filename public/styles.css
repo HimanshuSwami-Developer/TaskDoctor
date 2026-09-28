@@ -145,6 +145,17 @@ body.wiring, body.wiring * { cursor: crosshair !important; user-select: none; }
 
 .preview { position: relative; height: 210px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; padding: 10px; background: #f1f5f9; }
 .preview .step { position: absolute; left: 8px; top: 8px; z-index: 1; font-size: 11px; font-weight: 600; color: #475569; background: #fff; border: 1px solid #e2e8f0; border-radius: 4px; padding: 1px 6px; }
+/* popups: a dialog over a dimmed screen, tagged on the card */
+.kind-badge { position: absolute; left: 44px; top: 8px; z-index: 1; font-size: 11px; font-weight: 600; color: #7c3aed; background: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 4px; padding: 1px 6px; }
+.kind-badge.static { position: static; font-family: ui-sans-serif, system-ui, sans-serif; }
+.card.is-popup .preview { background: #f5f3ff; }
+.device .screen.popup { background: #64748b; display: flex; align-items: center; justify-content: center; }
+.wf-dialog { width: 84%; max-height: 62%; overflow: hidden; border-radius: 1.2em; background: #fff; box-shadow: 0 1em 3em rgba(15, 23, 42, .35); }
+.wf-dialog .wf-head { display: none; }
+.action-tag { display: flex; align-items: center; gap: 5px; margin-top: 4px; font-size: 11px; font-weight: 500; color: #7c3aed; white-space: nowrap; overflow: hidden; }
+.action-tag svg { flex-shrink: 0; }
+.action-tag span { overflow: hidden; text-overflow: ellipsis; }
+.dg-action { display: flex; align-items: center; gap: 4px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; color: #7c3aed; }
 .prio-badge { position: absolute; right: 8px; top: 8px; z-index: 1; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; color: #fff; }
 .date { font-size: 12px; color: #64748b; }
 .card-foot { margin-top: auto; display: flex; align-items: center; gap: 4px; padding: 8px 8px 8px 12px; border-top: 1px solid #f1f5f9; }

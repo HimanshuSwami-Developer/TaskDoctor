@@ -12,6 +12,7 @@ const COLORS = ['slate', 'amber', 'sky', 'indigo', 'violet', 'pink', 'red', 'tea
 const BUILT_IN_STATUSES = ['pending', 'complete']; // new issues start Pending; Complete = fixed
 const DEVICES = ['app', 'web'];
 const WIREFRAMES = ['form', 'list', 'dashboard', 'detail'];
+const KINDS = ['screen', 'popup']; // popup = a dialog / bottom sheet shown over a screen
 const PRIORITIES = ['urgent', 'high', 'medium', 'low'];
 const ACCESS = Object.keys(auth.LEVELS);
 
@@ -150,6 +151,8 @@ function toScreen(r) {
     type: 'screen',
     name: r.name,
     page: r.page,
+    kind: r.kind === 'popup' ? 'popup' : 'screen',
+    action: r.action || '',
     device: r.device,
     wireframe: r.wireframe,
     image: r.image_url || null, // Cloudinary URL (contains a version, so replaced images are not cached)
@@ -348,14 +351,15 @@ app.get('/api/export', route(async (req, res) => {
     { header: 'App', key: 'app', width: 14 }, { header: 'Module', key: 'module', width: 16 },
     { header: 'Flow no.', key: 'no', width: 8 }, { header: 'Flow', key: 'flow', width: 26 },
     { header: 'Step', key: 'step', width: 6 }, { header: 'Screen', key: 'screen', width: 24 },
-    { header: 'Page', key: 'page', width: 20 }, { header: 'Platform', key: 'device', width: 9 },
+    { header: 'Page', key: 'page', width: 20 }, { header: 'Type', key: 'kind', width: 8 },
+    { header: 'Opens on', key: 'action', width: 24 }, { header: 'Platform', key: 'device', width: 9 },
     ...(seesIssues ? [{ header: 'Open issues', key: 'open', width: 11 }, { header: 'Total issues', key: 'total', width: 11 }] : []),
   ];
 
   board.forEach((p) => p.modules.forEach((m) => numberedFlows(m).forEach(({ flow, no }) => {
     flow.screens.filter((s) => s.type !== 'condition').forEach((s, i) => {
       const base = { app: p.name, module: m.name, no, flow: flow.name, screen: s.name, page: s.page };
-      screens.addRow({ ...base, step: i + 1, device: s.device === 'web' ? 'Web' : 'App',
+      screens.addRow({ ...base, step: i + 1, kind: s.kind === 'popup' ? 'Popup' : 'Screen', action: s.action, device: s.device === 'web' ? 'Web' : 'App',
         open: s.comments.filter((c) => !c.resolved).length, total: s.comments.length });
       s.comments.forEach((c) => issues.addRow({
         ...base, text: c.text, priority: PRIORITY[c.priority] || c.priority, status: statusName[c.status] || c.status,
@@ -546,9 +550,10 @@ app.post('/api/flows/:id/screens', route(async (req, res) => {
   } else {
     const name = required(text(req.body.name), 'Screen name');
     const device = DEVICES.includes(req.body.device) ? req.body.device : 'app';
+    const kind = KINDS.includes(req.body.kind) ? req.body.kind : 'screen';
     await db.query(
-      'INSERT INTO screens (id, flow_id, name, page, device, sort_order) VALUES ($1, $2, $3, $4, $5, $6)',
-      [id, req.params.id, name, text(req.body.page), device, Date.now()]);
+      'INSERT INTO screens (id, flow_id, name, page, kind, action, device, sort_order) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+      [id, req.params.id, name, text(req.body.page), kind, text(req.body.action), device, Date.now()]);
   }
   res.status(201).json(await getScreen(id));
 }));
@@ -560,6 +565,8 @@ app.patch('/api/screens/:id', route(async (req, res) => {
   const fields = {};
   if (b.name !== undefined) fields.name = required(text(b.name), 'Name');
   if (b.page !== undefined) fields.page = text(b.page);
+  if (b.kind !== undefined) fields.kind = oneOf(b.kind, KINDS, 'kind');
+  if (b.action !== undefined) fields.action = text(b.action);
   if (b.device !== undefined) fields.device = oneOf(b.device, DEVICES, 'device');
   if (b.wireframe !== undefined) fields.wireframe = oneOf(b.wireframe, WIREFRAMES, 'wireframe');
 
@@ -673,9 +680,9 @@ async function copyScreenRow(client, source, flowId, sortOrder, withIssues) {
   }
   const id = randomUUID();
   await client.query(
-    `INSERT INTO screens (id, flow_id, name, page, device, wireframe, link_id, sort_order)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-    [id, flowId, source.name, source.page, source.device, source.wireframe, linkId, sortOrder]);
+    `INSERT INTO screens (id, flow_id, name, page, kind, action, device, wireframe, link_id, sort_order)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [id, flowId, source.name, source.page, source.kind, source.action, source.device, source.wireframe, linkId, sortOrder]);
   if (withIssues) {
     await client.query(
       `INSERT INTO comments (id, screen_id, text, priority, assignees, remarks, status, status_date)

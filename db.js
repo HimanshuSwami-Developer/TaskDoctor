@@ -119,6 +119,10 @@ ALTER TABLE comments ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'pend
 ALTER TABLE comments ADD COLUMN IF NOT EXISTS status_date timestamptz;
 UPDATE comments SET status = 'complete', status_date = coalesce(status_date, created_at) WHERE resolved AND status = 'pending';
 
+-- A screen can be a full screen or a popup shown over one, and can say which action opens it (e.g. Click "Place order")
+ALTER TABLE screens ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'screen';
+ALTER TABLE screens ADD COLUMN IF NOT EXISTS action text NOT NULL DEFAULT '';
+
 -- Logins. access: view (screens + videos, no issues) | edit (issues only) | full | super. A login sees the products in product_ids, or every product
 -- when all_products is set (super admins always see everything).
 CREATE TABLE IF NOT EXISTS users (

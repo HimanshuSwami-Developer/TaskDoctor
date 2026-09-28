@@ -31,6 +31,7 @@ $(function () {
     extend: 'M6 3v9a4 4 0 0 0 4 4h10M16 12l4 4-4 4',
     diagram: 'M3 3h7v6H3zM14 15h7v6h-7zM6.5 9v3a3 3 0 0 0 3 3H14',
     minus: 'M5 12h14',
+    tap: 'M9 9l5 12 1.8-5.2L21 14zM7.2 2.2 8 5.1M5.1 8 2.2 7.2M14 4.1 12 6.2M6.2 12l-2.1 2',
     link: 'M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7',
   };
   const icon = (name, size = 16) =>
@@ -246,7 +247,9 @@ $(function () {
         ${fields.length ? `<div class="space-y-3 px-5 pt-4">${fields.map((f) => `
           <label class="block">
             <span class="field-label">${esc(f.label)}${f.required ? '' : ' <span class="font-normal text-slate-400">(optional)</span>'}</span>
-            <input class="input w-full" name="${f.name}" value="${esc(f.value || '')}" placeholder="${esc(f.placeholder || '')}" maxlength="${f.max || 200}" autocomplete="off" ${f.required ? 'data-required' : ''}>
+            ${f.options
+    ? `<select class="input w-full" name="${f.name}">${f.options.map(([v, label]) => `<option value="${esc(v)}" ${v === f.value ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select>`
+    : `<input class="input w-full" name="${f.name}" value="${esc(f.value || '')}" placeholder="${esc(f.placeholder || '')}" maxlength="${f.max || 200}" autocomplete="off" ${f.required ? 'data-required' : ''}>`}
           </label>`).join('')}</div>` : ''}
         <p class="dialog-error mx-5 mt-3 hidden"></p>
         <div class="dialog-actions">
@@ -283,13 +286,13 @@ $(function () {
       const submit = $(this).find('[type=submit]')[0];
       busy = true;
       setBusy(submit, true);
-      $(this).find('[data-dialog-cancel], input').prop('disabled', true);
+      $(this).find('[data-dialog-cancel], input, select').prop('disabled', true);
       onConfirm(values)
         .done(() => close(fields && fields.length ? values : true))
         .fail((xhr) => {
           busy = false;
           setBusy(submit, false);
-          $(this).find('[data-dialog-cancel], input').prop('disabled', false);
+          $(this).find('[data-dialog-cancel], input, select').prop('disabled', false);
           showError(errorText(xhr));
         });
     });
@@ -310,6 +313,19 @@ $(function () {
     return dialog.open({ title, fields, confirmText, onConfirm: (values) => save(values) });
   }
   const QUIET = { silent: true };
+
+  // Screen dialogs: a step is a full screen or a popup over one, and can name the action that opens it
+  const KINDS = [['screen', 'Screen'], ['popup', 'Popup']];
+  const isPopup = (s) => s.kind === 'popup';
+  const screenFields = (s = {}, kind = s.kind || 'screen') => [
+    { name: 'name', label: kind === 'popup' ? 'Popup name' : 'Screen name', value: s.name, placeholder: kind === 'popup' ? 'e.g. Order confirmation' : '', required: true },
+    { name: 'kind', label: 'Type', value: kind, options: KINDS },
+    { name: 'action', label: 'Opens when', value: s.action, placeholder: 'e.g. Click "Place order"' },
+    { name: 'page', label: 'Page', value: s.page, placeholder: 'e.g. /signup/otp' },
+  ];
+  // "Click Place order → opens" tag under a card's name
+  const actionTag = (s) => (s.action
+    ? `<p class="action-tag" title="Opens when: ${esc(s.action)}">${icon('tap', 12)}<span>${esc(s.action)}</span></p>` : '');
 
   function toast(msg) {
     $('#toast').text(msg).removeClass('hidden');
@@ -361,8 +377,8 @@ $(function () {
     // placeholder shimmer until the image has loaded
     const content = s.image
       ? `<img src="${esc(imageUrl(s.image, size))}" alt="${esc(s.name)}" loading="lazy" onload="this.parentNode.classList.add('loaded')" onerror="this.parentNode.classList.add('loaded')">`
-      : wireframe(s.wireframe || 'form');
-    const screenClass = s.image ? 'screen has-img' : 'screen';
+      : isPopup(s) ? `<div class="wf-dialog">${wireframe(s.wireframe || 'form')}</div>` : wireframe(s.wireframe || 'form');
+    const screenClass = (s.image ? 'screen has-img' : 'screen') + (isPopup(s) && !s.image ? ' popup' : '');
     if (s.device === 'web') {
       return `<div class="device web ${size}"><div class="browser-bar"><i></i><i></i><i></i><span>${esc(s.page)}</span></div><div class="${screenClass}">${content}</div></div>`;
     }
@@ -628,7 +644,9 @@ $(function () {
             <span class="text-sm font-medium text-slate-700">New screen</span>
             <input name="name" class="input text-sm" placeholder="Name">
             <input name="page" class="input text-sm" placeholder="Page, e.g. /signup/otp">
+            <input name="action" class="input text-sm" placeholder="Opens when, e.g. Click &quot;Place order&quot;">
             <button class="btn-primary justify-center">Add screen</button>
+            <button type="button" class="btn-secondary justify-center" data-add-popup>Add popup</button>
             <button type="button" class="btn-secondary justify-center" data-add-condition>Add condition</button>
           </form>
         </div>
@@ -694,18 +712,20 @@ $(function () {
     const open = s.comments.filter((c) => !c.resolved).length;
     const topCount = s.comments.filter((c) => !c.resolved && prio(c) === top).length;
     return `
-      <div class="card ${flipped.has(s.id) ? 'flipped' : ''} ${top ? `ring-${top}` : ''}" data-id="${s.id}">
+      <div class="card ${isPopup(s) ? 'is-popup' : ''} ${flipped.has(s.id) ? 'flipped' : ''} ${top ? `ring-${top}` : ''}" data-id="${s.id}">
         ${arrowAdd(s)}
         <div class="card-inner">
           <div class="card-face card-front">
             <div class="preview">
               ${device(s, 'sm')}
               <span class="step">${String(i + 1).padStart(2, '0')}</span>
+              ${isPopup(s) ? '<span class="kind-badge">Popup</span>' : ''}
               ${top ? `<span class="prio-badge bg-${top}">${topCount} ${PRIORITY[top].label}</span>` : ''}
             </div>
             <div class="px-3 pt-3">
               <h4 class="truncate text-sm font-semibold text-slate-900">${esc(s.name)}</h4>
               <p class="truncate font-mono text-xs text-slate-500">${esc(s.page || '—')}</p>
+              ${actionTag(s)}
               ${conditionTags(s)}
             </div>
             <div class="flex items-center gap-2 px-3 pt-3">
@@ -716,8 +736,8 @@ $(function () {
               <button class="issues-btn ${open ? 'has-open' : ''}" data-flip="${s.id}">${icon('flip', 14)} Issues <span class="count">${open} open</span></button>
               <button class="icon-btn ml-auto" data-copy-screen="${s.id}" title="Copy to other flows">${icon('copy', 14)}</button>
               <button class="icon-btn" data-extend-screen="${s.id}" title="Extend a new flow from this screen">${icon('extend', 14)}</button>
-              <button class="icon-btn" data-edit-screen="${s.id}" title="Edit screen">${icon('edit', 14)}</button>
-              <button class="icon-btn danger" data-delete-screen="${s.id}" title="Delete screen">${icon('trash', 14)}</button>
+              <button class="icon-btn" data-edit-screen="${s.id}" title="Edit ${isPopup(s) ? 'popup' : 'screen'}">${icon('edit', 14)}</button>
+              <button class="icon-btn danger" data-delete-screen="${s.id}" title="Delete ${isPopup(s) ? 'popup' : 'screen'}">${icon('trash', 14)}</button>
             </div>
           </div>
           <div class="card-face card-back">${issuesPanel(s, false)}</div>
@@ -990,7 +1010,8 @@ $(function () {
         const open = x.comments.filter((c) => !c.resolved).length;
         html.push(`<div class="dg-node screen ${top ? `ring-${top}` : ''}" style="left:${nx}px;top:${ny}px" data-dg-open="${x.id}" title="Open screen">
           <span class="dg-step">${String(no).padStart(2, '0')}</span>
-          <div class="min-w-0 flex-1"><p class="dg-name">${esc(x.name)}</p><p class="dg-page">${esc(x.page || '—')}</p>
+          <div class="min-w-0 flex-1">${isPopup(x) ? '<p class="dg-kind">Popup</p>' : ''}<p class="dg-name">${esc(x.name)}</p><p class="dg-page">${esc(x.page || '—')}</p>
+            ${x.action ? `<p class="dg-action">${icon('tap', 11)} ${esc(x.action)}</p>` : ''}
             ${open ? `<p class="dg-open">${open} open issue${open === 1 ? '' : 's'}</p>` : ''}</div>
           <div class="dg-tools">
             <button class="icon-btn sm" data-edit-screen="${x.id}" title="Edit screen">${icon('edit', 12)}</button>
@@ -1033,6 +1054,7 @@ $(function () {
     if (diagram.menu) {
       html.push(`<div class="dg-menu" style="left:${diagram.menu.x}px;top:${diagram.menu.y}px">
         <button data-dg-new="screen">${icon('plus', 14)} Screen</button>
+        <button data-dg-new="popup">${icon('plus', 14)} Popup</button>
         <button data-dg-new="condition"><span class="cond-diamond sm"></span> Condition</button>
       </div>`);
     }
@@ -1128,12 +1150,9 @@ $(function () {
         save: (v) => api('POST', `/api/flows/${flowId}/screens`, { type: 'condition', name: v.name }, null, QUIET).then(place).done(load),
       }
       : {
-        title: 'New screen',
-        fields: [
-          { name: 'name', label: 'Screen name', required: true },
-          { name: 'page', label: 'Page', placeholder: 'e.g. /signup/otp' },
-        ],
-        confirmText: 'Add screen',
+        title: kind === 'popup' ? 'New popup' : 'New screen',
+        fields: screenFields({}, kind),
+        confirmText: kind === 'popup' ? 'Add popup' : 'Add screen',
         save: (v) => api('POST', `/api/flows/${flowId}/screens`, v, null, QUIET).then(place).done(load),
       });
   }
@@ -1212,7 +1231,8 @@ $(function () {
         <span class="shrink-0 rounded-md bg-slate-100 px-2 py-1 text-xs font-medium tabular-nums text-slate-500" title="Screen in this flow">${at} / ${total}</span>
         <div class="min-w-0 flex-1">
           <h3 class="truncate text-lg font-semibold text-slate-900">${esc(s.name)}</h3>
-          <p class="truncate font-mono text-xs text-slate-500">${esc(s.page || '—')}</p>
+          <p class="truncate font-mono text-xs text-slate-500">${isPopup(s) ? '<span class="kind-badge static">Popup</span> ' : ''}${esc(s.page || '—')}</p>
+          ${actionTag(s)}
           ${conditionTags(s)}
           ${linked.length ? `<p class="mt-1 text-xs text-slate-500">Also in: ${linked.map((l) => `<button class="text-indigo-600 hover:underline" data-goto="${l.screen.id}" data-module="${l.module.id}" data-product-id="${l.product.id}">${l.product.id !== productId ? `${esc(l.product.name)} › ` : ''}${esc(l.module.name)} › ${esc(l.flow.name)}</button>`).join(', ')}</p>` : ''}
         </div>
@@ -1948,11 +1968,8 @@ $(function () {
   $doc.on('click', '[data-edit-screen]', function () {
     const s = findScreen($(this).data('edit-screen'));
     ask({
-      title: 'Edit screen',
-      fields: [
-        { name: 'name', label: 'Screen name', value: s.name, required: true },
-        { name: 'page', label: 'Page', value: s.page, placeholder: 'e.g. /signup/otp' },
-      ],
+      title: isPopup(s) ? 'Edit popup' : 'Edit screen',
+      fields: screenFields(s),
       save: (v) => api('PATCH', `/api/screens/${s.id}`, v, null, QUIET).done(load),
     });
   });
@@ -1970,7 +1987,7 @@ $(function () {
   });
   $doc.on('click', '[data-delete-screen]', function () {
     const s = findScreen($(this).data('delete-screen'));
-    const what = isCondition(s) ? 'condition' : 'screen';
+    const what = isCondition(s) ? 'condition' : isPopup(s) ? 'popup' : 'screen';
     remove({ title: `Delete ${what} “${s.name}”?`, message: isCondition(s) ? 'Its branches will be removed. This cannot be undone.' : 'Its image and issues will be deleted too. This cannot be undone.', url: `/api/screens/${s.id}` });
   });
   $doc.on('click', '[data-delete-comment]', function () {
@@ -2174,6 +2191,18 @@ $(function () {
     document.addEventListener('pointercancel', up);
   });
 
+  $doc.on('click', '[data-add-popup]', function () {
+    const $f = $(this).closest('form');
+    const flowId = $f.data('flow');
+    const typed = Object.fromEntries(new FormData($f[0]));
+    if (typed.name.trim()) { api('POST', `/api/flows/${flowId}/screens`, { ...typed, kind: 'popup' }).done(load); return; }
+    ask({
+      title: 'New popup',
+      fields: screenFields({ page: typed.page, action: typed.action }, 'popup'),
+      confirmText: 'Add popup',
+      save: (v) => api('POST', `/api/flows/${flowId}/screens`, v, null, QUIET).done(load),
+    });
+  });
   $doc.on('click', '[data-add-condition]', function () {
     const $f = $(this).closest('form');
     const flowId = $f.data('flow');
