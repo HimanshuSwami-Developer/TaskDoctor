@@ -162,6 +162,28 @@ ALTER TABLE flows ADD COLUMN IF NOT EXISTS video_public_id text;
 -- It is shown only while that screen exists in a shown flow.
 ALTER TABLE flows ADD COLUMN IF NOT EXISTS from_screen_id text;
 CREATE INDEX IF NOT EXISTS flows_screen_idx ON flows(from_screen_id);
+
+-- Audit columns on every table: who created / last changed a row and when. created_by / updated_by are the
+-- signed-in user (NULL for rows made by the server itself, e.g. the seeded statuses or the first super admin).
+-- updated_at starts as created_at for old rows and is kept current by a trigger on every UPDATE.
+CREATE OR REPLACE FUNCTION touch_updated_at() RETURNS trigger AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['products', 'modules', 'flows', 'screens', 'comments', 'statuses', 'users', 'sessions'] LOOP
+    EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS created_by text REFERENCES users(id)', t);
+    EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS updated_by text REFERENCES users(id)', t);
+    EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS updated_at timestamptz', t);
+    EXECUTE format('UPDATE %I SET updated_at = created_at WHERE updated_at IS NULL', t);
+    EXECUTE format('ALTER TABLE %I ALTER COLUMN updated_at SET DEFAULT now(), ALTER COLUMN updated_at SET NOT NULL', t);
+    EXECUTE format('CREATE OR REPLACE TRIGGER %I BEFORE UPDATE ON %I FOR EACH ROW EXECUTE FUNCTION touch_updated_at()', t || '_updated_at', t);
+  END LOOP;
+END $$;
 `;
 
 const query = (text, params) => pool.query(text, params);

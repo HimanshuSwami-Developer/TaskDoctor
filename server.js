@@ -79,19 +79,19 @@ async function one(sql, params) {
   return rows[0];
 }
 
-/** UPDATE with a whitelisted set of columns. */
-async function update(table, id, fields) {
+/** UPDATE with a whitelisted set of columns, stamped with who changed it (updated_at is set by a trigger). */
+async function update(table, id, fields, by) {
   const keys = Object.keys(fields);
   if (!keys.length) return;
-  const set = keys.map((k, i) => `${k} = $${i + 2}`).join(', ');
-  await db.query(`UPDATE ${table} SET ${set} WHERE id = $1 AND NOT is_deleted`, [id, ...keys.map((k) => fields[k])]);
+  const set = keys.map((k, i) => `${k} = $${i + 3}`).join(', ');
+  await db.query(`UPDATE ${table} SET ${set}, updated_by = $2 WHERE id = $1 AND NOT is_deleted`, [id, by, ...keys.map((k) => fields[k])]);
 }
 
 // A row that exists and is not deleted.
 const live = (table, id, columns = 'id') => one(`SELECT ${columns} FROM ${table} WHERE id = $1 AND NOT is_deleted`, [id]);
 
 // Nothing is ever removed from the database: deleting only sets is_deleted = true.
-const softDelete = (table, id) => db.query(`UPDATE ${table} SET is_deleted = true WHERE id = $1`, [id]);
+const softDelete = (table, id, by) => db.query(`UPDATE ${table} SET is_deleted = true, updated_by = $2 WHERE id = $1`, [id, by]);
 
 // ---------------------------------------------------------------- permissions
 
@@ -122,28 +122,32 @@ async function allowed(req, table, id, level) {
 
 const SCREEN_SELECT = 'SELECT s.* FROM screens s';
 
-const toProduct = (r) => ({ id: r.id, name: r.name, order: r.sort_order });
-const toModule = (r) => ({ id: r.id, productId: r.product_id, name: r.name, order: r.sort_order });
+// Who created / last changed a row and when (on every API object).
+const audit = (r) => ({ createdAt: r.created_at, createdBy: r.created_by, updatedAt: r.updated_at, updatedBy: r.updated_by });
+
+const toProduct = (r) => ({ id: r.id, name: r.name, order: r.sort_order, ...audit(r) });
+const toModule = (r) => ({ id: r.id, productId: r.product_id, name: r.name, order: r.sort_order, ...audit(r) });
 const toFlow = (r) => ({
   id: r.id, moduleId: r.module_id, name: r.name, order: r.sort_order,
   parentFlowId: r.parent_flow_id, fromConditionId: r.from_condition_id, fromBranchId: r.from_branch_id,
   fromScreenId: r.from_screen_id,
   video: r.video_url || null,
+  ...audit(r),
 });
 const toUser = (r) => ({
   id: r.id, username: r.username, name: r.name, access: r.access,
-  allProducts: r.access === 'super' || r.all_products, productIds: r.product_ids, createdAt: r.created_at,
+  allProducts: r.access === 'super' || r.all_products, productIds: r.product_ids, ...audit(r),
 });
-const toStatus = (r) => ({ id: r.id, label: r.label, color: r.color, builtIn: BUILT_IN_STATUSES.includes(r.id), deleted: r.is_deleted });
+const toStatus = (r) => ({ id: r.id, label: r.label, color: r.color, builtIn: BUILT_IN_STATUSES.includes(r.id), deleted: r.is_deleted, ...audit(r) });
 const toComment = (r) => ({
   id: r.id, screenId: r.screen_id, text: r.text, priority: r.priority,
   assignees: r.assignees, remarks: r.remarks, status: r.status, statusDate: r.status_date,
-  resolved: r.status === 'complete', createdAt: r.created_at,
+  resolved: r.status === 'complete', ...audit(r),
 });
 
 function toScreen(r) {
   if (r.type === 'condition') {
-    return { id: r.id, flowId: r.flow_id, type: 'condition', name: r.name, branches: r.branches, order: r.sort_order };
+    return { id: r.id, flowId: r.flow_id, type: 'condition', name: r.name, branches: r.branches, order: r.sort_order, ...audit(r) };
   }
   return {
     id: r.id,
@@ -158,6 +162,7 @@ function toScreen(r) {
     image: r.image_url || null, // Cloudinary URL (contains a version, so replaced images are not cached)
     linkId: r.link_id,
     order: r.sort_order,
+    ...audit(r),
   };
 }
 
@@ -177,14 +182,15 @@ app.post('/api/login', route(async (req, res) => {
   }
   auth.succeeded(key);
   const token = auth.newToken();
-  await db.query(`INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, now() + interval '${auth.SESSION_DAYS} days')`,
-    [auth.hashToken(token), rows[0].id]);
+  await db.query(`INSERT INTO sessions (token_hash, user_id, expires_at, created_by, updated_by)
+     VALUES ($1, $2, now() + interval '${auth.SESSION_DAYS} days', $2, $2)`, [auth.hashToken(token), rows[0].id]);
   res.setHeader('Set-Cookie', auth.sessionCookie(req, token));
   res.json(toUser(rows[0]));
 }));
 
 app.post('/api/logout', route(async (req, res) => {
-  await db.query('UPDATE sessions SET expires_at = now() WHERE token_hash = $1', [auth.hashToken(auth.readCookie(req, auth.COOKIE))]);
+  await db.query('UPDATE sessions SET expires_at = now(), updated_by = $2 WHERE token_hash = $1',
+    [auth.hashToken(auth.readCookie(req, auth.COOKIE)), req.user.id]);
   res.setHeader('Set-Cookie', auth.sessionCookie(req, null));
   res.json({ ok: true });
 }));
@@ -194,7 +200,8 @@ app.get('/api/me', (req, res) => res.json(toUser(req.user)));
 // ---------------------------------------------------------------- logins (admin dashboard, super admins only)
 
 const USERNAME = /^[a-z0-9._-]{3,40}$/i;
-const expireSessions = (userId) => db.query('UPDATE sessions SET expires_at = now() WHERE user_id = $1 AND expires_at > now()', [userId]);
+const expireSessions = (userId, by) => db.query(
+  'UPDATE sessions SET expires_at = now(), updated_by = $2 WHERE user_id = $1 AND expires_at > now()', [userId, by]);
 
 // Only real, live products can be granted.
 async function productIds(value) {
@@ -222,10 +229,10 @@ app.post('/api/users', route(async (req, res) => {
   const { rows: taken } = await db.query('SELECT id FROM users WHERE lower(username) = lower($1) AND NOT is_deleted', [username]);
   if (taken[0]) throw new HttpError(409, 'That username is already used');
   const { rows } = await db.query(
-    `INSERT INTO users (id, username, name, password_hash, access, all_products, product_ids)
-     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+    `INSERT INTO users (id, username, name, password_hash, access, all_products, product_ids, created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8) RETURNING *`,
     [randomUUID(), username, text(b.name, 80), await auth.hashPassword(password(b.password)),
-      oneOf(b.access, ACCESS, 'access'), Boolean(b.allProducts), await productIds(b.productIds)]);
+      oneOf(b.access, ACCESS, 'access'), Boolean(b.allProducts), await productIds(b.productIds), req.user.id]);
   res.status(201).json(toUser(rows[0]));
 }));
 
@@ -240,11 +247,11 @@ app.patch('/api/users/:id', route(async (req, res) => {
   if (b.productIds !== undefined) fields.product_ids = await productIds(b.productIds);
   if (b.password) fields.password_hash = await auth.hashPassword(password(b.password));
   if (user.id === req.user.id && fields.access && fields.access !== 'super') throw new HttpError(400, 'You cannot remove your own super admin access');
-  await update('users', user.id, fields);
+  await update('users', user.id, fields, req.user.id);
   // new password → everyone signed in as this user has to sign in again (except you, when it's your own)
   if (fields.password_hash) {
-    await db.query('UPDATE sessions SET expires_at = now() WHERE user_id = $1 AND expires_at > now() AND token_hash <> $2',
-      [user.id, auth.hashToken(auth.readCookie(req, auth.COOKIE))]);
+    await db.query('UPDATE sessions SET expires_at = now(), updated_by = $3 WHERE user_id = $1 AND expires_at > now() AND token_hash <> $2',
+      [user.id, auth.hashToken(auth.readCookie(req, auth.COOKIE)), req.user.id]);
   }
   res.json(toUser(await live('users', user.id, '*')));
 }));
@@ -252,8 +259,8 @@ app.patch('/api/users/:id', route(async (req, res) => {
 app.delete('/api/users/:id', route(async (req, res) => {
   need(req, 'super');
   if (req.params.id === req.user.id) throw new HttpError(400, 'You cannot delete your own login');
-  await softDelete('users', req.params.id);
-  await expireSessions(req.params.id);
+  await softDelete('users', req.params.id, req.user.id);
+  await expireSessions(req.params.id, req.user.id);
   res.json({ ok: true });
 }));
 
@@ -398,8 +405,8 @@ app.post('/api/statuses', route(async (req, res) => {
   const label = required(text(req.body.label, 40), 'Name');
   const color = COLORS.includes(req.body.color) ? req.body.color : 'slate';
   const { rows } = await db.query(
-    'INSERT INTO statuses (id, label, color, sort_order) VALUES ($1, $2, $3, $4) RETURNING *',
-    [randomUUID(), label, color, Date.now()]);
+    'INSERT INTO statuses (id, label, color, sort_order, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $5) RETURNING *',
+    [randomUUID(), label, color, Date.now(), req.user.id]);
   res.status(201).json(toStatus(rows[0]));
 }));
 
@@ -409,7 +416,7 @@ app.patch('/api/statuses/:id', route(async (req, res) => {
   const fields = {};
   if (req.body.label !== undefined) fields.label = required(text(req.body.label, 40), 'Name');
   if (req.body.color !== undefined) fields.color = oneOf(req.body.color, COLORS, 'color');
-  await update('statuses', req.params.id, fields);
+  await update('statuses', req.params.id, fields, req.user.id);
   res.json(toStatus(await live('statuses', req.params.id, '*')));
 }));
 
@@ -417,7 +424,7 @@ app.patch('/api/statuses/:id', route(async (req, res) => {
 app.delete('/api/statuses/:id', route(async (req, res) => {
   need(req, 'super');
   if (BUILT_IN_STATUSES.includes(req.params.id)) throw new HttpError(400, 'Pending and Complete cannot be removed');
-  await softDelete('statuses', req.params.id);
+  await softDelete('statuses', req.params.id, req.user.id);
   res.json({ ok: true });
 }));
 
@@ -426,19 +433,22 @@ app.delete('/api/statuses/:id', route(async (req, res) => {
 app.post('/api/products', route(async (req, res) => {
   need(req, 'super');
   const name = required(text(req.body.name), 'Name');
-  const { rows } = await db.query('INSERT INTO products (id, name, sort_order) VALUES ($1, $2, $3) RETURNING *', [randomUUID(), name, Date.now()]);
+  const { rows } = await db.query(
+    'INSERT INTO products (id, name, sort_order, created_by, updated_by) VALUES ($1, $2, $3, $4, $4) RETURNING *',
+    [randomUUID(), name, Date.now(), req.user.id]);
   res.status(201).json(toProduct(rows[0]));
 }));
 
 app.patch('/api/products/:id', route(async (req, res) => {
   await allowed(req, 'products', req.params.id, 'super');
   const name = required(text(req.body.name), 'Name');
-  res.json(toProduct(await one('UPDATE products SET name = $2 WHERE id = $1 AND NOT is_deleted RETURNING *', [req.params.id, name])));
+  res.json(toProduct(await one('UPDATE products SET name = $2, updated_by = $3 WHERE id = $1 AND NOT is_deleted RETURNING *',
+    [req.params.id, name, req.user.id])));
 }));
 
 app.delete('/api/products/:id', route(async (req, res) => {
   await allowed(req, 'products', req.params.id, 'super');
-  await softDelete('products', req.params.id);
+  await softDelete('products', req.params.id, req.user.id);
   res.json({ ok: true });
 }));
 
@@ -448,20 +458,21 @@ app.post('/api/products/:id/modules', route(async (req, res) => {
   await allowed(req, 'products', req.params.id, 'full');
   const name = required(text(req.body.name), 'Name');
   const { rows } = await db.query(
-    'INSERT INTO modules (id, product_id, name, sort_order) VALUES ($1, $2, $3, $4) RETURNING *',
-    [randomUUID(), req.params.id, name, Date.now()]);
+    'INSERT INTO modules (id, product_id, name, sort_order, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $5) RETURNING *',
+    [randomUUID(), req.params.id, name, Date.now(), req.user.id]);
   res.status(201).json(toModule(rows[0]));
 }));
 
 app.patch('/api/modules/:id', route(async (req, res) => {
   await allowed(req, 'modules', req.params.id, 'full');
   const name = required(text(req.body.name), 'Name');
-  res.json(toModule(await one('UPDATE modules SET name = $2 WHERE id = $1 AND NOT is_deleted RETURNING *', [req.params.id, name])));
+  res.json(toModule(await one('UPDATE modules SET name = $2, updated_by = $3 WHERE id = $1 AND NOT is_deleted RETURNING *',
+    [req.params.id, name, req.user.id])));
 }));
 
 app.delete('/api/modules/:id', route(async (req, res) => {
   await allowed(req, 'modules', req.params.id, 'full');
-  await softDelete('modules', req.params.id);
+  await softDelete('modules', req.params.id, req.user.id);
   res.json({ ok: true });
 }));
 
@@ -471,8 +482,8 @@ app.post('/api/modules/:id/flows', route(async (req, res) => {
   await allowed(req, 'modules', req.params.id, 'full');
   const name = required(text(req.body.name), 'Name');
   const { rows } = await db.query(
-    'INSERT INTO flows (id, module_id, name, sort_order) VALUES ($1, $2, $3, $4) RETURNING *',
-    [randomUUID(), req.params.id, name, Date.now()]);
+    'INSERT INTO flows (id, module_id, name, sort_order, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $5) RETURNING *',
+    [randomUUID(), req.params.id, name, Date.now(), req.user.id]);
   res.status(201).json(toFlow(rows[0]));
 }));
 
@@ -482,7 +493,8 @@ app.put('/api/modules/:id/flow-order', route(async (req, res) => {
   const ids = Array.isArray(req.body.ids) ? req.body.ids.filter((x) => typeof x === 'string') : [];
   await db.tx(async (client) => {
     for (const [index, id] of ids.entries()) {
-      await client.query('UPDATE flows SET sort_order = $2 WHERE id = $3 AND module_id = $1 AND NOT is_deleted', [req.params.id, index, id]);
+      await client.query('UPDATE flows SET sort_order = $2, updated_by = $4 WHERE id = $3 AND module_id = $1 AND NOT is_deleted',
+        [req.params.id, index, id, req.user.id]);
     }
   });
   res.json({ ok: true });
@@ -491,7 +503,8 @@ app.put('/api/modules/:id/flow-order', route(async (req, res) => {
 app.patch('/api/flows/:id', route(async (req, res) => {
   await allowed(req, 'flows', req.params.id, 'full');
   const name = required(text(req.body.name), 'Name');
-  res.json(toFlow(await one('UPDATE flows SET name = $2 WHERE id = $1 AND NOT is_deleted RETURNING *', [req.params.id, name])));
+  res.json(toFlow(await one('UPDATE flows SET name = $2, updated_by = $3 WHERE id = $1 AND NOT is_deleted RETURNING *',
+    [req.params.id, name, req.user.id])));
 }));
 
 // Drag & drop: save the new card order of a flow (cards may come from another flow).
@@ -504,7 +517,8 @@ app.put('/api/flows/:id/order', route(async (req, res) => {
   if (rows[0].n) throw new HttpError(400, 'Screens can only be moved within the same app');
   await db.tx(async (client) => {
     for (const [index, id] of ids.entries()) {
-      await client.query('UPDATE screens SET flow_id = $1, sort_order = $2 WHERE id = $3 AND NOT is_deleted', [req.params.id, index, id]);
+      await client.query('UPDATE screens SET flow_id = $1, sort_order = $2, updated_by = $4 WHERE id = $3 AND NOT is_deleted',
+        [req.params.id, index, id, req.user.id]);
     }
   });
   res.json({ ok: true });
@@ -512,7 +526,7 @@ app.put('/api/flows/:id/order', route(async (req, res) => {
 
 app.delete('/api/flows/:id', route(async (req, res) => {
   await allowed(req, 'flows', req.params.id, 'full');
-  await softDelete('flows', req.params.id);
+  await softDelete('flows', req.params.id, req.user.id);
   res.json({ ok: true });
 }));
 
@@ -523,14 +537,16 @@ app.post('/api/flows/:id/video', express.raw({ type: 'video/*', limit: '100mb' }
   if (!cloud.configured()) throw new HttpError(503, 'Video storage is not set up. Add the Cloudinary keys to .env and restart.');
   if (!Buffer.isBuffer(req.body) || !req.body.length) throw new HttpError(400, 'Please upload a video file (MP4, MOV or WEBM)');
   const { url, publicId } = await cloud.uploadVideo(req.body, req.params.id);
-  const { rows } = await db.query('UPDATE flows SET video_url = $2, video_public_id = $3 WHERE id = $1 RETURNING *', [req.params.id, url, publicId]);
+  const { rows } = await db.query('UPDATE flows SET video_url = $2, video_public_id = $3, updated_by = $4 WHERE id = $1 RETURNING *',
+    [req.params.id, url, publicId, req.user.id]);
   res.json(toFlow(rows[0]));
 }));
 
 app.delete('/api/flows/:id/video', route(async (req, res) => {
   await allowed(req, 'flows', req.params.id, 'full');
   const flow = await live('flows', req.params.id, 'video_public_id');
-  const { rows } = await db.query('UPDATE flows SET video_url = NULL, video_public_id = NULL WHERE id = $1 RETURNING *', [req.params.id]);
+  const { rows } = await db.query('UPDATE flows SET video_url = NULL, video_public_id = NULL, updated_by = $2 WHERE id = $1 RETURNING *',
+    [req.params.id, req.user.id]);
   await cloud.remove([flow.video_public_id], 'video');
   res.json(toFlow(rows[0]));
 }));
@@ -545,15 +561,17 @@ app.post('/api/flows/:id/screens', route(async (req, res) => {
     const name = required(text(req.body.name), 'Condition name');
     const branches = ['Success', 'Pending', 'Else'].map((label) => ({ id: randomUUID(), label, targetId: null }));
     await db.query(
-      `INSERT INTO screens (id, flow_id, type, name, branches, sort_order) VALUES ($1, $2, 'condition', $3, $4, $5)`,
-      [id, req.params.id, name, JSON.stringify(branches), Date.now()]);
+      `INSERT INTO screens (id, flow_id, type, name, branches, sort_order, created_by, updated_by)
+       VALUES ($1, $2, 'condition', $3, $4, $5, $6, $6)`,
+      [id, req.params.id, name, JSON.stringify(branches), Date.now(), req.user.id]);
   } else {
     const name = required(text(req.body.name), 'Screen name');
     const device = DEVICES.includes(req.body.device) ? req.body.device : 'app';
     const kind = KINDS.includes(req.body.kind) ? req.body.kind : 'screen';
     await db.query(
-      'INSERT INTO screens (id, flow_id, name, page, kind, action, device, sort_order) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-      [id, req.params.id, name, text(req.body.page), kind, text(req.body.action), device, Date.now()]);
+      `INSERT INTO screens (id, flow_id, name, page, kind, action, device, sort_order, created_by, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)`,
+      [id, req.params.id, name, text(req.body.page), kind, text(req.body.action), device, Date.now(), req.user.id]);
   }
   res.status(201).json(await getScreen(id));
 }));
@@ -585,7 +603,7 @@ app.patch('/api/screens/:id', route(async (req, res) => {
     })));
   }
 
-  await update('screens', screen.id, fields);
+  await update('screens', screen.id, fields, req.user.id);
   res.json(await getScreen(screen.id));
 }));
 
@@ -598,9 +616,9 @@ app.post('/api/screens/:id/branches/:branchId/path', route(async (req, res) => {
   const flow = await live('flows', cond.flow_id, '*');
   const name = text(req.body.name) || `${flow.name} › ${branch.label || 'Path'}`;
   const { rows } = await db.query(
-    `INSERT INTO flows (id, module_id, name, sort_order, parent_flow_id, from_condition_id, from_branch_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-    [randomUUID(), flow.module_id, name, Date.now(), flow.id, cond.id, branch.id]);
+    `INSERT INTO flows (id, module_id, name, sort_order, parent_flow_id, from_condition_id, from_branch_id, created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8) RETURNING *`,
+    [randomUUID(), flow.module_id, name, Date.now(), flow.id, cond.id, branch.id, req.user.id]);
   res.status(201).json(toFlow(rows[0]));
 }));
 
@@ -612,9 +630,9 @@ app.post('/api/screens/:id/extend', route(async (req, res) => {
   const flow = await live('flows', screen.flow_id, '*');
   const name = text(req.body.name) || `${flow.name} › ${screen.name}`;
   const { rows } = await db.query(
-    `INSERT INTO flows (id, module_id, name, sort_order, parent_flow_id, from_screen_id)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-    [randomUUID(), flow.module_id, name, Date.now(), flow.id, screen.id]);
+    `INSERT INTO flows (id, module_id, name, sort_order, parent_flow_id, from_screen_id, created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $7) RETURNING *`,
+    [randomUUID(), flow.module_id, name, Date.now(), flow.id, screen.id, req.user.id]);
   res.status(201).json(toFlow(rows[0]));
 }));
 
@@ -637,12 +655,13 @@ app.put('/api/flows/:id/from-screen', route(async (req, res) => {
        WHERE NOT f.is_deleted AND NOT s.is_deleted)
      SELECT 1 FROM sub WHERE id = $2`, [flow.id, from.id]);
   if (rows.length) throw new HttpError(400, 'A flow cannot start from one of its own screens');
-  res.json(toFlow(await one('UPDATE flows SET from_screen_id = $2, parent_flow_id = $3 WHERE id = $1 RETURNING *', [flow.id, screen.id, from.id])));
+  res.json(toFlow(await one('UPDATE flows SET from_screen_id = $2, parent_flow_id = $3, updated_by = $4 WHERE id = $1 RETURNING *',
+    [flow.id, screen.id, from.id, req.user.id])));
 }));
 
 app.delete('/api/screens/:id', route(async (req, res) => {
   await allowed(req, 'screens', req.params.id, 'full');
-  await softDelete('screens', req.params.id);
+  await softDelete('screens', req.params.id, req.user.id);
   res.json({ ok: true });
 }));
 
@@ -655,14 +674,14 @@ app.post('/api/screens/:id/image', route(async (req, res) => {
     throw new HttpError(400, 'Please upload a PNG, JPG, WEBP or GIF image');
   }
   const { url, publicId } = await cloud.upload(req.body.dataUrl, req.params.id);
-  await db.query('UPDATE screens SET image_url = $2, image_public_id = $3 WHERE id = $1', [req.params.id, url, publicId]);
+  await db.query('UPDATE screens SET image_url = $2, image_public_id = $3, updated_by = $4 WHERE id = $1', [req.params.id, url, publicId, req.user.id]);
   res.json(await getScreen(req.params.id));
 }));
 
 app.delete('/api/screens/:id/image', route(async (req, res) => {
   await allowed(req, 'screens', req.params.id, 'full');
   const screen = await live('screens', req.params.id, 'image_public_id');
-  await db.query('UPDATE screens SET image_url = NULL, image_public_id = NULL WHERE id = $1', [req.params.id]);
+  await db.query('UPDATE screens SET image_url = NULL, image_public_id = NULL, updated_by = $2 WHERE id = $1', [req.params.id, req.user.id]);
   await cloud.remove([screen.image_public_id]);
   res.json(await getScreen(req.params.id));
 }));
@@ -672,23 +691,23 @@ app.delete('/api/screens/:id/image', route(async (req, res) => {
 // Each copy is independent: its own image and issues.
 // Copies share a link_id so the UI can show where else the screen is used.
 // One screen copied into a flow (shares link_id with the source). Returns the new id.
-async function copyScreenRow(client, source, flowId, sortOrder, withIssues) {
+async function copyScreenRow(client, source, flowId, sortOrder, withIssues, by) {
   const linkId = source.link_id || source.id;
   if (!source.link_id) {
-    await client.query('UPDATE screens SET link_id = $2 WHERE id = $1', [source.id, linkId]);
+    await client.query('UPDATE screens SET link_id = $2, updated_by = $3 WHERE id = $1', [source.id, linkId, by]);
     source.link_id = linkId;
   }
   const id = randomUUID();
   await client.query(
-    `INSERT INTO screens (id, flow_id, name, page, kind, action, device, wireframe, link_id, sort_order)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-    [id, flowId, source.name, source.page, source.kind, source.action, source.device, source.wireframe, linkId, sortOrder]);
+    `INSERT INTO screens (id, flow_id, name, page, kind, action, device, wireframe, link_id, sort_order, created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)`,
+    [id, flowId, source.name, source.page, source.kind, source.action, source.device, source.wireframe, linkId, sortOrder, by]);
   if (withIssues) {
     await client.query(
-      `INSERT INTO comments (id, screen_id, text, priority, assignees, remarks, status, status_date)
-       SELECT gen_random_uuid()::text, $1, text, priority, assignees, remarks, status, status_date
+      `INSERT INTO comments (id, screen_id, text, priority, assignees, remarks, status, status_date, created_by, updated_by)
+       SELECT gen_random_uuid()::text, $1, text, priority, assignees, remarks, status, status_date, $3, $3
        FROM comments WHERE screen_id = $2 AND NOT resolved AND NOT is_deleted`,
-      [id, source.id]);
+      [id, source.id, by]);
   }
   return id;
 }
@@ -702,8 +721,9 @@ async function copyConditionRow(client, cond, flowId, sortOrder, ctx) {
   const id = randomUUID();
   const branches = cond.branches.map((b) => ({ ...b, id: randomUUID(), oldId: b.id }));
   await client.query(
-    `INSERT INTO screens (id, flow_id, type, name, branches, sort_order) VALUES ($1, $2, 'condition', $3, $4, $5)`,
-    [id, flowId, cond.name, JSON.stringify(branches.map(({ oldId, ...b }) => b)), sortOrder]);
+    `INSERT INTO screens (id, flow_id, type, name, branches, sort_order, created_by, updated_by)
+     VALUES ($1, $2, 'condition', $3, $4, $5, $6, $6)`,
+    [id, flowId, cond.name, JSON.stringify(branches.map(({ oldId, ...b }) => b)), sortOrder, ctx.by]);
   ctx.map.set(cond.id, id);
   ctx.conditions.push({ id, branches });
 
@@ -718,15 +738,15 @@ async function copyConditionRow(client, cond, flowId, sortOrder, ctx) {
     for (const [i, path] of paths.entries()) {
       const pathId = randomUUID();
       await client.query(
-        `INSERT INTO flows (id, module_id, name, sort_order, parent_flow_id, from_condition_id, from_branch_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [pathId, flowRow[0].module_id, rename(path.name), Date.now() + i, flowId, id, b.id]);
+        `INSERT INTO flows (id, module_id, name, sort_order, parent_flow_id, from_condition_id, from_branch_id, created_by, updated_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
+        [pathId, flowRow[0].module_id, rename(path.name), Date.now() + i, flowId, id, b.id, ctx.by]);
       const { rows: steps } = await client.query(
         'SELECT * FROM screens WHERE flow_id = $1 AND NOT is_deleted ORDER BY sort_order, created_at', [path.id]);
       for (const [j, step] of steps.entries()) {
         if (step.type === 'condition') await copyConditionRow(client, step, pathId, j, ctx);
         else {
-          const copyId = await copyScreenRow(client, step, pathId, j, ctx.withIssues);
+          const copyId = await copyScreenRow(client, step, pathId, j, ctx.withIssues, ctx.by);
           ctx.map.set(step.id, copyId);
           if (step.image_url) ctx.images.push({ id: copyId, url: step.image_url });
         }
@@ -737,12 +757,12 @@ async function copyConditionRow(client, cond, flowId, sortOrder, ctx) {
 }
 
 // each copy gets its own Cloudinary image, so replacing one never changes the other
-async function copyImages(images) {
+async function copyImages(images, by) {
   if (!images.length || !cloud.configured()) return;
   await Promise.all(images.map(async ({ id, url }) => {
     try {
       const up = await cloud.upload(url, id);
-      await db.query('UPDATE screens SET image_url = $2, image_public_id = $3 WHERE id = $1', [id, up.url, up.publicId]);
+      await db.query('UPDATE screens SET image_url = $2, image_public_id = $3, updated_by = $4 WHERE id = $1', [id, up.url, up.publicId, by]);
     } catch (err) {
       console.error(`Copying image for screen ${id} failed:`, err.message);
     }
@@ -766,14 +786,14 @@ app.post('/api/screens/:id/copy', route(async (req, res) => {
     const created = [];
     for (const [i, flowId] of flowIds.entries()) {
       if (source.type === 'condition') {
-        const ctx = { map: new Map(), images, conditions: [], withIssues };
+        const ctx = { map: new Map(), images, conditions: [], withIssues, by: req.user.id };
         created.push(await copyConditionRow(client, source, flowId, Date.now() + i, ctx));
         for (const c of ctx.conditions) {
           const branches = c.branches.map(({ oldId, ...b }) => ({ ...b, targetId: ctx.map.get(b.targetId) || null }));
-          await client.query('UPDATE screens SET branches = $2 WHERE id = $1', [c.id, JSON.stringify(branches)]);
+          await client.query('UPDATE screens SET branches = $2, updated_by = $3 WHERE id = $1', [c.id, JSON.stringify(branches), req.user.id]);
         }
       } else {
-        const id = await copyScreenRow(client, source, flowId, Date.now() + i, withIssues);
+        const id = await copyScreenRow(client, source, flowId, Date.now() + i, withIssues, req.user.id);
         if (source.image_url) images.push({ id, url: source.image_url });
         created.push(id);
       }
@@ -781,7 +801,7 @@ app.post('/api/screens/:id/copy', route(async (req, res) => {
     return created;
   });
 
-  await copyImages(images);
+  await copyImages(images, req.user.id);
   res.status(201).json(await Promise.all(ids.map(getScreen)));
 }));
 
@@ -791,8 +811,8 @@ app.post('/api/screens/:id/comments', route(async (req, res) => {
   await allowed(req, 'screens', req.params.id, 'edit');
   const s = await statusFields(req.body.status || 'pending');
   const { rows } = await db.query(
-    `INSERT INTO comments (id, screen_id, text, priority, assignees, remarks, status, status_date, resolved)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+    `INSERT INTO comments (id, screen_id, text, priority, assignees, remarks, status, status_date, resolved, created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10) RETURNING *`,
     [
       randomUUID(),
       req.params.id,
@@ -801,6 +821,7 @@ app.post('/api/screens/:id/comments', route(async (req, res) => {
       people(req.body.assignees),
       text(req.body.remarks, 1000),
       s.status, s.status_date, s.resolved,
+      req.user.id,
     ]);
   res.status(201).json(toComment(rows[0]));
 }));
@@ -817,13 +838,13 @@ app.patch('/api/comments/:id', route(async (req, res) => {
   if (b.text !== undefined) fields.text = required(text(b.text, 1000), 'Issue');
   if (b.assignees !== undefined) fields.assignees = people(b.assignees);
   if (b.remarks !== undefined) fields.remarks = text(b.remarks, 1000);
-  await update('comments', req.params.id, fields);
+  await update('comments', req.params.id, fields, req.user.id);
   res.json(toComment(await one('SELECT * FROM comments WHERE id = $1', [req.params.id])));
 }));
 
 app.delete('/api/comments/:id', route(async (req, res) => {
   await allowed(req, 'comments', req.params.id, 'full');
-  await softDelete('comments', req.params.id);
+  await softDelete('comments', req.params.id, req.user.id);
   res.json({ ok: true });
 }));
 

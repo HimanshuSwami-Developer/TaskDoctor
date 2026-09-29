@@ -1066,7 +1066,7 @@ $(function () {
         <span class="text-indigo-600">${icon('diagram', 18)}</span>
         <div class="min-w-0 flex-1">
           <h3 class="truncate text-base font-semibold text-slate-900">${esc(root.name)} · Diagram</h3>
-          <p class="truncate text-xs text-slate-500">Click a screen to open it, a condition to edit its branches, + on an arrow to add a step. Changes update the screens.</p>
+          <p class="truncate text-xs text-slate-500">Drag to move around. Click a screen to open it, a condition to edit its branches, + on an arrow to add a step. Changes update the screens.</p>
         </div>
         <div class="flex items-center gap-1">
           <button class="icon-btn border border-slate-200 bg-white" data-dg-zoom="-1" title="Zoom out">${icon('minus', 14)}</button>
@@ -1165,6 +1165,33 @@ $(function () {
     diagram.zoom = step ? Math.min(1.5, Math.max(0.4, Math.round((diagram.zoom + step * 0.1) * 10) / 10)) : 1;
     renderDiagram();
   });
+  // hand tool: drag anywhere on the diagram (background or a card) to pan it; a press that barely moves is still a click
+  const dgPan = { on: false, moved: false };
+  $doc.on('mousedown', '#diagramBody .dg-scroll', function (e) {
+    if (e.button !== 0 || $(e.target).closest('button, a, input, select, textarea, label, .dg-pop, .dg-menu').length) return;
+    e.preventDefault(); // no text selection while dragging
+    Object.assign(dgPan, { on: true, moved: false, x: e.clientX, y: e.clientY, left: this.scrollLeft, top: this.scrollTop });
+  });
+  $(window).on('mousemove', (e) => {
+    if (!dgPan.on) return;
+    const dx = e.clientX - dgPan.x;
+    const dy = e.clientY - dgPan.y;
+    if (!dgPan.moved && Math.abs(dx) + Math.abs(dy) < 5) return;
+    dgPan.moved = true;
+    const scroll = $('#diagramBody .dg-scroll').addClass('panning')[0]; // re-found: a reload can re-render the diagram mid-drag
+    if (scroll) Object.assign(scroll, { scrollLeft: dgPan.left - dx, scrollTop: dgPan.top - dy });
+  });
+  $(window).on('mouseup', () => {
+    if (!dgPan.on) return;
+    dgPan.on = false;
+    $('#diagramBody .dg-scroll').removeClass('panning');
+    setTimeout(() => { dgPan.moved = false; }); // after this mouseup's click (if any) has been handled
+  });
+  // the click that ends a drag must not open the card it was released on
+  document.addEventListener('click', (e) => {
+    if (dgPan.moved && $(e.target).closest('#diagramBody').length) { e.stopPropagation(); e.preventDefault(); }
+  }, true);
+
   // clicks on the canvas: open a screen, open a condition's branches, or close what is open
   $doc.on('click', '#diagramBody .dg-canvas', function (e) {
     const $t = $(e.target);

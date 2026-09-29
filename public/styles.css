@@ -258,6 +258,9 @@ body.wiring, body.wiring * { cursor: crosshair !important; user-select: none; }
 .diagram-card { max-width: 100%; height: 94vh; display: flex; flex-direction: column; overflow: hidden; }
 .dg-scroll { flex: 1; min-height: 0; overflow: auto; background: #f8fafc radial-gradient(#e2e8f0 1px, transparent 1px) 0 0 / 18px 18px; }
 .dg-canvas { position: relative; }
+/* hand tool: the background shows an open hand, a closed one while dragging (cards keep their pointer until the drag starts) */
+.dg-scroll { cursor: grab; }
+.dg-scroll.panning, .dg-scroll.panning * { cursor: grabbing !important; user-select: none; }
 .dg-wires { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
 .dg-edge { fill: none; stroke: #94a3b8; stroke-width: 2; }
 .dg-edge.ghost { stroke: #cbd5e1; stroke-dasharray: 4 4; }
