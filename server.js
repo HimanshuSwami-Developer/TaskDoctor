@@ -520,7 +520,7 @@ app.patch('/api/flows/:id', route(async (req, res) => {
 
 // Drag & drop: save the new card order of a flow (cards may come from another flow).
 app.put('/api/flows/:id/order', route(async (req, res) => {
-  const productId = await allowed(req, 'flows', req.params.id, 'full');
+  const productId = await allowed(req, 'flows', req.params.id, 'developer');
   const ids = Array.isArray(req.body.ids) ? req.body.ids.filter((x) => typeof x === 'string') : [];
   const { rows } = await db.query(
     `SELECT count(*)::int AS n FROM screens s JOIN flows f ON f.id = s.flow_id JOIN modules m ON m.id = f.module_id
@@ -566,10 +566,9 @@ app.delete('/api/flows/:id/video', route(async (req, res) => {
 
 // type "condition" = a decision step, e.g. "Mandate status" → Success / Pending / Else, each leading to a screen
 app.post('/api/flows/:id/screens', route(async (req, res) => {
-  await allowed(req, 'flows', req.params.id, 'developer'); // developers add screens and popups; conditions need full
+  await allowed(req, 'flows', req.params.id, 'developer');
   const id = randomUUID();
   if (req.body.type === 'condition') {
-    need(req, 'full');
     const name = required(text(req.body.name), 'Condition name');
     const branches = ['Success', 'Pending', 'Else'].map((label) => ({ id: randomUUID(), label, targetId: null }));
     await db.query(
@@ -592,7 +591,6 @@ app.patch('/api/screens/:id', route(async (req, res) => {
   const productId = await allowed(req, 'screens', req.params.id, 'developer');
   const screen = await live('screens', req.params.id, '*');
   const b = req.body;
-  if (screen.type === 'condition' || b.branches !== undefined) need(req, 'full'); // developers edit screens / popups only
   const fields = {};
   if (b.name !== undefined) fields.name = required(text(b.name), 'Name');
   if (b.page !== undefined) fields.page = text(b.page);
@@ -622,7 +620,7 @@ app.patch('/api/screens/:id', route(async (req, res) => {
 
 // Extend one branch of a condition into its own path flow, named after the branch ("Sign Up › Success").
 app.post('/api/screens/:id/branches/:branchId/path', route(async (req, res) => {
-  await allowed(req, 'screens', req.params.id, 'full');
+  await allowed(req, 'screens', req.params.id, 'developer');
   const cond = await live('screens', req.params.id, '*');
   const branch = cond.type === 'condition' && cond.branches.find((b) => b.id === req.params.branchId);
   if (!branch) throw new HttpError(404, 'Not found');
@@ -674,7 +672,6 @@ app.put('/api/flows/:id/from-screen', route(async (req, res) => {
 
 app.delete('/api/screens/:id', route(async (req, res) => {
   await allowed(req, 'screens', req.params.id, 'developer');
-  if ((await live('screens', req.params.id, 'type')).type === 'condition') need(req, 'full'); // conditions need full
   await softDelete('screens', req.params.id, req.user.id);
   res.json({ ok: true });
 }));

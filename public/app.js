@@ -131,7 +131,7 @@ $(function () {
     view: { label: 'View only', hint: 'Can see screens and flow videos in their apps. Cannot see issues or change anything.' },
     edit: { label: 'Update tasks', hint: 'Can add and update issues (status, priority, assignees, remarks). Cannot change screens, images or videos.' },
     tester: { label: 'Tester', hint: 'Can add and update issues and move them to any status (Pending, Release for Testing, Complete …). Cannot change screens, images or videos.' },
-    developer: { label: 'Developer', hint: 'Update tasks, plus add, rename and delete modules, flows, screens and popups, and upload screen images. Can only move an issue between Pending and Release for Testing.' },
+    developer: { label: 'Developer', hint: 'Update tasks, plus add, rename and delete modules, flows, screens, popups and conditions (with their branch paths), drag screens into a new order, and upload screen images. Can only move an issue between Pending and Release for Testing.' },
     full: { label: 'Full', hint: 'Can do everything inside their apps: create, edit and delete modules, flows, screens and issues.' },
     super: { label: 'Super admin', hint: 'Everything in every app, plus this admin dashboard and the status tags.' },
   };
@@ -141,15 +141,15 @@ $(function () {
   const statusLocked = (id) => Boolean(me) && me.access === 'developer' && !DEV_STATUSES.includes(id);
 
   // Controls that need a higher level are removed; lower logins get read-only inputs.
-  // edit = issues only; screens, images, videos and card order need full. View-only logins don't see issues at all.
+  // edit / tester = issues only; developer adds to that modules, flows, screens, conditions, images and card order;
+  // full adds videos, copying, screen paths and flow order. View-only logins don't see issues at all.
   const NEEDS = {
     super: '[data-action="add-product"], [data-rename-product], [data-delete-product], [data-action="manage-statuses"], [data-action="admin"]',
-    full: `[data-move-flow], [data-extend-path], [data-add-condition], [data-cond-tool], [data-copy-screen], [data-delete-comment],
-      [data-remove-video], [data-add-branch], [data-remove-branch], [data-rename-condition],
-      [data-extend-screen], [data-insert-condition], [data-move-path],
-      .dg-plus, [data-dg-new="condition"], [data-dg-branch-add], [data-dg-branch-remove]`,
+    full: `[data-move-flow], [data-copy-screen], [data-delete-comment], [data-remove-video], [data-extend-screen], [data-move-path]`,
     developer: `[data-action="add-module"], [data-rename-module], [data-delete-module], [data-remove-image], [data-action="add-flow"], [data-rename-flow], [data-delete-flow],
-      .add-screen, .dg-add-end, [data-edit-screen], [data-delete-screen]`,
+      .add-screen, .dg-add-end, .dg-plus, [data-edit-screen], [data-delete-screen],
+      [data-add-condition], [data-insert-condition], [data-rename-condition], [data-cond-tool], [data-add-branch], [data-remove-branch], [data-extend-path],
+      [data-dg-new="condition"], [data-dg-branch-add], [data-dg-branch-remove]`,
     edit: '.add-comment, [data-action="writer"], [data-remove-person], [data-bugs], [data-flip], [data-open-sheet], .issues-panel',
   };
   function applyAccess() {
@@ -157,12 +157,9 @@ $(function () {
     Object.entries(NEEDS).forEach(([level, selector]) => { if (!can(level)) $root.find(selector).remove(); });
     if (!can('developer')) {
       $root.find('[data-upload]').closest('label').remove();
-      $root.find('[data-device], [data-wireframe]').prop('disabled', true);
+      $root.find('[data-device], [data-wireframe], [data-branch-label], [data-branch-target], [data-dg-branch-label], [data-dg-branch-target]').prop('disabled', true);
     }
-    if (!can('full')) {
-      $root.find('[data-upload-video]').closest('label').remove();
-      $root.find('[data-branch-label], [data-branch-target], [data-dg-branch-label], [data-dg-branch-target]').prop('disabled', true);
-    }
+    if (!can('full')) $root.find('[data-upload-video]').closest('label').remove();
     if (!can('edit')) $root.find('[data-status], [data-resolve], [data-field], [data-cycle-priority], .people-input').prop('disabled', true);
     if (statusLocked('complete')) $root.find('[data-resolve]').prop('disabled', true).attr('title', 'Developers cannot mark issues fixed');
   }
@@ -1192,7 +1189,7 @@ $(function () {
     renderDiagram();
   });
   // Dragging on the diagram: on the background it pans (hand tool); on a card (full access) it picks the card up and
-  // drops it into a lane — a new place in its own flow or another flow of the tree, saved like drag & drop on the board.
+  // (developer access and up) drops it into a lane — a new place in its own flow or another flow of the tree, saved like drag & drop on the board.
   // A press that barely moves is still a click.
   const dgPan = { on: false, moved: false, card: null };
   const dgNodeEl = (id) => $(`#diagramBody [data-dg-open="${id}"], #diagramBody [data-dg-cond="${id}"]`);
@@ -1218,7 +1215,7 @@ $(function () {
     const $node = $(e.target).closest('.dg-node');
     const id = $node.data('dg-open') || $node.data('dg-cond');
     const root = findFlow(diagram.flowId);
-    const card = id && can('full') && root ? { id, ...diagramLayout(root) } : null;
+    const card = id && can('developer') && root ? { id, ...diagramLayout(root) } : null;
     Object.assign(dgPan, { on: true, moved: false, card, x: e.clientX, y: e.clientY, left: this.scrollLeft, top: this.scrollTop });
   });
   $(window).on('mousemove', (e) => {
@@ -1999,7 +1996,7 @@ $(function () {
   }
 
   function initDragging() {
-    if (!can('full')) return;
+    if (!can('developer')) return;
     $('.screens').each(function () {
       Sortable.create(this, {
         group: 'screens',
