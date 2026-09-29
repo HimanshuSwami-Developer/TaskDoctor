@@ -490,7 +490,7 @@ app.delete('/api/modules/:id', route(async (req, res) => {
 // ---------------------------------------------------------------- flows
 
 app.post('/api/modules/:id/flows', route(async (req, res) => {
-  await allowed(req, 'modules', req.params.id, 'full');
+  await allowed(req, 'modules', req.params.id, 'developer');
   const name = required(text(req.body.name), 'Name');
   const { rows } = await db.query(
     'INSERT INTO flows (id, module_id, name, sort_order, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $5) RETURNING *',
@@ -512,7 +512,7 @@ app.put('/api/modules/:id/flow-order', route(async (req, res) => {
 }));
 
 app.patch('/api/flows/:id', route(async (req, res) => {
-  await allowed(req, 'flows', req.params.id, 'full');
+  await allowed(req, 'flows', req.params.id, 'developer');
   const name = required(text(req.body.name), 'Name');
   res.json(toFlow(await one('UPDATE flows SET name = $2, updated_by = $3 WHERE id = $1 AND NOT is_deleted RETURNING *',
     [req.params.id, name, req.user.id])));
@@ -536,7 +536,7 @@ app.put('/api/flows/:id/order', route(async (req, res) => {
 }));
 
 app.delete('/api/flows/:id', route(async (req, res) => {
-  await allowed(req, 'flows', req.params.id, 'full');
+  await allowed(req, 'flows', req.params.id, 'developer');
   await softDelete('flows', req.params.id, req.user.id);
   res.json({ ok: true });
 }));
@@ -589,9 +589,10 @@ app.post('/api/flows/:id/screens', route(async (req, res) => {
 }));
 
 app.patch('/api/screens/:id', route(async (req, res) => {
-  const productId = await allowed(req, 'screens', req.params.id, 'full');
+  const productId = await allowed(req, 'screens', req.params.id, 'developer');
   const screen = await live('screens', req.params.id, '*');
   const b = req.body;
+  if (screen.type === 'condition' || b.branches !== undefined) need(req, 'full'); // developers edit screens / popups only
   const fields = {};
   if (b.name !== undefined) fields.name = required(text(b.name), 'Name');
   if (b.page !== undefined) fields.page = text(b.page);
@@ -672,7 +673,8 @@ app.put('/api/flows/:id/from-screen', route(async (req, res) => {
 }));
 
 app.delete('/api/screens/:id', route(async (req, res) => {
-  await allowed(req, 'screens', req.params.id, 'full');
+  await allowed(req, 'screens', req.params.id, 'developer');
+  if ((await live('screens', req.params.id, 'type')).type === 'condition') need(req, 'full'); // conditions need full
   await softDelete('screens', req.params.id, req.user.id);
   res.json({ ok: true });
 }));
