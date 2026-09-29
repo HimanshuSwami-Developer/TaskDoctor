@@ -131,7 +131,7 @@ $(function () {
     view: { label: 'View only', hint: 'Can see screens and flow videos in their apps. Cannot see issues or change anything.' },
     edit: { label: 'Update tasks', hint: 'Can add and update issues (status, priority, assignees, remarks). Cannot change screens, images or videos.' },
     tester: { label: 'Tester', hint: 'Can add and update issues and move them to any status (Pending, Release for Testing, Complete …). Cannot change screens, images or videos.' },
-    developer: { label: 'Developer', hint: 'Update tasks, plus add modules; add, rename and delete flows, screens and popups. Can only move an issue between Pending and Release for Testing.' },
+    developer: { label: 'Developer', hint: 'Update tasks, plus add, rename and delete modules, flows, screens and popups, and upload screen images. Can only move an issue between Pending and Release for Testing.' },
     full: { label: 'Full', hint: 'Can do everything inside their apps: create, edit and delete modules, flows, screens and issues.' },
     super: { label: 'Super admin', hint: 'Everything in every app, plus this admin dashboard and the status tags.' },
   };
@@ -144,21 +144,23 @@ $(function () {
   // edit = issues only; screens, images, videos and card order need full. View-only logins don't see issues at all.
   const NEEDS = {
     super: '[data-action="add-product"], [data-rename-product], [data-delete-product], [data-action="manage-statuses"], [data-action="admin"]',
-    full: `[data-rename-module], [data-delete-module],
-      [data-move-flow], [data-extend-path], [data-add-condition], [data-cond-tool], [data-copy-screen], [data-delete-comment],
-      [data-remove-video], [data-remove-image], [data-add-branch], [data-remove-branch], [data-rename-condition],
+    full: `[data-move-flow], [data-extend-path], [data-add-condition], [data-cond-tool], [data-copy-screen], [data-delete-comment],
+      [data-remove-video], [data-add-branch], [data-remove-branch], [data-rename-condition],
       [data-extend-screen], [data-insert-condition], [data-move-path],
       .dg-plus, [data-dg-new="condition"], [data-dg-branch-add], [data-dg-branch-remove]`,
-    developer: `[data-action="add-module"], [data-action="add-flow"], [data-rename-flow], [data-delete-flow],
+    developer: `[data-action="add-module"], [data-rename-module], [data-delete-module], [data-remove-image], [data-action="add-flow"], [data-rename-flow], [data-delete-flow],
       .add-screen, .dg-add-end, [data-edit-screen], [data-delete-screen]`,
     edit: '.add-comment, [data-action="writer"], [data-remove-person], [data-bugs], [data-flip], [data-open-sheet], .issues-panel',
   };
   function applyAccess() {
     const $root = $('#products, #summary, #account, #tabs, #board, #popupBody, #sheetBody, #bugsBody, #videoBody, #diagramBody');
     Object.entries(NEEDS).forEach(([level, selector]) => { if (!can(level)) $root.find(selector).remove(); });
-    if (!can('developer')) $root.find('[data-device], [data-wireframe]').prop('disabled', true);
+    if (!can('developer')) {
+      $root.find('[data-upload]').closest('label').remove();
+      $root.find('[data-device], [data-wireframe]').prop('disabled', true);
+    }
     if (!can('full')) {
-      $root.find('[data-upload], [data-upload-video]').closest('label').remove();
+      $root.find('[data-upload-video]').closest('label').remove();
       $root.find('[data-branch-label], [data-branch-target], [data-dg-branch-label], [data-dg-branch-target]').prop('disabled', true);
     }
     if (!can('edit')) $root.find('[data-status], [data-resolve], [data-field], [data-cycle-priority], .people-input').prop('disabled', true);

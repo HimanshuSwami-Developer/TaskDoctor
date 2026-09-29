@@ -475,14 +475,14 @@ app.post('/api/products/:id/modules', route(async (req, res) => {
 }));
 
 app.patch('/api/modules/:id', route(async (req, res) => {
-  await allowed(req, 'modules', req.params.id, 'full');
+  await allowed(req, 'modules', req.params.id, 'developer');
   const name = required(text(req.body.name), 'Name');
   res.json(toModule(await one('UPDATE modules SET name = $2, updated_by = $3 WHERE id = $1 AND NOT is_deleted RETURNING *',
     [req.params.id, name, req.user.id])));
 }));
 
 app.delete('/api/modules/:id', route(async (req, res) => {
-  await allowed(req, 'modules', req.params.id, 'full');
+  await allowed(req, 'modules', req.params.id, 'developer');
   await softDelete('modules', req.params.id, req.user.id);
   res.json({ ok: true });
 }));
@@ -682,7 +682,7 @@ app.delete('/api/screens/:id', route(async (req, res) => {
 // ---------------------------------------------------------------- screen images (stored in Cloudinary)
 
 app.post('/api/screens/:id/image', route(async (req, res) => {
-  await allowed(req, 'screens', req.params.id, 'full');
+  await allowed(req, 'screens', req.params.id, 'developer');
   if (!cloud.configured()) throw new HttpError(503, 'Image storage is not set up. Add the Cloudinary keys to .env and restart.');
   if (!/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(req.body.dataUrl || '')) {
     throw new HttpError(400, 'Please upload a PNG, JPG, WEBP or GIF image');
@@ -693,7 +693,7 @@ app.post('/api/screens/:id/image', route(async (req, res) => {
 }));
 
 app.delete('/api/screens/:id/image', route(async (req, res) => {
-  await allowed(req, 'screens', req.params.id, 'full');
+  await allowed(req, 'screens', req.params.id, 'developer');
   const screen = await live('screens', req.params.id, 'image_public_id');
   await db.query('UPDATE screens SET image_url = NULL, image_public_id = NULL, updated_by = $2 WHERE id = $1', [req.params.id, req.user.id]);
   await cloud.remove([screen.image_public_id]);
