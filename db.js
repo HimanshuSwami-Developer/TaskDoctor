@@ -163,6 +163,9 @@ ALTER TABLE flows ADD COLUMN IF NOT EXISTS video_public_id text;
 ALTER TABLE flows ADD COLUMN IF NOT EXISTS from_screen_id text;
 CREATE INDEX IF NOT EXISTS flows_screen_idx ON flows(from_screen_id);
 
+-- Which side of the product an issue is in: frontend | backend | both ('' = not set, issues logged before this existed)
+ALTER TABLE comments ADD COLUMN IF NOT EXISTS area text NOT NULL DEFAULT '';
+
 -- Audit columns on every table: who created / last changed a row and when. created_by / updated_by are the
 -- signed-in user (NULL for rows made by the server itself, e.g. the seeded statuses or the first super admin).
 -- updated_at starts as created_at for old rows and is kept current by a trigger on every UPDATE.

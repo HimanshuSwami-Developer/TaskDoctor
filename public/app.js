@@ -8,6 +8,8 @@ $(function () {
     medium: { label: 'Medium', rank: 2 },
     low: { label: 'Low', rank: 3 },
   };
+  // which side an issue is in (issues from before this was added have none)
+  const AREA = { frontend: 'Frontend', backend: 'Backend', both: 'Frontend + Backend' };
 
   const PATHS = {
     edit: 'M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z',
@@ -418,6 +420,9 @@ $(function () {
 
   const priorityOptions = (selected) =>
     Object.entries(PRIORITY).map(([k, v]) => `<option value="${k}" ${k === selected ? 'selected' : ''}>${v.label}</option>`).join('');
+  const areaOptions = (selected) => (AREA[selected] ? '' : '<option value="" selected disabled>Area</option>')
+    + Object.entries(AREA).map(([k, label]) => `<option value="${k}" ${k === selected ? 'selected' : ''}>${label}</option>`).join('');
+  const areaTag = (c) => (AREA[c.area] ? `<span class="area-tag ${c.area}">${AREA[c.area]}</span>` : '');
 
   // ---------------------------------------------------------------- issues (card back + popup)
 
@@ -430,6 +435,7 @@ $(function () {
         <div class="min-w-0 flex-1">
           <div class="bug-meta">
             <button class="prio-tag ${p}" data-cycle-priority="${c.id}" title="Change priority"><span class="dot bg-${p}"></span>${PRIORITY[p].label}</button>
+            ${areaTag(c)}
             ${statusSelect(c, 'sm')}
             ${(c.assignees || []).map((n) => `<span class="assignee">${esc(n)}</span>`).join('')}
             ${c.remarks && !full ? `<span class="text-slate-400" title="Has remarks">${icon('note', 12)}</span>` : ''}
@@ -457,6 +463,7 @@ $(function () {
         </ul>
         <form class="add-comment bug-add" data-screen="${s.id}">
           <select name="priority" class="prio-select" title="Priority">${priorityOptions('medium')}</select>
+          <select name="area" class="prio-select" title="Frontend or backend">${areaOptions('frontend')}</select>
           <input name="text" class="input min-w-0 flex-1 text-sm" placeholder="Add issue" autocomplete="off">
           <button class="btn-primary px-3">Add</button>
           ${peopleBox([], '', 'w-full text-xs')}
@@ -834,6 +841,8 @@ $(function () {
         </label>
         <div><span class="cell-label">Priority</span>
           <select class="input w-full text-sm" data-field="priority" data-id="${c.id}">${priorityOptions(p)}</select></div>
+        <div><span class="cell-label">Area</span>
+          <select class="input w-full text-sm" data-field="area" data-id="${c.id}">${areaOptions(c.area)}</select></div>
         <div><span class="cell-label">Status</span>
           ${statusSelect(c, 'w-full')}<span class="date mt-1 block">${dateText(c)}</span></div>
         <div><span class="cell-label">Issue</span>
@@ -868,12 +877,13 @@ $(function () {
         </div>
         <button class="icon-btn" data-close-sheet title="Close">${icon('close', 18)}</button>
       </div>
-      <div class="sheet-cols"><span>Fixed</span><span>Priority</span><span>Status</span><span>Issue</span><span>Assigned to</span><span>Remarks</span><span>Added</span></div>
+      <div class="sheet-cols"><span>Fixed</span><span>Priority</span><span>Area</span><span>Status</span><span>Issue</span><span>Assigned to</span><span>Remarks</span><span>Added</span></div>
       <div class="sheet-rows" id="sheetRows">
         ${rows.map(sheetRow).join('') || '<p class="py-12 text-center text-sm text-slate-400">No issues</p>'}
       </div>
       <form class="add-comment sheet-add" data-screen="${s.id}">
         <select name="priority" class="input text-sm">${priorityOptions('medium')}</select>
+        <select name="area" class="input text-sm" title="Frontend or backend">${areaOptions('frontend')}</select>
         <select name="status" class="input text-sm" title="Status">${activeStatuses().map((x) => `<option value="${esc(x.id)}">${esc(x.label)}</option>`).join('')}</select>
         <input name="text" class="input text-sm" placeholder="Issue" autocomplete="off">
         ${peopleBox([], '', 'text-sm')}
@@ -1066,7 +1076,7 @@ $(function () {
         <span class="text-indigo-600">${icon('diagram', 18)}</span>
         <div class="min-w-0 flex-1">
           <h3 class="truncate text-base font-semibold text-slate-900">${esc(root.name)} · Diagram</h3>
-          <p class="truncate text-xs text-slate-500">Drag to move around. Click a screen to open it, a condition to edit its branches, + on an arrow to add a step. Changes update the screens.</p>
+          <p class="truncate text-xs text-slate-500">Drag a card to move it, drag the background to look around. Click a screen to open it, a condition to edit its branches, + on an arrow to add a step. Changes update the screens.</p>
         </div>
         <div class="flex items-center gap-1">
           <button class="icon-btn border border-slate-200 bg-white" data-dg-zoom="-1" title="Zoom out">${icon('minus', 14)}</button>
@@ -1165,12 +1175,35 @@ $(function () {
     diagram.zoom = step ? Math.min(1.5, Math.max(0.4, Math.round((diagram.zoom + step * 0.1) * 10) / 10)) : 1;
     renderDiagram();
   });
-  // hand tool: drag anywhere on the diagram (background or a card) to pan it; a press that barely moves is still a click
-  const dgPan = { on: false, moved: false };
+  // Dragging on the diagram: on the background it pans (hand tool); on a card (full access) it picks the card up and
+  // drops it into a lane — a new place in its own flow or another flow of the tree, saved like drag & drop on the board.
+  // A press that barely moves is still a click.
+  const dgPan = { on: false, moved: false, card: null };
+  const dgNodeEl = (id) => $(`#diagramBody [data-dg-open="${id}"], #diagramBody [data-dg-cond="${id}"]`);
+
+  // Where a card dropped at canvas point (cx, cy) goes: { lane, index } (index among the lane's steps without the
+  // card itself), or null outside every lane / into a path that starts from the card (it would hang off itself).
+  function dgDropAt(cx, cy) {
+    const { lanes, id } = dgPan.card;
+    const row = Math.round((cy - dgY(0) - DG.h / 2) / DG.rowH);
+    const lane = lanes[row];
+    if (!lane || Math.abs(cy - (dgY(row) + DG.h / 2)) > DG.rowH / 2) return null;
+    for (let l = lane; l && l.from; l = dgPan.card.nodes.get(l.from.stepId).lane) if (l.from.stepId === id) return null;
+    const ids = lane.flow.screens.map((x) => x.id);
+    let index = Math.min(ids.length, Math.max(0, Math.round((cx - dgX(lane.col) + (DG.colW - DG.w) / 2) / DG.colW)));
+    const own = ids.indexOf(id);
+    if (own >= 0 && own < index) index -= 1;
+    return { lane, index };
+  }
+
   $doc.on('mousedown', '#diagramBody .dg-scroll', function (e) {
     if (e.button !== 0 || $(e.target).closest('button, a, input, select, textarea, label, .dg-pop, .dg-menu').length) return;
     e.preventDefault(); // no text selection while dragging
-    Object.assign(dgPan, { on: true, moved: false, x: e.clientX, y: e.clientY, left: this.scrollLeft, top: this.scrollTop });
+    const $node = $(e.target).closest('.dg-node');
+    const id = $node.data('dg-open') || $node.data('dg-cond');
+    const root = findFlow(diagram.flowId);
+    const card = id && can('full') && root ? { id, ...diagramLayout(root) } : null;
+    Object.assign(dgPan, { on: true, moved: false, card, x: e.clientX, y: e.clientY, left: this.scrollLeft, top: this.scrollTop });
   });
   $(window).on('mousemove', (e) => {
     if (!dgPan.on) return;
@@ -1178,14 +1211,58 @@ $(function () {
     const dy = e.clientY - dgPan.y;
     if (!dgPan.moved && Math.abs(dx) + Math.abs(dy) < 5) return;
     dgPan.moved = true;
-    const scroll = $('#diagramBody .dg-scroll').addClass('panning')[0]; // re-found: a reload can re-render the diagram mid-drag
-    if (scroll) Object.assign(scroll, { scrollLeft: dgPan.left - dx, scrollTop: dgPan.top - dy });
+    const $scroll = $('#diagramBody .dg-scroll'); // re-found: a reload can re-render the diagram mid-drag
+    const scroll = $scroll[0];
+    if (!scroll) return;
+    if (!dgPan.card) {
+      $scroll.addClass('panning');
+      Object.assign(scroll, { scrollLeft: dgPan.left - dx, scrollTop: dgPan.top - dy });
+      return;
+    }
+    // the card follows the pointer (also when the view scrolls under it near an edge)
+    const box = scroll.getBoundingClientRect();
+    const edge = (v, lo, hi) => (v < lo + 40 ? -14 : v > hi - 40 ? 14 : 0);
+    scroll.scrollLeft += edge(e.clientX, box.left, box.right);
+    scroll.scrollTop += edge(e.clientY, box.top, box.bottom);
+    const z = diagram.zoom;
+    const sx = (scroll.scrollLeft - dgPan.left) / z;
+    const sy = (scroll.scrollTop - dgPan.top) / z;
+    $scroll.addClass('moving-card');
+    dgNodeEl(dgPan.card.id).addClass('lifted').css('transform', `translate(${dx / z + sx}px, ${dy / z + sy}px)`);
+    const canvas = $scroll.find('.dg-canvas')[0].getBoundingClientRect();
+    const drop = dgDropAt((e.clientX - canvas.left) / z, (e.clientY - canvas.top) / z);
+    let $mark = $scroll.find('.dg-drop');
+    if (!drop) { $mark.remove(); return; }
+    if (!$mark.length) $mark = $('<div class="dg-drop"></div>').appendTo($scroll.find('.dg-canvas'));
+    // the gap before the step now at `index` (counted without the card itself)
+    const others = drop.lane.flow.screens.filter((x) => x.id !== dgPan.card.id);
+    const colOf = (x) => dgPan.card.nodes.get(x.id).col;
+    const col = others[drop.index] ? colOf(others[drop.index]) : others.length ? colOf(others[others.length - 1]) + 1 : drop.lane.col;
+    $mark.css({ left: dgX(col) - (DG.colW - DG.w) / 2, top: dgY(drop.lane.row) - 6 });
+    dgPan.card.drop = drop;
   });
   $(window).on('mouseup', () => {
     if (!dgPan.on) return;
     dgPan.on = false;
-    $('#diagramBody .dg-scroll').removeClass('panning');
+    $('#diagramBody .dg-scroll').removeClass('panning moving-card').find('.dg-drop').remove();
     setTimeout(() => { dgPan.moved = false; }); // after this mouseup's click (if any) has been handled
+    const { card } = dgPan;
+    dgPan.card = null;
+    if (!card || !dgPan.moved) return;
+    dgNodeEl(card.id).removeClass('lifted').css('transform', '');
+    if (!card.drop) return;
+    const { lane: { flow }, index } = card.drop;
+    const step = findScreen(card.id);
+    const from = findFlow(step.flowId);
+    const ids = flow.screens.map((x) => x.id).filter((x) => x !== card.id);
+    ids.splice(index, 0, card.id);
+    if (from.id === flow.id && ids.every((x, i) => x === from.screens[i].id)) return; // dropped where it was
+    // show it in the new place right away, then save and reload
+    from.screens = from.screens.filter((x) => x.id !== card.id);
+    step.flowId = flow.id;
+    flow.screens.splice(index, 0, step);
+    renderDiagram();
+    api('PUT', `/api/flows/${flow.id}/order`, { ids }).always(load);
   });
   // the click that ends a drag must not open the card it was released on
   document.addEventListener('click', (e) => {
@@ -1422,7 +1499,7 @@ $(function () {
               <p class="truncate text-xs text-slate-500">${esc(m.name)} › ${esc(f.name)}</p>
               <p class="truncate text-sm font-medium text-slate-900">${esc(s.name)}</p>
             </div>
-            <div><span class="prio-tag ${p}"><span class="dot bg-${p}"></span>${PRIORITY[p].label}</span></div>
+            <div class="flex flex-col items-start gap-1"><span class="prio-tag ${p}"><span class="dot bg-${p}"></span>${PRIORITY[p].label}</span>${areaTag(c)}</div>
             <div>${statusSelect(c, 'w-full')}<span class="date mt-1 block">${dateText(c)}</span></div>
             <p class="text-sm ${c.resolved ? 'text-slate-400 line-through' : 'text-slate-700'}">${esc(c.text)}${c.remarks ? `<span class="remark">${esc(c.remarks)}</span>` : ''}</p>
             <div class="flex flex-wrap gap-1">${(c.assignees || []).map((n) => `<span class="person">${esc(n)}</span>`).join('') || '<span class="text-xs text-slate-400">Unassigned</span>'}</div>
@@ -1784,6 +1861,7 @@ $(function () {
         </div>
         <div class="writer-line what">
           ${field('Priority', `<select class="input w-full" name="priority">${priorityOptions('medium')}</select>`)}
+          ${field('Area', `<select class="input w-full" name="area">${areaOptions('frontend')}</select>`)}
           ${field('Issue', '<textarea class="input w-full" name="text" rows="1" maxlength="1000" placeholder="What is wrong?"></textarea>')}
           ${field('Status', `<select class="input w-full" name="status">${activeStatuses().map((x) => `<option value="${esc(x.id)}">${esc(x.label)}</option>`).join('')}</select>`)}
         </div>
@@ -1882,6 +1960,7 @@ $(function () {
       api('POST', `/api/screens/${$row.data('screen')}/comments`, {
         text: $row.find('[name=text]').val().trim(),
         priority: $row.find('[name=priority]').val(),
+        area: $row.find('[name=area]').val(),
         status: $row.find('[name=status]').val(),
         assignees: peopleOf($row.find('.people')),
         remarks: $row.find('[name=remarks]').val().trim(),

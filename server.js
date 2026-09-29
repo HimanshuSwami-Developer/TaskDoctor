@@ -14,6 +14,7 @@ const DEVICES = ['app', 'web'];
 const WIREFRAMES = ['form', 'list', 'dashboard', 'detail'];
 const KINDS = ['screen', 'popup']; // popup = a dialog / bottom sheet shown over a screen
 const PRIORITIES = ['urgent', 'high', 'medium', 'low'];
+const AREAS = ['frontend', 'backend', 'both']; // which side an issue is in
 const ACCESS = Object.keys(auth.LEVELS);
 
 const app = express();
@@ -140,7 +141,7 @@ const toUser = (r) => ({
 });
 const toStatus = (r) => ({ id: r.id, label: r.label, color: r.color, builtIn: BUILT_IN_STATUSES.includes(r.id), deleted: r.is_deleted, ...audit(r) });
 const toComment = (r) => ({
-  id: r.id, screenId: r.screen_id, text: r.text, priority: r.priority,
+  id: r.id, screenId: r.screen_id, text: r.text, priority: r.priority, area: r.area,
   assignees: r.assignees, remarks: r.remarks, status: r.status, statusDate: r.status_date,
   resolved: r.status === 'complete', ...audit(r),
 });
@@ -338,6 +339,7 @@ app.get('/api/export', route(async (req, res) => {
   const [board, { rows: tags }] = await Promise.all([loadBoard(req.user), db.query('SELECT id, label FROM statuses')]);
   const statusName = Object.fromEntries(tags.map((t) => [t.id, t.label]));
   const PRIORITY = { urgent: 'Urgent', high: 'High', medium: 'Medium', low: 'Low' };
+  const AREA = { frontend: 'Frontend', backend: 'Backend', both: 'Frontend + Backend' };
   const day = (d) => (d ? new Date(d) : null);
 
   const book = new ExcelJS.Workbook();
@@ -348,7 +350,7 @@ app.get('/api/export', route(async (req, res) => {
     { header: 'App', key: 'app', width: 14 }, { header: 'Module', key: 'module', width: 16 },
     { header: 'Flow no.', key: 'no', width: 8 }, { header: 'Flow', key: 'flow', width: 26 },
     { header: 'Screen', key: 'screen', width: 22 }, { header: 'Page', key: 'page', width: 20 },
-    { header: 'Issue', key: 'text', width: 50 }, { header: 'Priority', key: 'priority', width: 10 },
+    { header: 'Issue', key: 'text', width: 50 }, { header: 'Priority', key: 'priority', width: 10 }, { header: 'Area', key: 'area', width: 18 },
     { header: 'Status', key: 'status', width: 18 }, { header: 'Status date', key: 'statusDate', width: 13, style: { numFmt: 'dd mmm yyyy' } },
     { header: 'Assigned to', key: 'assignees', width: 24 }, { header: 'Remarks', key: 'remarks', width: 36 },
     { header: 'Added on', key: 'createdAt', width: 13, style: { numFmt: 'dd mmm yyyy' } },
@@ -369,7 +371,7 @@ app.get('/api/export', route(async (req, res) => {
       screens.addRow({ ...base, step: i + 1, kind: s.kind === 'popup' ? 'Popup' : 'Screen', action: s.action, device: s.device === 'web' ? 'Web' : 'App',
         open: s.comments.filter((c) => !c.resolved).length, total: s.comments.length });
       s.comments.forEach((c) => issues.addRow({
-        ...base, text: c.text, priority: PRIORITY[c.priority] || c.priority, status: statusName[c.status] || c.status,
+        ...base, text: c.text, priority: PRIORITY[c.priority] || c.priority, area: AREA[c.area] || '', status: statusName[c.status] || c.status,
         statusDate: day(c.status === 'pending' ? null : c.statusDate), assignees: c.assignees.join(', '),
         remarks: c.remarks, createdAt: day(c.createdAt),
       }));
@@ -704,8 +706,8 @@ async function copyScreenRow(client, source, flowId, sortOrder, withIssues, by) 
     [id, flowId, source.name, source.page, source.kind, source.action, source.device, source.wireframe, linkId, sortOrder, by]);
   if (withIssues) {
     await client.query(
-      `INSERT INTO comments (id, screen_id, text, priority, assignees, remarks, status, status_date, created_by, updated_by)
-       SELECT gen_random_uuid()::text, $1, text, priority, assignees, remarks, status, status_date, $3, $3
+      `INSERT INTO comments (id, screen_id, text, priority, area, assignees, remarks, status, status_date, created_by, updated_by)
+       SELECT gen_random_uuid()::text, $1, text, priority, area, assignees, remarks, status, status_date, $3, $3
        FROM comments WHERE screen_id = $2 AND NOT resolved AND NOT is_deleted`,
       [id, source.id, by]);
   }
@@ -811,8 +813,8 @@ app.post('/api/screens/:id/comments', route(async (req, res) => {
   await allowed(req, 'screens', req.params.id, 'edit');
   const s = await statusFields(req.body.status || 'pending');
   const { rows } = await db.query(
-    `INSERT INTO comments (id, screen_id, text, priority, assignees, remarks, status, status_date, resolved, created_by, updated_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10) RETURNING *`,
+    `INSERT INTO comments (id, screen_id, text, priority, assignees, remarks, status, status_date, resolved, created_by, updated_by, area)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11) RETURNING *`,
     [
       randomUUID(),
       req.params.id,
@@ -822,6 +824,7 @@ app.post('/api/screens/:id/comments', route(async (req, res) => {
       text(req.body.remarks, 1000),
       s.status, s.status_date, s.resolved,
       req.user.id,
+      AREAS.includes(req.body.area) ? req.body.area : 'frontend',
     ]);
   res.status(201).json(toComment(rows[0]));
 }));
@@ -835,6 +838,7 @@ app.patch('/api/comments/:id', route(async (req, res) => {
   const status = b.status !== undefined ? b.status : b.resolved !== undefined ? (b.resolved ? 'complete' : 'pending') : undefined;
   if (status !== undefined && status !== issue.status) Object.assign(fields, await statusFields(status));
   if (b.priority !== undefined) fields.priority = oneOf(b.priority, PRIORITIES, 'priority');
+  if (b.area !== undefined) fields.area = oneOf(b.area, AREAS, 'area');
   if (b.text !== undefined) fields.text = required(text(b.text, 1000), 'Issue');
   if (b.assignees !== undefined) fields.assignees = people(b.assignees);
   if (b.remarks !== undefined) fields.remarks = text(b.remarks, 1000);
