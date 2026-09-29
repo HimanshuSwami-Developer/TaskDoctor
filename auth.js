@@ -12,9 +12,12 @@ const COOKIE = 'td_session';
 const SESSION_DAYS = 30;
 
 // view: see screens + flow videos only (no issues) · edit: add / update issues only (no screen changes)
+// tester: same as edit — add / update issues and set any status
+// developer: edit + add modules and screens / popups; moves issues only between Pending and Release for Testing
 // full: everything inside their apps
 // super: everything in every app + the admin dashboard
-const LEVELS = { view: 1, edit: 2, full: 3, super: 4 };
+const LEVELS = { view: 1, edit: 2, tester: 2, developer: 3, full: 4, super: 5 };
+const DEVELOPER_STATUSES = ['pending', 'testing'];
 
 async function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -67,7 +70,7 @@ function failed(key) {
 const succeeded = (key) => failures.delete(key);
 
 module.exports = {
-  COOKIE, SESSION_DAYS, LEVELS,
+  COOKIE, SESSION_DAYS, LEVELS, DEVELOPER_STATUSES,
   hashPassword, checkPassword, newToken, hashToken, readCookie, sessionCookie,
   atLeast, seesProduct, throttled, failed, succeeded,
 };

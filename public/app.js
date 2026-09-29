@@ -95,6 +95,7 @@ $(function () {
   const onlyScreens = (list) => list.filter((s) => !isCondition(s));
   const statusOf = (id) => statuses.find((x) => x.id === id) || { id, label: id, color: 'slate', deleted: true };
   const activeStatuses = () => statuses.filter((x) => !x.deleted);
+  const settableStatuses = () => activeStatuses().filter((x) => !statusLocked(x.id)); // what this login may pick
 
   // Branch colour from its label: success / pending / fail / other
   function tone(label) {
@@ -125,24 +126,30 @@ $(function () {
 
   // ---------------------------------------------------------------- access (the server enforces it; the UI only hides what you can't use)
 
-  const LEVELS = { view: 1, edit: 2, full: 3, super: 4 };
+  const LEVELS = { view: 1, edit: 2, tester: 2, developer: 3, full: 4, super: 5 };
   const ACCESS = {
     view: { label: 'View only', hint: 'Can see screens and flow videos in their apps. Cannot see issues or change anything.' },
     edit: { label: 'Update tasks', hint: 'Can add and update issues (status, priority, assignees, remarks). Cannot change screens, images or videos.' },
+    tester: { label: 'Tester', hint: 'Can add and update issues and move them to any status (Pending, Release for Testing, Complete …). Cannot change screens, images or videos.' },
+    developer: { label: 'Developer', hint: 'Update tasks, plus add modules and screens. Can only move an issue between Pending and Release for Testing.' },
     full: { label: 'Full', hint: 'Can do everything inside their apps: create, edit and delete modules, flows, screens and issues.' },
     super: { label: 'Super admin', hint: 'Everything in every app, plus this admin dashboard and the status tags.' },
   };
   const can = (level) => Boolean(me) && LEVELS[me.access] >= LEVELS[level];
+  // Developers only switch issues between these two statuses (the server enforces it too)
+  const DEV_STATUSES = ['pending', 'testing'];
+  const statusLocked = (id) => Boolean(me) && me.access === 'developer' && !DEV_STATUSES.includes(id);
 
   // Controls that need a higher level are removed; lower logins get read-only inputs.
   // edit = issues only; screens, images, videos and card order need full. View-only logins don't see issues at all.
   const NEEDS = {
     super: '[data-action="add-product"], [data-rename-product], [data-delete-product], [data-action="manage-statuses"], [data-action="admin"]',
-    full: `[data-action="add-module"], [data-rename-module], [data-delete-module], [data-action="add-flow"], [data-rename-flow],
-      [data-delete-flow], [data-move-flow], [data-extend-path], .add-screen, [data-delete-screen], [data-copy-screen], [data-delete-comment],
+    full: `[data-rename-module], [data-delete-module], [data-action="add-flow"], [data-rename-flow],
+      [data-delete-flow], [data-move-flow], [data-extend-path], [data-add-condition], [data-delete-screen], [data-copy-screen], [data-delete-comment],
       [data-remove-video], [data-remove-image], [data-add-branch], [data-remove-branch], [data-rename-condition], [data-edit-screen],
       [data-extend-screen], [data-insert-condition], [data-move-path],
-      [data-dg-insert], [data-dg-branch-add], [data-dg-branch-remove]`,
+      .dg-plus, [data-dg-new="condition"], [data-dg-branch-add], [data-dg-branch-remove]`,
+    developer: '[data-action="add-module"], .add-screen, .dg-add-end',
     edit: '.add-comment, [data-action="writer"], [data-remove-person], [data-bugs], [data-flip], [data-open-sheet], .issues-panel',
   };
   function applyAccess() {
@@ -153,6 +160,7 @@ $(function () {
       $root.find('[data-device], [data-wireframe], [data-branch-label], [data-branch-target], [data-dg-branch-label], [data-dg-branch-target]').prop('disabled', true);
     }
     if (!can('edit')) $root.find('[data-status], [data-resolve], [data-field], [data-cycle-priority], .people-input').prop('disabled', true);
+    if (statusLocked('complete')) $root.find('[data-resolve]').prop('disabled', true).attr('title', 'Developers cannot mark issues fixed');
   }
 
   // ---------------------------------------------------------------- loading indicators
@@ -398,10 +406,14 @@ $(function () {
   const fileInput = (s) => `<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden" data-upload="${s.id}">`;
 
   // Status of one issue. An issue still on a removed status keeps showing it until another one is picked.
+  // Developers get Pending / Release for Testing only, and a locked select on an issue in any other status.
   function statusSelect(c, extra = '') {
     const current = statusOf(c.status);
-    const options = current.deleted ? [current, ...activeStatuses()] : activeStatuses();
-    return `<select class="status st-${current.color} ${extra}" data-status="${c.id}" title="${esc(dateText(c))}">
+    const locked = statusLocked(c.status);
+    const list = locked ? [] : settableStatuses();
+    const options = list.some((x) => x.id === current.id) ? list : [current, ...list];
+    const title = locked ? 'Developers can only move issues between Pending and Release for Testing' : dateText(c);
+    return `<select class="status st-${current.color} ${extra}" data-status="${c.id}" title="${esc(title)}" ${locked ? 'disabled' : ''}>
       ${options.map((x) => `<option value="${esc(x.id)}" ${x.id === c.status ? 'selected' : ''}>${esc(x.label)}${x.deleted ? ' (removed)' : ''}</option>`).join('')}
     </select>`;
   }
@@ -884,7 +896,7 @@ $(function () {
       <form class="add-comment sheet-add" data-screen="${s.id}">
         <select name="priority" class="input text-sm">${priorityOptions('medium')}</select>
         <select name="area" class="input text-sm" title="Frontend or backend">${areaOptions('frontend')}</select>
-        <select name="status" class="input text-sm" title="Status">${activeStatuses().map((x) => `<option value="${esc(x.id)}">${esc(x.label)}</option>`).join('')}</select>
+        <select name="status" class="input text-sm" title="Status">${settableStatuses().map((x) => `<option value="${esc(x.id)}">${esc(x.label)}</option>`).join('')}</select>
         <input name="text" class="input text-sm" placeholder="Issue" autocomplete="off">
         ${peopleBox([], '', 'text-sm')}
         <input name="remarks" class="input text-sm" placeholder="Remarks" autocomplete="off">
@@ -1863,7 +1875,7 @@ $(function () {
           ${field('Priority', `<select class="input w-full" name="priority">${priorityOptions('medium')}</select>`)}
           ${field('Area', `<select class="input w-full" name="area">${areaOptions('frontend')}</select>`)}
           ${field('Issue', '<textarea class="input w-full" name="text" rows="1" maxlength="1000" placeholder="What is wrong?"></textarea>')}
-          ${field('Status', `<select class="input w-full" name="status">${activeStatuses().map((x) => `<option value="${esc(x.id)}">${esc(x.label)}</option>`).join('')}</select>`)}
+          ${field('Status', `<select class="input w-full" name="status">${settableStatuses().map((x) => `<option value="${esc(x.id)}">${esc(x.label)}</option>`).join('')}</select>`)}
         </div>
         <div class="writer-line who">
           <div class="min-w-0"><span class="field-label">Assign to</span>${peopleBox([], '', 'text-sm')}</div>

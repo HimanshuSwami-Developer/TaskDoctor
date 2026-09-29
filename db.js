@@ -123,7 +123,7 @@ UPDATE comments SET status = 'complete', status_date = coalesce(status_date, cre
 ALTER TABLE screens ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'screen';
 ALTER TABLE screens ADD COLUMN IF NOT EXISTS action text NOT NULL DEFAULT '';
 
--- Logins. access: view (screens + videos, no issues) | edit (issues only) | full | super. A login sees the products in product_ids, or every product
+-- Logins. access: view (screens + videos, no issues) | edit (issues only) | tester (issues, any status) | developer (see below) | full | super. A login sees the products in product_ids, or every product
 -- when all_products is set (super admins always see everything).
 CREATE TABLE IF NOT EXISTS users (
   id            text PRIMARY KEY,
@@ -162,6 +162,10 @@ ALTER TABLE flows ADD COLUMN IF NOT EXISTS video_public_id text;
 -- It is shown only while that screen exists in a shown flow.
 ALTER TABLE flows ADD COLUMN IF NOT EXISTS from_screen_id text;
 CREATE INDEX IF NOT EXISTS flows_screen_idx ON flows(from_screen_id);
+
+-- Developer logins: update issues + add modules and screens, issue status only Pending <-> Release for Testing
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_access_check;
+ALTER TABLE users ADD CONSTRAINT users_access_check CHECK (access IN ('view', 'edit', 'tester', 'developer', 'full', 'super'));
 
 -- Which side of the product an issue is in: frontend | backend | both ('' = not set, issues logged before this existed)
 ALTER TABLE comments ADD COLUMN IF NOT EXISTS area text NOT NULL DEFAULT '';

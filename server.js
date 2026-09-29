@@ -64,6 +64,15 @@ function people(value) {
   return [...new Set(list.map((x) => text(x, 60)).filter(Boolean))].slice(0, 10);
 }
 
+// Developers only move issues between Pending and Release for Testing (never to or from any other status).
+function developerStatus(req, from, to) {
+  if (req.user.access !== 'developer') return;
+  const ok = auth.DEVELOPER_STATUSES;
+  if (!ok.includes(to) || (from && !ok.includes(from))) {
+    throw new HttpError(403, 'Developers can only move issues between Pending and Release for Testing.');
+  }
+}
+
 // Issue status → the columns to save. Pending has no date (shown as today); any other status freezes the date it was set.
 async function statusFields(status) {
   const { rows } = await db.query('SELECT id FROM statuses WHERE id = $1 AND NOT is_deleted', [status]);
@@ -457,7 +466,7 @@ app.delete('/api/products/:id', route(async (req, res) => {
 // ---------------------------------------------------------------- modules
 
 app.post('/api/products/:id/modules', route(async (req, res) => {
-  await allowed(req, 'products', req.params.id, 'full');
+  await allowed(req, 'products', req.params.id, 'developer');
   const name = required(text(req.body.name), 'Name');
   const { rows } = await db.query(
     'INSERT INTO modules (id, product_id, name, sort_order, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $5) RETURNING *',
@@ -557,9 +566,10 @@ app.delete('/api/flows/:id/video', route(async (req, res) => {
 
 // type "condition" = a decision step, e.g. "Mandate status" → Success / Pending / Else, each leading to a screen
 app.post('/api/flows/:id/screens', route(async (req, res) => {
-  await allowed(req, 'flows', req.params.id, 'full');
+  await allowed(req, 'flows', req.params.id, 'developer'); // developers add screens and popups; conditions need full
   const id = randomUUID();
   if (req.body.type === 'condition') {
+    need(req, 'full');
     const name = required(text(req.body.name), 'Condition name');
     const branches = ['Success', 'Pending', 'Else'].map((label) => ({ id: randomUUID(), label, targetId: null }));
     await db.query(
@@ -811,6 +821,7 @@ app.post('/api/screens/:id/copy', route(async (req, res) => {
 
 app.post('/api/screens/:id/comments', route(async (req, res) => {
   await allowed(req, 'screens', req.params.id, 'edit');
+  developerStatus(req, null, req.body.status || 'pending');
   const s = await statusFields(req.body.status || 'pending');
   const { rows } = await db.query(
     `INSERT INTO comments (id, screen_id, text, priority, assignees, remarks, status, status_date, resolved, created_by, updated_by, area)
@@ -836,7 +847,10 @@ app.patch('/api/comments/:id', route(async (req, res) => {
   const fields = {};
   // The "Fixed" tick is a shortcut: ticked → Complete, unticked → back to Pending.
   const status = b.status !== undefined ? b.status : b.resolved !== undefined ? (b.resolved ? 'complete' : 'pending') : undefined;
-  if (status !== undefined && status !== issue.status) Object.assign(fields, await statusFields(status));
+  if (status !== undefined && status !== issue.status) {
+    developerStatus(req, issue.status, status);
+    Object.assign(fields, await statusFields(status));
+  }
   if (b.priority !== undefined) fields.priority = oneOf(b.priority, PRIORITIES, 'priority');
   if (b.area !== undefined) fields.area = oneOf(b.area, AREAS, 'area');
   if (b.text !== undefined) fields.text = required(text(b.text, 1000), 'Issue');

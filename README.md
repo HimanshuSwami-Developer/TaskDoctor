@@ -31,6 +31,8 @@ Each login has an **access level** and the **apps** (products) it can open: a li
 |---|---|
 | View only | See the screens and flow videos in their apps. Issues are hidden completely (cards, issue counts, issue sheets, and the Excel *Issues* sheet). Nothing can be changed. |
 | Update tasks | Add and update issues (status, priority, assignees, remarks, Fixed) with *Write issue* or on the cards. Screens are read only: no editing names, pages, platform, wireframe, images, condition branches or videos, and no dragging cards. Cannot delete issues. |
+| Tester | Same as *Update tasks*: add and update issues and move them to **any** status (Pending, Release for Testing, Complete / Fixed, custom tags). Screens are read only. Cannot delete issues. |
+| Developer | Everything *Update tasks* can do, plus add modules and screens / popups (at the end of a flow, on the board or with *Add step* in the diagram). Can only move an issue between **Pending** and **Release for Testing**: not Complete / Fixed or any other status, and not an issue already on another status. Cannot add conditions, rename, delete, reorder or copy. |
 | Full | Everything inside their apps: create, rename, delete and reorder modules, flows, screens and issues, and copy screens. |
 | Super admin | Everything in every app, plus products, status tags and the admin dashboard. |
 

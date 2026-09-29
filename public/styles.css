@@ -451,6 +451,8 @@ select.is-busy, input.is-busy, textarea.is-busy { opacity: .55; cursor: progress
 .access-tag { padding: 1px 7px; border-radius: 99px; font-size: 11px; font-weight: 600; white-space: nowrap; }
 .access-view  { background: #f1f5f9; color: #475569; }
 .access-edit  { background: #f0f9ff; color: #075985; }
+.access-tester { background: #fff7ed; color: #9a3412; }
+.access-developer { background: #faf5ff; color: #6b21a8; }
 .access-full  { background: #f0fdf4; color: #166534; }
 .access-super { background: #eef2ff; color: #3730a3; }
 .admin-list { border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }
