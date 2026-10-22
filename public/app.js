@@ -2769,6 +2769,30 @@ $(function () {
     if (s && showPlace(s.flowId)) openPopup(id);
   }
 
+  // The logo and name go home: the board of this app at its first module, with every page and window closed
+  $doc.on('click', '[data-action="home"]', (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button) return; // new tab / window: let the link open
+    e.preventDefault();
+    if (dialog.isOpen()) dialog.cancel();
+    if (!$('#copyModal').hasClass('hidden')) closeCopy();
+    if (sanityLog) closeSanityLog();
+    if (sheetsView) closeSheets();
+    if (doneView) closeDone();
+    if (!$('#statusModal').hasClass('hidden')) closeStatuses();
+    if (bugsView) closeBugs();
+    if (!$('#adminModal').hasClass('hidden')) closeAdmin();
+    if (videoFlowId) closeVideo();
+    if (!$('#writerModal').hasClass('hidden')) closeWriter();
+    if (sheetId) closeSheet();
+    if (openId) closePopup();
+    if (diagram.flowId) closeDiagram();
+    if (sanity) closeSanity();
+    history.replaceState(null, '', location.pathname + location.search);
+    activeId = modules[0] ? modules[0].id : null;
+    render();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+
   // Links from Teams: /#flow=<id>, #screen=<id>, #sanity=<app id>[&view=logs], #done=<app id>[&tab=shared]
   function openFromHash() {
     const h = new URLSearchParams(location.hash.slice(1));
