@@ -147,7 +147,8 @@ const SCREEN_SELECT = 'SELECT s.* FROM screens s';
 const audit = (r) => ({ createdAt: r.created_at, createdBy: r.created_by, updatedAt: r.updated_at, updatedBy: r.updated_by });
 
 // teams: whether the app has a Teams webhook (the URL itself is only shown to super admins, in Sanity → Teams)
-const toProduct = (r) => ({ id: r.id, name: r.name, order: r.sort_order, teams: Boolean(r.teams_webhook), ...audit(r) });
+// version: the app's present version, from Sanity (see CURRENT_VERSION); only on the board
+const toProduct = (r) => ({ id: r.id, name: r.name, order: r.sort_order, teams: Boolean(r.teams_webhook), version: r.current_version || '', ...audit(r) });
 const toModule = (r) => ({ id: r.id, productId: r.product_id, name: r.name, order: r.sort_order, ...audit(r) });
 const toFlow = (r) => ({
   id: r.id, moduleId: r.module_id, name: r.name, order: r.sort_order,
@@ -300,12 +301,17 @@ app.delete('/api/users/:id', route(async (req, res) => {
 
 // ---------------------------------------------------------------- board
 
+// An app's present version: the one on its latest sanity day that has a version (set for today, or submitted)
+const CURRENT_VERSION = `(SELECT r.version FROM sanity_runs r WHERE r.product_id = p.id AND r.version <> ''
+  ORDER BY r.run_date DESC, r.updated_at DESC LIMIT 1)`;
+
 // Everything a login can see: products → modules → flows (incl. branch paths) → screens → issues.
 async function loadBoard(user) {
   const everything = user.access === 'super' || user.all_products;
   const seesIssues = auth.atLeast(user, 'edit'); // view-only logins see screens and videos, never issues
   const [products, modules, flows, screens, comments] = await Promise.all([
-    db.query(`SELECT * FROM products WHERE NOT is_deleted ${everything ? '' : 'AND id = ANY($1)'} ORDER BY sort_order, created_at`,
+    db.query(`SELECT p.*, ${CURRENT_VERSION} AS current_version FROM products p
+              WHERE NOT p.is_deleted ${everything ? '' : 'AND p.id = ANY($1)'} ORDER BY p.sort_order, p.created_at`,
       everything ? [] : [user.product_ids]),
     db.query('SELECT * FROM modules WHERE NOT is_deleted ORDER BY sort_order, created_at'),
     db.query('SELECT * FROM flows WHERE NOT is_deleted ORDER BY sort_order, created_at'),
@@ -378,7 +384,7 @@ app.get('/api/export', route(async (req, res) => {
   const day = (d) => (d ? new Date(d) : null);
 
   const book = new ExcelJS.Workbook();
-  book.creator = 'Task Doctor';
+  book.creator = 'FlowTrace';
   const seesIssues = auth.atLeast(req.user, 'edit');
   const issues = book.addWorksheet('Issues', { views: [{ state: 'frozen', ySplit: 1 }] });
   issues.columns = [
@@ -424,7 +430,7 @@ app.get('/api/export', route(async (req, res) => {
 
   const stamp = new Date().toISOString().slice(0, 10);
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', `attachment; filename="task-doctor-${stamp}.xlsx"`);
+  res.setHeader('Content-Disposition', `attachment; filename="flowtrace-${stamp}.xlsx"`);
   await book.xlsx.write(res);
   res.end();
 }));
@@ -985,11 +991,13 @@ const peopleOf = (productId) => db.query(
 
 // ---- sanity
 
-const canRunSanity = (user) => user.sanity_tester || user.access === 'super';
+// Testers, developers and super admins run sanity; other logins need the "Sanity tester" tick
+const SANITY_ACCESS = ['tester', 'developer', 'super'];
+const canRunSanity = (user) => user.sanity_tester || SANITY_ACCESS.includes(user.access);
 const canManageSanity = (user) => canRunSanity(user) || auth.atLeast(user, 'full');
 function needSanity(req, manage) {
   if (!(manage ? canManageSanity(req.user) : canRunSanity(req.user))) {
-    throw new HttpError(403, manage ? 'Only sanity testers and Full logins can change the sanity list.' : 'Only sanity testers can run sanity. Ask an admin to tick "Sanity tester" on your login.');
+    throw new HttpError(403, manage ? 'Only sanity testers and Full logins can change the sanity list.' : 'Only testers, developers and sanity testers can run sanity. Ask an admin to tick "Sanity tester" on your login.');
   }
 }
 
@@ -1244,7 +1252,7 @@ app.get('/api/sanity/logs/:id/export', route(async (req, res) => {
   const { log, product } = await sanityLog(req, req.params.id);
   const STATE = { pass: 'Done', fail: 'Failed' };
   const book = new ExcelJS.Workbook();
-  book.creator = 'Task Doctor';
+  book.creator = 'FlowTrace';
   const ws = book.addWorksheet('Sanity report', { views: [{ state: 'frozen', ySplit: 1, xSplit: 2 }] });
   ws.columns = [
     { header: '#', key: 'no', width: 5 }, { header: 'Heading', key: 'heading', width: 30 }, { header: 'Module', key: 'module', width: 16 },
@@ -1328,7 +1336,7 @@ app.get('/api/sanity/export', route(async (req, res) => {
   const STATE = { pending: 'Not checked', pass: 'Done', fail: 'Failed' };
 
   const book = new ExcelJS.Workbook();
-  book.creator = 'Task Doctor';
+  book.creator = 'FlowTrace';
   const sheet = book.addWorksheet('Sanity', { views: [{ state: 'frozen', ySplit: 1, xSplit: 2 }] });
   sheet.columns = [
     { header: '#', key: 'no', width: 5 }, { header: 'Heading', key: 'heading', width: 30 }, { header: 'Module', key: 'module', width: 16 },
@@ -1470,9 +1478,9 @@ app.post('/api/products/:id/teams/test', route(async (req, res) => {
   const product = await productFor(req, req.params.id, 'super');
   if (!product.teams_webhook) throw new HttpError(400, 'Save a Teams webhook first');
   const sent = await toTeams(product, {
-    title: `👋 Task Doctor is connected to this channel for ${product.name}`,
+    title: `👋 FlowTrace is connected to this channel for ${product.name}`,
     lines: ['Sanity reminders, failures and "done today" updates will be posted here.'],
-    actions: [['Open Task Doctor', deeplink(req, `sanity=${product.id}`)]],
+    actions: [['Open FlowTrace', deeplink(req, `sanity=${product.id}`)]],
   });
   if (sent !== 'sent') throw new HttpError(502, sent);
   res.json({ teams: sent });
@@ -1510,8 +1518,12 @@ async function sanityReminders() {
 
 const toDone = (r) => ({
   id: r.id, userId: r.user_id, userName: personName(r), date: r.work_date, text: r.text, screenIds: r.screen_ids,
-  sharedAt: r.shared_at, ...audit(r),
+  sharedAt: r.shared_at, sharedWith: r.shared_with, closedAt: r.closed_at, closedBy: r.closed_by,
+  closedByName: personName({ name: r.closer_name, username: r.closer_username }), ...audit(r),
 });
+
+// Testers and super admins close an entry shared with them once they have checked the change
+const canCloseDone = (user) => ['tester', 'super'].includes(user.access);
 
 // Screens (not conditions) of this app, in the order given; others are dropped
 async function appScreens(productId, ids) {
@@ -1528,14 +1540,33 @@ async function ownDone(req, id) {
   if (row.user_id !== req.user.id && req.user.access !== 'super') throw new HttpError(403, 'You can only change your own entries');
   return row;
 }
-const DONE_SELECT = 'SELECT d.*, u.name, u.username FROM done_items d JOIN users u ON u.id = d.user_id';
+const DONE_SELECT = `SELECT d.*, u.name, u.username, c.name AS closer_name, c.username AS closer_username
+  FROM done_items d JOIN users u ON u.id = d.user_id LEFT JOIN users c ON c.id = d.closed_by`;
+const doneById = async (id) => toDone(await one(`${DONE_SELECT} WHERE d.id = $1`, [id]));
 
+// "• text ↳ screen links" for a Teams message
+async function doneLine(req, productId, r) {
+  const screens = await appScreens(productId, r.screen_ids);
+  const links = screens.map((x) => { const url = deeplink(req, `screen=${x.id}`); return url ? `[${x.name}](${url})` : x.name; });
+  return `• ${r.text}${links.length ? `\n  ↳ ${links.join(', ')}` : ''}`;
+}
+
+// One day of the app (everyone's entries) + every entry shared with me (open ones first, any day)
 app.get('/api/done', route(async (req, res) => {
   const product = await productFor(req, req.query.product, 'view');
   const { date: today } = localNow();
   const date = pastDay(req.query.date, today);
-  const { rows } = await db.query(`${DONE_SELECT} WHERE d.product_id = $1 AND d.work_date = $2 AND NOT d.is_deleted ORDER BY d.created_at`, [product.id, date]);
-  res.json({ date, today, items: rows.map(toDone), teams: Boolean(product.teams_webhook) });
+  const [{ rows }, { rows: shared }, { rows: people }] = await Promise.all([
+    db.query(`${DONE_SELECT} WHERE d.product_id = $1 AND d.work_date = $2 AND NOT d.is_deleted ORDER BY d.created_at`, [product.id, date]),
+    db.query(`${DONE_SELECT} WHERE d.product_id = $1 AND $2 = ANY(d.shared_with) AND NOT d.is_deleted
+              ORDER BY d.closed_at IS NOT NULL, d.created_at DESC LIMIT 200`, [product.id, req.user.id]),
+    peopleOf(product.id),
+  ]);
+  res.json({
+    date, today, items: rows.map(toDone), shared: shared.map(toDone), teams: Boolean(product.teams_webhook),
+    people: people.map((u) => ({ id: u.id, name: personName(u), teams: Boolean(u.teams_email) })),
+    canClose: canCloseDone(req.user),
+  });
 }));
 
 app.post('/api/done', route(async (req, res) => {
@@ -1573,20 +1604,66 @@ app.post('/api/done/share', route(async (req, res) => {
     [product.id, req.user.id, date]);
   if (!rows.length) throw new HttpError(400, 'Add what you did first');
   if (!product.teams_webhook) throw new HttpError(400, 'This app has no Teams channel yet. A super admin can add it in Sanity → Teams channel.');
-  const lines = await Promise.all(rows.map(async (r) => {
-    const screens = await appScreens(product.id, r.screen_ids);
-    const links = screens.map((x) => { const url = deeplink(req, `screen=${x.id}`); return url ? `[${x.name}](${url})` : x.name; });
-    return `• ${r.text}${links.length ? `\n  ↳ ${links.join(', ')}` : ''}`;
-  }));
+  const lines = await Promise.all(rows.map((r) => doneLine(req, product.id, r)));
   const sent = await toTeams(product, {
     title: `✅ ${personName(req.user)} — done ${date === today ? 'today' : `on ${date}`}`,
     lines,
     facts: [['App', product.name], ['Date', date]],
-    actions: [['Open in Task Doctor', deeplink(req, `done=${product.id}`)]],
+    actions: [['Open in FlowTrace', deeplink(req, `done=${product.id}`)]],
   });
   if (sent !== 'sent') throw new HttpError(502, sent);
   await db.query('UPDATE done_items SET shared_at = now(), updated_by = $2 WHERE id = ANY($1)', [rows.map((r) => r.id), req.user.id]);
   res.json({ teams: sent });
+}));
+
+// Share one of my entries with people of the app (the whole list; people added now are @mentioned on Teams).
+// It shows under their "Shared with me" until a tester or super admin closes it.
+app.put('/api/done/:id/shared-with', route(async (req, res) => {
+  const row = await ownDone(req, req.params.id);
+  const product = await live('products', row.product_id, '*');
+  const { rows: people } = await peopleOf(product.id);
+  const wanted = Array.isArray(req.body.userIds) ? req.body.userIds : [];
+  const ids = people.filter((u) => u.id !== row.user_id && wanted.includes(u.id)).map((u) => u.id);
+  await update('done_items', row.id, { shared_with: ids }, req.user.id);
+  const added = people.filter((u) => ids.includes(u.id) && !row.shared_with.includes(u.id));
+  let sent = null;
+  if (added.length) {
+    const { rows: [author] } = await db.query('SELECT name, username FROM users WHERE id = $1', [row.user_id]);
+    sent = await toTeams(product, {
+      title: `📌 ${personName(author)} shared a change with you`,
+      lines: [await doneLine(req, product.id, row), added.some((u) => u.teams_email) ? '' : `For: ${added.map(personName).join(', ')}`],
+      facts: [['App', product.name], ['Date', row.work_date]],
+      actions: [['Open in FlowTrace', deeplink(req, `done=${product.id}&tab=shared`)]],
+      mentions: added.flatMap(mention),
+    });
+    if (sent === 'sent') await db.query('UPDATE done_items SET shared_at = now() WHERE id = $1', [row.id]);
+  }
+  res.json({ item: await doneById(row.id), teams: sent });
+}));
+
+// Close (or reopen) an entry shared with me: testers and super admins, once the change is checked.
+// Closing tells the author on Teams.
+app.put('/api/done/:id/closed', route(async (req, res) => {
+  const row = await live('done_items', req.params.id, '*');
+  const product = await productFor(req, row.product_id, 'edit');
+  if (!canCloseDone(req.user)) throw new HttpError(403, 'Only testers and super admins can close a shared change');
+  if (req.user.access !== 'super' && !row.shared_with.includes(req.user.id)) throw new HttpError(403, 'Only people it was shared with can close it');
+  const closed = Boolean(req.body.closed);
+  await db.query(
+    `UPDATE done_items SET closed_at = CASE WHEN $2::boolean THEN now() END, closed_by = CASE WHEN $2::boolean THEN $3::text END, updated_by = $3
+     WHERE id = $1`, [row.id, closed, req.user.id]);
+  let sent = null;
+  if (closed && !row.closed_at) {
+    const { rows: [author] } = await db.query('SELECT name, username, teams_email FROM users WHERE id = $1 AND NOT is_deleted', [row.user_id]);
+    sent = await toTeams(product, {
+      title: `✅ ${personName(req.user)} closed a change`,
+      lines: [await doneLine(req, product.id, row)],
+      facts: [['App', product.name], ['Done on', row.work_date], ['By', personName(author)]],
+      actions: [['Open in FlowTrace', deeplink(req, `done=${product.id}&date=${row.work_date}`)]],
+      mentions: mention(author),
+    });
+  }
+  res.json({ item: await doneById(row.id), teams: sent });
 }));
 
 // ---------------------------------------------------------------- sheets: spreadsheets made inside an app
@@ -1866,7 +1943,7 @@ app.get('/api/sheets/:id/export', route(async (req, res) => {
     return v;
   };
   const book = new ExcelJS.Workbook();
-  book.creator = 'Task Doctor';
+  book.creator = 'FlowTrace';
   const ws = book.addWorksheet(sheet.name.replace(/[\\/?*[\]:]/g, ' ').slice(0, 31) || 'Sheet', { views: [{ state: 'frozen', ySplit: 1 }] });
   ws.columns = cols.map((c) => ({
     header: c.name, key: c.id, width: Math.max(8, Math.round(c.width / 7)),
@@ -1922,7 +1999,7 @@ async function ensureSuperAdmin() {
 db.init()
   .then(ensureSuperAdmin)
   .then(() => app.listen(PORT, () => {
-    console.log(`Task Doctor running at http://localhost:${PORT}`);
+    console.log(`FlowTrace running at http://localhost:${PORT}`);
     if (!cloud.configured()) console.log('Image uploads are off: add the Cloudinary keys to .env to turn them on.');
     if (!process.env.APP_URL) console.log('APP_URL is not set: Teams reminders will have no "Start sanity" link.');
     setInterval(() => sanityReminders().catch((err) => console.error('Sanity reminders:', err.message)), 60 * 1000);

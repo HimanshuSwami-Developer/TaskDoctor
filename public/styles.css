@@ -642,3 +642,22 @@ select.is-busy, input.is-busy, textarea.is-busy { opacity: .55; cursor: progress
 .log-bar i { display: block; height: 100%; }
 .log-bar .pass { background: #16a34a; }
 .log-bar .fail { background: #dc2626; }
+
+/* present version (from Sanity) in the header */
+.version-tag { display: inline-flex; align-items: center; padding: 2px 9px; border: 1px solid #c7d2fe; border-radius: 99px; background: #eef2ff; color: #3730a3; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.version-tag:hover { background: #e0e7ff; }
+
+/* sanity logs page */
+.sanity-views button { display: inline-flex; align-items: center; gap: 4px; }
+.sanity-log-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; padding: 16px 20px 0; }
+.sanity-log-stats > div { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; }
+.sanity-log-stats span { font-size: 12px; color: #64748b; }
+.sanity-log-stats b { font-size: 18px; color: #0f172a; font-variant-numeric: tabular-nums; }
+.sanity-log-stats small { font-size: 12px; color: #94a3b8; }
+.sanity-logs-page { margin: 12px 20px 20px; overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 8px; }
+.sanity-logs-page .sanity-log-table th { position: sticky; top: 0; background: #f8fafc; }
+
+/* done today: sharing one entry, closing it */
+.done-item.closed { background: #f8fafc; }
+.done-item.closed > div > p.whitespace-pre-wrap { color: #64748b; }
+.done-share { margin-top: 8px; padding: 10px 12px; border: 1px solid #c7d2fe; border-radius: 8px; background: #f8faff; }

@@ -1,4 +1,4 @@
-/* Task Doctor — jQuery front-end */
+/* FlowTrace — jQuery front-end */
 $(function () {
   const COLORS = ['slate', 'amber', 'sky', 'indigo', 'violet', 'pink', 'red', 'teal', 'green'];
   const WIREFRAMES = { form: 'Form', list: 'List', dashboard: 'Dashboard', detail: 'Detail' };
@@ -617,7 +617,7 @@ $(function () {
         $('#products, #summary').empty();
         $('#board').html(`
           <div class="mx-auto mt-16 max-w-sm text-center">
-            <p class="text-slate-600">Could not load Task Doctor.</p>
+            <p class="text-slate-600">Could not load FlowTrace.</p>
             <button class="btn-primary mt-4" data-action="retry">Retry</button>
           </div>`);
       });
@@ -1718,7 +1718,10 @@ $(function () {
 
   function renderAccount() {
     if (!me) { $('#account').empty(); return; }
+    const current = products.find((p) => p.id === productId);
+    const version = current && current.version ? current.version.replace(/^v(?=\d)/i, '') : '';
     $('#account').html(`
+      ${version ? `<button class="version-tag" data-action="sanity-logs" title="Present version of ${esc(current.name)}: the latest version tested in Sanity. Opens the sanity logs.">v${esc(version)}</button>` : ''}
       <span class="account" title="${esc(ACCESS[me.access].hint)}">${icon('user', 14)} ${esc(me.name || me.username)}
         <span class="access-tag access-${me.access}">${ACCESS[me.access].label}</span></span>
       <button class="btn-secondary px-3 py-1 text-xs" data-action="sheets" title="Your own sheets: typed columns, links to flows and screens, Excel in and out">${icon('grid', 12)} Sheets</button>
@@ -1796,7 +1799,7 @@ $(function () {
           </div>
           <label class="access-opt">
             <input type="checkbox" name="sanityTester" class="mt-0.5 h-4 w-4 accent-indigo-600" ${u && u.sanityTester ? 'checked' : ''}>
-            <span><span class="text-sm font-medium text-slate-900">Sanity tester</span><span class="block text-xs text-slate-500">On top of the access above: can run the daily sanity checklist (Done / Failed, review, version and time). Super admins always can.</span></span>
+            <span><span class="text-sm font-medium text-slate-900">Sanity tester</span><span class="block text-xs text-slate-500">On top of the access above: can run the daily sanity checklist (Done / Failed, review, version and time). Testers, developers and super admins always can.</span></span>
           </label>
           <label class="block"><span class="field-label">Teams email <span class="font-normal text-slate-400">(optional, to @mention them)</span></span>
             <input class="input w-full" name="teamsEmail" value="${esc(u ? u.teamsEmail : '')}" placeholder="e.g. priya@company.com" maxlength="120"></label>
@@ -2766,7 +2769,7 @@ $(function () {
     if (s && showPlace(s.flowId)) openPopup(id);
   }
 
-  // Links from Teams: /#flow=<id>, #screen=<id>, #sanity=<app id>, #done=<app id>
+  // Links from Teams: /#flow=<id>, #screen=<id>, #sanity=<app id>[&view=logs], #done=<app id>[&tab=shared]
   function openFromHash() {
     const h = new URLSearchParams(location.hash.slice(1));
     if (![...h.keys()].length) return;
@@ -2778,9 +2781,9 @@ $(function () {
       const pid = h.get('sanity') || h.get('done');
       if (products.some((p) => p.id === pid)) { selectProduct(pid); render(); }
       if (h.get('sanity')) {
-        const req = openSanity(productId);
+        const req = openSanity(productId, null, h.get('view') === 'logs' ? 'logs' : 'sheet');
         if (req && h.get('log')) req.done(() => openSanityLog(h.get('log')));
-      } else openDone(productId, h.get('date'));
+      } else openDone(productId, h.get('date'), h.get('tab') === 'shared' ? 'shared' : 'day');
     }
   }
   window.addEventListener('hashchange', () => { if (loaded) openFromHash(); });
@@ -2798,9 +2801,12 @@ $(function () {
   // Sanity testers tick Done / Failed and write a review; a failure is posted to the app's Teams channel with the
   // owner @mentioned. The version and time are set per day; at that time the channel gets a reminder.
 
-  let sanity = null; // { productId, date, today, run, items, people, canRun, canManage, teams, webhook }
+  // { productId, date, today, run, items, people, canRun, canManage, teams, webhook, logs,
+  //   view: 'sheet' | 'logs', logFilter: { q, date } }
+  let sanity = null;
 
-  function openSanity(pid, date) {
+  // view: the checklist ('sheet') or the logs page ('logs'); kept as it is when left out
+  function openSanity(pid, date, view) {
     if (!pid) { dialog.alert('Add an app first.', 'No app'); return null; }
     return $.when(
       api('GET', `/api/sanity?product=${encodeURIComponent(pid)}${date ? `&date=${date}` : ''}`),
@@ -2809,13 +2815,14 @@ $(function () {
       const fresh = !sanity;
       // rows flagged by a refused submit stay flagged until they are fixed
       const missing = sanity && sanity.productId === pid ? sanity.missing : new Set();
-      sanity = { productId: pid, ...d, logs, missing };
+      const logFilter = sanity && sanity.productId === pid ? sanity.logFilter : { q: '', date: '' };
+      sanity = { productId: pid, ...d, logs, missing, logFilter, view: view || (sanity && sanity.view) || 'sheet' };
       renderSanity();
       // the page takes the board's place; the address keeps it, so a refresh or a shared link comes back here
       $('#board, #tabs').addClass('hidden');
       $('#sanityPage').removeClass('hidden');
       $('[data-action="sanity"]').addClass('on');
-      history.replaceState(null, '', `${location.pathname}${location.search}#sanity=${encodeURIComponent(pid)}`);
+      history.replaceState(null, '', `${location.pathname}${location.search}#sanity=${encodeURIComponent(pid)}${sanity.view === 'logs' ? '&view=logs' : ''}`);
       if (fresh) window.scrollTo(0, 0);
     });
   }
@@ -2829,8 +2836,15 @@ $(function () {
     history.replaceState(null, '', location.pathname + location.search);
   }
 
+  // Checklist | Logs, at the top of both pages
+  const sanityViews = (d) => `<div class="seg sanity-views">
+    <button data-sanity-view="sheet" class="${d.view === 'sheet' ? 'on' : ''}">${icon('check', 12)} Checklist</button>
+    <button data-sanity-view="logs" class="${d.view === 'logs' ? 'on' : ''}">${icon('note', 12)} Logs <span class="text-slate-400">${d.logs.length}</span></button>
+  </div>`;
+
   function renderSanity() {
     const d = sanity;
+    if (d.view === 'logs') { renderSanityLogs(); return; }
     const p = products.find((x) => x.id === d.productId);
     const isToday = d.date === d.today;
     const run = isToday && d.canRun; // tick, review, version / time
@@ -2849,6 +2863,7 @@ $(function () {
           <h3 class="text-lg font-semibold text-slate-900">Sanity testing <span class="font-normal text-slate-400">· ${esc(p ? p.name : '')}</span></h3>
           <p class="text-xs text-slate-500">${isToday ? `Today · ${fmtDate(d.date)} · resets at midnight (${esc(d.timezone)})` : `History of ${fmtDate(d.date)}`}</p>
         </div>
+        ${sanityViews(d)}
         <input type="date" class="input py-1 text-sm" data-sanity-date value="${d.date}" max="${d.today}" title="Look at an earlier day">
         <a class="btn-secondary text-sm" href="/api/sanity/export?product=${encodeURIComponent(d.productId)}&date=${d.date}" title="Download this day's sheet">${icon('download', 14)} Excel</a>
         ${isToday ? '' : `<button class="btn-secondary text-sm" data-sanity-today>Today</button>`}
@@ -2884,7 +2899,7 @@ $(function () {
       ${isToday && d.run && d.run.time ? `<p class="px-5 pt-2 text-xs text-slate-500">${d.teams
         ? (d.run.remindedAt ? 'Teams reminder sent today.' : `Teams reminder at ${esc(d.run.time)}.`)
         : 'No Teams channel for this app yet, so no reminder goes out.'}</p>` : ''}
-      ${isToday && !d.canRun ? '<p class="mx-5 mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">You can look at the sanity list. To run it, ask an admin to tick <b>Sanity tester</b> on your login.</p>' : ''}
+      ${isToday && !d.canRun ? '<p class="mx-5 mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">You can look at the sanity list. Testers and developers run it; for any other login, ask an admin to tick <b>Sanity tester</b>.</p>' : ''}
 
       <div class="sanity-sheet-wrap">
         <table class="sanity-sheet">
@@ -2941,30 +2956,8 @@ $(function () {
           Also create it as a flow in <select class="input py-0.5 text-sm" name="moduleId">${p.modules.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('')}</select></label>` : ''}
       </form>` : ''}
 
-      <section class="sanity-logs">
-        <div class="flex flex-wrap items-baseline gap-2">
-          <h4 class="text-sm font-semibold text-slate-900">Sanity logs</h4>
-          <span class="text-xs text-slate-500">The checklist resets every day; every submitted sanity is kept here.</span>
-        </div>
-        ${d.logs.length ? `
-        <div class="mt-2 overflow-x-auto">
-          <table class="sanity-log-table">
-            <thead><tr><th>Date</th><th>Version</th><th>Result</th><th>Done by</th><th>Submitted</th><th></th></tr></thead>
-            <tbody>${d.logs.map((l) => `
-              <tr>
-                <td class="whitespace-nowrap font-medium text-slate-900">${fmtDate(l.date)}</td>
-                <td class="font-mono text-xs">${esc(l.version)}</td>
-                <td><div class="flex items-center gap-2">
-                  <span class="log-bar"><i class="pass" style="width:${l.total ? (l.passed / l.total) * 100 : 0}%"></i><i class="fail" style="width:${l.total ? (l.failed / l.total) * 100 : 0}%"></i></span>
-                  <span class="chip pass">${l.passed} passed</span>${l.failed ? `<span class="chip fail">${l.failed} failed</span>` : ''}
-                </div></td>
-                <td class="text-sm">${esc(l.testers.join(', ') || l.submittedBy)}</td>
-                <td class="whitespace-nowrap text-xs text-slate-500">${esc(l.submittedBy)} · ${new Date(l.submittedAt).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}${l.sharedAt ? ` · <span class="text-indigo-600">on Teams</span>` : ''}</td>
-                <td class="whitespace-nowrap text-right"><button class="btn-secondary px-2 py-1 text-xs" data-sanity-log="${l.id}">View</button></td>
-              </tr>`).join('')}</tbody>
-          </table>
-        </div>` : '<p class="mt-2 text-sm text-slate-400">No sanity submitted yet.</p>'}
-      </section>
+      <p class="sanity-logs text-xs text-slate-500">The checklist resets every day; every submitted sanity is kept in the
+        <button class="font-medium text-indigo-600 hover:underline" data-sanity-view="logs">sanity logs (${d.logs.length})</button>.</p>
 
       ${me.access === 'super' ? `
       <details class="sanity-teams" ${d.teams ? '' : 'open'}>
@@ -2989,19 +2982,93 @@ $(function () {
     $('#sanityList .sanity-review').each((i, el) => autoGrow(el));
   }
 
+  // ---- the sanity logs page: every submitted sanity of the app, newest first, filtered by day and text
+
+  const shownLogs = (d) => {
+    const q = d.logFilter.q.trim().toLowerCase();
+    return d.logs.filter((l) => (!d.logFilter.date || l.date === d.logFilter.date)
+      && (!q || [l.version, l.submittedBy, ...l.testers].join(' ').toLowerCase().includes(q)));
+  };
+
+  function sanityLogRows(list) {
+    return list.map((l) => `
+      <tr>
+        <td class="whitespace-nowrap font-medium text-slate-900">${fmtDate(l.date)}</td>
+        <td class="font-mono text-xs">${esc(l.version)}</td>
+        <td><div class="flex items-center gap-2">
+          <span class="log-bar"><i class="pass" style="width:${l.total ? (l.passed / l.total) * 100 : 0}%"></i><i class="fail" style="width:${l.total ? (l.failed / l.total) * 100 : 0}%"></i></span>
+          <span class="chip pass">${l.passed} passed</span>${l.failed ? `<span class="chip fail">${l.failed} failed</span>` : ''}
+        </div></td>
+        <td class="text-sm">${esc(l.testers.join(', ') || l.submittedBy)}</td>
+        <td class="whitespace-nowrap text-xs text-slate-500">${esc(l.submittedBy)} · ${new Date(l.submittedAt).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}${l.sharedAt ? ` · <span class="text-indigo-600">on Teams</span>` : ''}</td>
+        <td class="whitespace-nowrap text-right">
+          <a class="btn-secondary px-2 py-1 text-xs" href="/api/sanity/logs/${l.id}/export" title="Download this report">${icon('download', 12)}</a>
+          <button class="btn-secondary px-2 py-1 text-xs" data-sanity-log="${l.id}">View</button>
+        </td>
+      </tr>`).join('') || '<tr><td colspan="6" class="py-10 text-center text-sm text-slate-400">No sanity matches this filter.</td></tr>';
+  }
+
+  function renderSanityLogs() {
+    const d = sanity;
+    const p = products.find((x) => x.id === d.productId);
+    const latest = d.logs[0];
+    const passRate = d.logs.length ? Math.round((d.logs.reduce((n, l) => n + l.passed, 0) / Math.max(1, d.logs.reduce((n, l) => n + l.total, 0))) * 100) : 0;
+    $('#sanityPage').html(`<div class="sanity-page">
+      <div class="flex flex-wrap items-center gap-3 border-b border-slate-200 px-5 py-3">
+        <button class="btn-secondary text-sm" data-close-sanity title="Back to the board">${icon('left', 14)} Board</button>
+        <div class="min-w-0 flex-1">
+          <h3 class="text-lg font-semibold text-slate-900">Sanity logs <span class="font-normal text-slate-400">· ${esc(p ? p.name : '')}</span></h3>
+          <p class="text-xs text-slate-500">Every submitted sanity, kept for good. The checklist itself resets every day.</p>
+        </div>
+        ${sanityViews(d)}
+      </div>
+
+      ${d.logs.length ? `
+      <div class="sanity-log-stats">
+        <div><span>Last tested version</span><b class="font-mono">${esc(latest.version)}</b><small>${fmtDate(latest.date)}</small></div>
+        <div><span>Submitted</span><b>${d.logs.length}</b><small>report${d.logs.length === 1 ? '' : 's'}</small></div>
+        <div><span>Last result</span><b>${latest.passed} / ${latest.total}</b><small>${latest.failed ? `${latest.failed} failed` : 'all passed'}</small></div>
+        <div><span>Pass rate</span><b>${passRate}%</b><small>of every heading checked</small></div>
+      </div>` : ''}
+
+      <div class="flex flex-wrap items-center gap-2 px-5 pt-4">
+        <input class="input min-w-0 flex-1 py-1 text-sm" data-log-search value="${esc(d.logFilter.q)}" placeholder="Search version or person" autocomplete="off">
+        <input type="date" class="input py-1 text-sm" data-log-date value="${d.logFilter.date}" max="${d.today}" title="Only this day">
+        ${d.logFilter.date || d.logFilter.q ? '<button class="btn-secondary text-sm" data-log-clear>Clear</button>' : ''}
+      </div>
+      <div class="sanity-logs-page">
+        <table class="sanity-log-table">
+          <thead><tr><th>Date</th><th>Version</th><th>Result</th><th>Done by</th><th>Submitted</th><th></th></tr></thead>
+          <tbody id="sanityLogRows">${d.logs.length ? sanityLogRows(shownLogs(d)) : '<tr><td colspan="6" class="py-10 text-center text-sm text-slate-400">No sanity submitted yet.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>`);
+  }
+
   const sanityItemOf = (el) => sanity.items.find((it) => it.id === $(el).closest('[data-item]').data('item'));
   const saveResult = (it, body) => api('PUT', `/api/sanity/items/${it.id}/result`, body)
     .done((r) => { teamsResult(r.teams, 'Failure posted on Teams'); reloadSanity(); });
 
   // the Sanity button opens the page, and goes back to the board when it is already open
-  $doc.on('click', '[data-action="sanity"]', () => (sanity ? closeSanity() : openSanity(productId)));
+  $doc.on('click', '[data-action="sanity"]', () => (sanity ? closeSanity() : openSanity(productId, null, 'sheet')));
+  $doc.on('click', '[data-action="sanity-logs"]', () => openSanity(productId, null, 'logs')); // the version in the header
   $doc.on('click', '[data-close-sanity]', closeSanity);
+  $doc.on('click', '[data-sanity-view]', function () { openSanity(sanity.productId, sanity.date, $(this).data('sanity-view')); });
+  // the logs filter redraws only the rows, so the search box keeps focus
+  const filterLogs = (change) => {
+    Object.assign(sanity.logFilter, change);
+    $('#sanityLogRows').html(sanityLogRows(shownLogs(sanity)));
+  };
+  $doc.on('input', '[data-log-search]', function () { filterLogs({ q: this.value }); });
+  $doc.on('change', '[data-log-date]', function () { filterLogs({ date: this.value }); renderSanityLogs(); });
+  $doc.on('click', '[data-log-clear]', () => { filterLogs({ q: '', date: '' }); renderSanityLogs(); });
   $doc.on('change', '[data-sanity-date]', function () { if (this.value) openSanity(sanity.productId, this.value); });
   $doc.on('click', '[data-sanity-today]', () => openSanity(sanity.productId));
   $doc.on('submit', '#sanityRun', function (e) {
     e.preventDefault();
     const v = Object.fromEntries(new FormData(this));
-    api('PUT', '/api/sanity/run', { productId: sanity.productId, version: v.version, time: v.time }).done(() => { toast('Saved'); reloadSanity(); });
+    // load(): the header shows the new present version
+    api('PUT', '/api/sanity/run', { productId: sanity.productId, version: v.version, time: v.time }).done(() => { toast('Saved'); reloadSanity(); load(); });
   });
   $doc.on('click', '[data-sanity-state]', function () {
     const it = sanityItemOf(this);
@@ -3068,6 +3135,7 @@ $(function () {
           toast('Sanity submitted: log saved');
           teamsResult(r.teams, 'Sanity submitted: report sent on Teams');
           reloadSanity();
+          load();
         })
         .fail((xhr) => {
           const missing = xhr.responseJSON && xhr.responseJSON.missing;
@@ -3115,14 +3183,16 @@ $(function () {
 
   // ---------------------------------------------------------------- done today: what each person finished, with the screens they changed
 
-  let doneView = null; // { productId, date, today, items, teams }
+  // { productId, date, today, items, shared, people, canClose, teams, tab: 'day' | 'shared', sharing: entry id whose picker is open }
+  let doneView = null;
   let donePicked = []; // screens attached to the entry being written
 
-  function openDone(pid, date) {
+  // tab: the day's entries ('day') or the ones shared with me ('shared'); kept as it is when left out
+  function openDone(pid, date, tab) {
     if (!pid) { dialog.alert('Add an app first.', 'No app'); return null; }
     return api('GET', `/api/done?product=${encodeURIComponent(pid)}${date ? `&date=${date}` : ''}`).done((d) => {
       if (!doneView || doneView.productId !== pid) donePicked = [];
-      doneView = { productId: pid, ...d };
+      doneView = { productId: pid, ...d, tab: tab || (doneView && doneView.tab) || 'day', sharing: null };
       renderDone();
       $('#doneModal').removeClass('hidden');
       $('body').addClass('overflow-hidden');
@@ -3143,15 +3213,77 @@ $(function () {
     return `<span class="screen-chip"><button type="button" data-done-screen="${id}" title="${esc(f ? f.name : '')} › ${esc(s.name)}">${esc(s.name)}</button>${removable ? `<button type="button" data-done-unpick="${id}" title="Remove">${icon('close', 10)}</button>` : ''}</span>`;
   };
 
+  // One entry: text, screens, who it is shared with and whether it is closed; the author edits, shares and deletes,
+  // a tester / super admin it was shared with closes it. withAuthor: on "Shared with me", say who and which day.
+  function doneEntry(x, withAuthor) {
+    const d = doneView;
+    const name = (id) => (d.people.find((u) => u.id === id) || {}).name || '—';
+    const owns = (x.userId === me.id || me.access === 'super') && can('edit');
+    const closable = d.canClose && x.sharedWith.length && (x.sharedWith.includes(me.id) || me.access === 'super');
+    const picking = d.sharing === x.id;
+    return `
+      <li class="done-item ${x.closedAt ? 'closed' : ''}">
+        <div class="min-w-0 flex-1">
+          ${withAuthor ? `<p class="mb-0.5 flex items-center gap-1 text-xs font-semibold text-slate-600">${icon('user', 12)} ${esc(x.userName)} <span class="font-normal text-slate-400">· ${fmtDate(x.date)}</span></p>` : ''}
+          <p class="whitespace-pre-wrap text-sm text-slate-800">${esc(x.text)}</p>
+          ${x.screenIds.length ? `<div class="mt-1 flex flex-wrap gap-1">${x.screenIds.map((id) => screenChip(id)).join('')}</div>` : ''}
+          <p class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-400">
+            <span>${new Date(x.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+            ${x.sharedAt ? '<span class="text-indigo-600">on Teams</span>' : ''}
+            ${x.sharedWith.length ? `<span>${icon('share', 11)} shared with ${esc(x.sharedWith.map(name).join(', '))}</span>` : ''}
+            ${x.closedAt ? `<span class="chip pass">${icon('check', 11)} Closed by ${esc(x.closedByName || '—')} · ${fmtDate(x.closedAt)}</span>`
+              : x.sharedWith.length ? '<span class="chip">Open</span>' : ''}
+          </p>
+          ${picking ? `
+          <form class="done-share" data-done-share-form="${x.id}">
+            <span class="field-label">Share this with (they see it under Shared with me${d.teams ? ' and are @mentioned on Teams' : ''})</span>
+            <div class="flex max-h-40 flex-wrap gap-x-4 gap-y-1 overflow-y-auto">${d.people.filter((u) => u.id !== x.userId).map((u) => `
+              <label class="flex items-center gap-2 text-sm"><input type="checkbox" class="h-4 w-4 accent-indigo-600" name="userIds" value="${u.id}" ${x.sharedWith.includes(u.id) ? 'checked' : ''}> ${esc(u.name)}</label>`).join('')
+              || '<span class="text-sm text-slate-400">Nobody else can open this app.</span>'}</div>
+            <div class="mt-2 flex gap-2">
+              <button class="btn-primary px-3 py-1 text-xs">${icon('share', 12)} Share</button>
+              <button type="button" class="btn-secondary px-3 py-1 text-xs" data-done-share-cancel>Cancel</button>
+            </div>
+          </form>` : ''}
+        </div>
+        ${closable ? `<button class="btn-secondary shrink-0 px-2 py-1 text-xs" data-done-close="${x.id}" data-closed="${x.closedAt ? '0' : '1'}" title="${x.closedAt ? 'Open it again' : 'You checked this change: close it'}">${x.closedAt ? 'Reopen' : `${icon('check', 12)} Close`}</button>` : ''}
+        ${owns ? `
+          <button class="icon-btn ${picking ? 'text-indigo-600' : ''}" data-done-share-to="${x.id}" title="Share this with someone">${icon('share', 14)}</button>
+          <button class="icon-btn" data-done-edit="${x.id}" title="Edit">${icon('edit', 14)}</button>
+          <button class="icon-btn danger" data-done-delete="${x.id}" title="Delete">${icon('trash', 14)}</button>` : ''}
+      </li>`;
+  }
+
   function renderDone() {
     const d = doneView;
     const p = products.find((x) => x.id === d.productId);
     const isToday = d.date === d.today;
     const mine = d.items.filter((x) => x.userId === me.id);
+    const openShared = d.shared.filter((x) => !x.closedAt).length;
     const byPerson = [...new Map(d.items.map((x) => [x.userId, x.userName])).entries()]
       .sort(([a], [b]) => (b === me.id) - (a === me.id)); // you first
     const screenOptions = (p ? p.modules : []).flatMap((m) => m.flows.map((f) => `<optgroup label="${esc(flowLabel(m, f))}">${onlyScreens(f.screens)
       .filter((s) => !donePicked.includes(s.id)).map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</optgroup>`)).join('');
+    const tabs = `<div class="seg">
+      <button data-done-tab="day" class="${d.tab === 'day' ? 'on' : ''}">${isToday ? 'Today' : fmtDate(d.date)}</button>
+      <button data-done-tab="shared" class="${d.tab === 'shared' ? 'on' : ''}">Shared with me${openShared ? ` <b class="text-indigo-600">${openShared}</b>` : ''}</button>
+    </div>`;
+
+    if (d.tab === 'shared') {
+      $('#doneBody').html(`
+        <div class="flex flex-wrap items-center gap-3 border-b border-slate-200 px-5 py-3">
+          <div class="min-w-0 flex-1">
+            <h3 class="text-lg font-semibold text-slate-900">Shared with me <span class="font-normal text-slate-400">· ${esc(p ? p.name : '')}</span></h3>
+            <p class="text-xs text-slate-500">${openShared} open · ${d.shared.length - openShared} closed${d.canClose ? ' · close a change once you have checked it' : ''}</p>
+          </div>
+          ${tabs}
+          <button class="icon-btn" data-close-done title="Close">${icon('close', 18)}</button>
+        </div>
+        <ul class="max-h-[65vh] space-y-1.5 overflow-y-auto px-5 py-4">
+          ${d.shared.map((x) => doneEntry(x, true)).join('') || '<p class="py-10 text-center text-sm text-slate-400">Nothing has been shared with you yet.</p>'}
+        </ul>`);
+      return;
+    }
 
     $('#doneBody').html(`
       <div class="flex flex-wrap items-center gap-3 border-b border-slate-200 px-5 py-3">
@@ -3159,6 +3291,7 @@ $(function () {
           <h3 class="text-lg font-semibold text-slate-900">Done ${isToday ? 'today' : `on ${fmtDate(d.date)}`} <span class="font-normal text-slate-400">· ${esc(p ? p.name : '')}</span></h3>
           <p class="text-xs text-slate-500">${d.items.length} entr${d.items.length === 1 ? 'y' : 'ies'} by ${byPerson.length} ${byPerson.length === 1 ? 'person' : 'people'}</p>
         </div>
+        ${tabs}
         <input type="date" class="input py-1 text-sm" data-done-date value="${d.date}" max="${d.today}">
         <button class="icon-btn" data-close-done title="Close">${icon('close', 18)}</button>
       </div>
@@ -3178,17 +3311,7 @@ $(function () {
           <div>
             <p class="mb-1.5 flex items-center gap-2 text-sm font-semibold text-slate-900">${icon('user', 14)} ${esc(name)}${uid === me.id ? ' <span class="text-xs font-normal text-slate-400">(you)</span>' : ''}</p>
             <ul class="space-y-1.5">
-              ${d.items.filter((x) => x.userId === uid).map((x) => `
-                <li class="done-item">
-                  <div class="min-w-0 flex-1">
-                    <p class="whitespace-pre-wrap text-sm text-slate-800">${esc(x.text)}</p>
-                    ${x.screenIds.length ? `<div class="mt-1 flex flex-wrap gap-1">${x.screenIds.map((id) => screenChip(id)).join('')}</div>` : ''}
-                    <p class="mt-1 text-xs text-slate-400">${new Date(x.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}${x.sharedAt ? ` · <span class="text-indigo-600">shared on Teams</span>` : ''}</p>
-                  </div>
-                  ${uid === me.id || me.access === 'super' ? `
-                    <button class="icon-btn" data-done-edit="${x.id}" title="Edit">${icon('edit', 14)}</button>
-                    <button class="icon-btn danger" data-done-delete="${x.id}" title="Delete">${icon('trash', 14)}</button>` : ''}
-                </li>`).join('')}
+              ${d.items.filter((x) => x.userId === uid).map((x) => doneEntry(x)).join('')}
             </ul>
           </div>`).join('') || `<p class="py-10 text-center text-sm text-slate-400">Nothing logged ${isToday ? 'yet today' : 'on this day'}.</p>`}
       </div>
@@ -3215,8 +3338,38 @@ $(function () {
     api('POST', '/api/done', { productId: doneView.productId, text: t, screenIds: donePicked }).done(() => { donePicked = []; reloadDone(); });
   });
   $doc.on('click', '[data-done-screen]', function () { const id = $(this).data('done-screen'); closeDone(); showScreen(id); });
+  const doneItem = (id) => doneView.items.find((i) => i.id === id) || doneView.shared.find((i) => i.id === id);
+  $doc.on('click', '[data-done-tab]', function () {
+    doneView.tab = $(this).data('done-tab');
+    doneView.sharing = null;
+    renderDone();
+  });
+  $doc.on('click', '[data-done-share-to]', function () {
+    const id = $(this).data('done-share-to');
+    doneView.sharing = doneView.sharing === id ? null : id;
+    keepText(() => {});
+  });
+  $doc.on('click', '[data-done-share-cancel]', () => { doneView.sharing = null; keepText(() => {}); });
+  $doc.on('submit', '[data-done-share-form]', function (e) {
+    e.preventDefault();
+    const userIds = $(this).find('[name=userIds]:checked').map((i, el) => el.value).get();
+    api('PUT', `/api/done/${$(this).data('done-share-form')}/shared-with`, { userIds }).done((r) => {
+      if (!userIds.length) toast('No longer shared');
+      else if (r.teams === 'sent') toast('Shared and posted on Teams');
+      else { toast('Shared'); teamsResult(r.teams); }
+      reloadDone();
+    });
+  });
+  $doc.on('click', '[data-done-close]', function () {
+    const closed = $(this).data('closed') === 1;
+    api('PUT', `/api/done/${$(this).data('done-close')}/closed`, { closed }).done((r) => {
+      toast(closed ? 'Closed' : 'Opened again');
+      if (r.teams !== 'sent') teamsResult(r.teams);
+      reloadDone();
+    });
+  });
   $doc.on('click', '[data-done-edit]', function () {
-    const x = doneView.items.find((i) => i.id === $(this).data('done-edit'));
+    const x = doneItem($(this).data('done-edit'));
     ask({
       title: 'Edit entry', fields: [{ name: 'text', label: 'What you did', value: x.text, required: true, max: 1000 }],
       save: (v) => api('PATCH', `/api/done/${x.id}`, v, null, QUIET).done(reloadDone),

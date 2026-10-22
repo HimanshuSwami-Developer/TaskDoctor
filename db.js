@@ -306,6 +306,12 @@ CREATE TABLE IF NOT EXISTS done_items (
 CREATE INDEX IF NOT EXISTS done_items_day_idx ON done_items(product_id, work_date);
 -- an entry made by resolving an issue (taken back off if the issue is reopened the same day)
 ALTER TABLE done_items ADD COLUMN IF NOT EXISTS comment_id text REFERENCES comments(id);
+-- One entry can be shared with people of the app (it shows under their "Shared with me", @mentioned on Teams);
+-- a tester or super admin closes it once the change is checked.
+ALTER TABLE done_items ADD COLUMN IF NOT EXISTS shared_with text[] NOT NULL DEFAULT '{}';
+ALTER TABLE done_items ADD COLUMN IF NOT EXISTS closed_at timestamptz;
+ALTER TABLE done_items ADD COLUMN IF NOT EXISTS closed_by text REFERENCES users(id);
+CREATE INDEX IF NOT EXISTS done_items_shared_idx ON done_items USING gin (shared_with);
 
 -- Audit columns on every table: who created / last changed a row and when. created_by / updated_by are the
 -- signed-in user (NULL for rows made by the server itself, e.g. the seeded statuses or the first super admin).

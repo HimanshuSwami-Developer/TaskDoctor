@@ -1,4 +1,4 @@
-# Task Doctor
+# FlowTrace
 
 Track **products → modules → flows → screens** (e.g. Finzoom, Findost, IPO), with issues logged against each screen.
 
@@ -84,13 +84,16 @@ The server checks every request; apps a login cannot open are hidden from it com
   - Sanity testers tick **Done** or **Failed**, write remarks and fill the columns. Set the **version** and **sanity time** for the day.
   - **Submit sanity** (sanity testers) when the run is finished. It is only saved when the **version** is filled in and **every heading is Done or Failed** (a remark on a failure is optional); anything missing is listed and those rows are outlined in orange. The date is the day of the run.
   - Submitting saves a **log** that is kept for good (date, version, passed / failed, who checked each heading, who submitted, and a copy of the whole sheet with your columns), adds *"Sanity done on version … : n passed, n failed"* to the submitter's **Done today**, and posts the **report** to Teams, @mentioning the people under **Report goes to** (sanity testers and Full logins pick them with *Change*). Several sanities can be submitted on one day (e.g. a new build); each is its own log.
-  - **Sanity logs** (under the sheet) lists every submitted sanity of the app, newest first: date, version, passed / failed, done by, submitted by and when. **View** opens the report as it was submitted, with **Excel** and **Share this report**: pick anyone of the app to @mention on Teams, or **Copy link** (`#sanity=<app>&log=<id>`) to send it anywhere.
+  - **Sanity logs** have their own page (*Logs* at the top of the Sanity page, or the version in the header; the address is `#sanity=<app>&view=logs`): every submitted sanity of the app, newest first, with the last tested version, number of reports, last result and pass rate on top. Search by version or person, or pick a day. Each row shows date, version, passed / failed, done by, submitted by and when, with an Excel download. **View** opens the report as it was submitted, with **Excel** and **Share this report**: pick anyone of the app to @mention on Teams, or **Copy link** (`#sanity=<app>&log=<id>`) to send it anywhere.
   - **Excel** downloads the day's sheet: heading, module, status, remarks, your columns, who checked it and when, plus the version and time.
   - The list **resets every day** at midnight (`APP_TIMEZONE`, default Asia/Kolkata). Pick an earlier date to see that day's results.
   - **Teams:** at the sanity time the app's channel gets a reminder that @mentions the sanity testers (once a day; changing the time re-arms it). A heading marked **Failed** is posted straight away with the review and a link to the flow. *Share on Teams* posts the day's summary.
-  - Running sanity needs the **Sanity tester** tick on the login (Admin), on top of its access level; super admins always can. Sanity testers and Full logins can change the list. Everyone else can look.
+  - **Testers, developers and super admins** run sanity; any other login needs the **Sanity tester** tick (Admin), on top of its access level. Sanity testers and Full logins can change the list. Everyone else can look.
   - **Teams channel** (super admins, at the bottom of Sanity): in Teams open the channel → *Workflows* → *Post to a channel when a webhook request is received*, and paste the URL it gives. *Send test* checks it. People are @mentioned by the **Teams email** on their login (Admin).
 - **Done today** (header): an issue you set to **Complete** (or tick *Fixed*) is added to your Done today by itself, with its screen (and taken off again if you reopen it the same day). Everyone also writes what they finished, attaching the screens they changed (the chips open the screen). Entries are grouped by person; pick a date to see an earlier day. *Share my day on Teams* posts your entries with links to the screens. You can edit or delete only your own entries.
+  - **Share one entry** (the share icon on your entry): pick people of the app. They are @mentioned on Teams with the entry and its screens, and it shows under their **Shared with me** tab (open ones first, any day; the address is `#done=<app>&tab=shared`). Untick someone to stop sharing with them.
+  - **Close** a shared change once you have checked it: **testers and super admins** it was shared with (super admins: any shared entry). Closing tells the author on Teams; *Reopen* opens it again. Every entry shows who it is shared with and *Open* / *Closed by … · date*.
+- **Present version** (header, top right): the app's latest version from Sanity — today's version once it is set, otherwise the version of the last sanity day. Click it to open the sanity logs.
 - **Links from Teams** open the app at a place: `#flow=…`, `#screen=…`, `#sanity=<app>`, `#done=<app>`, `#sheet=<sheet>`. Set `APP_URL` in `.env` so the daily reminder can link back (other messages use the address the request came from).
 - **Issue status and date** (screens have no status; every issue has its own):
 
@@ -104,7 +107,7 @@ The server checks every request; apps a login cannot open are hidden from it com
 - **Issues by status:** click a status count in the header (or *Open issues*) to see every issue with that status: module › flow › screen, priority, status, issue and assignees. The link icon at the end jumps to that screen.
 - **Flow videos:** every flow and branch path has *Add video* in its header. Upload a screen recording (MP4, MOV or WEBM, up to 100 MB, stored in Cloudinary), then *Video* plays it, with Replace and Remove. Needs Full access to upload or remove; View only and Update tasks logins can watch it.
 - **Write issue** (header): pick the app, **flow name** and **screen name** from drop-downs, then write the issue with its priority, status, assignees and remarks. The form stays open for the next one.
-- **Excel** (header): downloads `task-doctor-<date>.xlsx` of everything your login can see. *Issues* sheet: app, module, flow no., flow, screen, page, issue, priority, status, status date, assignees, remarks, added on. *Screens* sheet: every screen with its open / total issues. Both have filters on the header row.
+- **Excel** (header): downloads `flowtrace-<date>.xlsx` of everything your login can see. *Issues* sheet: app, module, flow no., flow, screen, page, issue, priority, status, status date, assignees, remarks, added on. *Screens* sheet: every screen with its open / total issues. Both have filters on the header row.
 - **Status tags:** the *Statuses* button in the header adds, renames, recolours and removes statuses. Pending and Complete are built in and cannot be removed. Issues already on a removed status keep it until you pick another one.
 
 ## Files

@@ -2,7 +2,7 @@
 /**
  * Microsoft Teams messages through a Workflows webhook ("Post to a channel when a webhook request is received").
  * Each app (product) has its own webhook URL, set by a super admin in Sanity → Teams channel.
- * Messages are Adaptive Cards: a title, some lines / facts, buttons that deeplink back into Task Doctor,
+ * Messages are Adaptive Cards: a title, some lines / facts, buttons that deeplink back into FlowTrace,
  * and @mentions by Teams email (the login's "Teams email" in Admin).
  */
 
@@ -12,7 +12,7 @@ const valid = (url) => /^https:\/\/[^\s/]+\/\S+$/.test(url || '');
  * post(webhook, { title, lines, facts, actions, mentions })
  *   lines:    ['plain text', …]                (markdown allowed by Teams)
  *   facts:    [['Version', '1.4.2'], …]
- *   actions:  [['Open in Task Doctor', url], …]
+ *   actions:  [['Open in FlowTrace', url], …]
  *   mentions: [{ name, email }]                 shown as one "@A @B" line
  * Resolves to 'sent'; rejects with a readable message.
  */
