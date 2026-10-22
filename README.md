@@ -124,4 +124,4 @@ public/             index.html, app.js, styles.css
 
 ---
 
-© 2026 FinDevelopers · Developed by Himanshu Swami · Idea by Vishal Yadav
+© 2026 FinDevelopers · Prompting by Himanshu Swami · Idea & prompts by Vishal Yadav

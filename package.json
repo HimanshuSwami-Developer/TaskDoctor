@@ -17,8 +17,8 @@
     "express": "^4.21.2",
     "pg": "^8.23.0"
   },
-  "author": "Himanshu Swami (FinDevelopers)",
+  "author": "Himanshu Swami (FinDevelopers, prompting)",
   "contributors": [
-    "Vishal Yadav (idea)"
+    "Vishal Yadav (idea & prompts)"
   ]
 }
