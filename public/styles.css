@@ -625,7 +625,7 @@ select.is-busy, input.is-busy, textarea.is-busy { opacity: .55; cursor: progress
 
 /* Sanity page (in place of the board) */
 .sanity-page { border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; box-shadow: 0 1px 2px rgba(15, 23, 42, .05); }
-.sanity-page .sanity-sheet-wrap { max-height: calc(100vh - 300px); min-height: 240px; }
+.sanity-page .sanity-sheet-wrap { max-height: calc(100vh - 300px - var(--footer-h, 0px)); min-height: 240px; }
 .btn-secondary.on { border-color: #a5b4fc; background: #eef2ff; color: #3730a3; }
 
 /* sanity: submit checks, recipients, logs */
@@ -662,15 +662,17 @@ select.is-busy, input.is-busy, textarea.is-busy { opacity: .55; cursor: progress
 .done-item.closed > div > p.whitespace-pre-wrap { color: #64748b; }
 .done-share { margin-top: 8px; padding: 10px 12px; border: 1px solid #c7d2fe; border-radius: 8px; background: #f8faff; }
 
-/* footer: brand, credits, quote — same card look as the pages */
-.site-footer { position: relative; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 20px 32px; overflow: hidden; padding: 18px 22px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; box-shadow: 0 1px 2px rgba(15, 23, 42, .05); }
-.site-footer::before { content: ''; position: absolute; inset: 0 0 auto; height: 3px; background: linear-gradient(90deg, #033469, #4f46e5 55%, #60a5fa); }
-.site-footer-brand { display: flex; align-items: center; gap: 10px; }
-.site-footer-credits { display: flex; flex-direction: column; gap: 3px; padding-left: 24px; border-left: 1px solid #e2e8f0; font-size: 13px; color: #334155; }
-.credit-role { display: inline-block; min-width: 110px; margin-right: 6px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: #94a3b8; }
-.site-footer-quote { margin: 0; padding: 10px 14px; border-left: 3px solid #4f46e5; border-radius: 0 8px 8px 0; background: #f5f7ff; font-size: 13px; font-style: italic; line-height: 1.6; color: #475569; }
+/* footer: a slim bar fixed to the bottom of the screen, styled like the header (overlays cover it) */
+.site-footer { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; border-top: 1px solid #e2e8f0; background: #fff; font-size: 12px; color: #475569; }
+.site-footer-inner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 24px; max-width: 1400px; margin: 0 auto; padding: 8px 24px; }
+.site-footer-brand { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.site-footer-credits { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 16px; }
+.credit-role { margin-right: 4px; font-size: 10px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: #94a3b8; }
+.site-footer-quote { font-style: italic; line-height: 1.45; text-align: right; color: #64748b; }
 .site-footer-quote span { font-weight: 600; font-style: normal; color: #033469; }
+.toast { bottom: calc(var(--footer-h, 0px) + 16px); }
 @media (max-width: 900px) {
-  .site-footer { grid-template-columns: 1fr; }
-  .site-footer-credits { padding-left: 0; padding-top: 14px; border-left: 0; border-top: 1px solid #e2e8f0; }
+  .site-footer-inner { justify-content: center; padding: 6px 16px; text-align: center; }
+  .site-footer-credits { justify-content: center; }
+  .site-footer-quote { text-align: center; }
 }

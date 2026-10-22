@@ -51,26 +51,25 @@
   <!-- Sanity is its own page: shown instead of the board (and the module tabs) -->
   <main id="sanityPage" class="mx-auto hidden max-w-[1400px] px-6 py-6"></main>
 
-  <footer class="mx-auto max-w-[1400px] px-6 pb-8 pt-2">
-    <div class="site-footer">
+  <!-- Always at the bottom of the screen; app.js pads the page by its height so it never covers anything -->
+  <footer id="siteFooter" class="site-footer">
+    <div class="site-footer-inner">
       <div class="site-footer-brand">
-        <img src="/assets/logo.png" alt="" class="h-9 w-9">
-        <div>
-          <p class="text-sm font-semibold text-slate-900">FlowTrace</p>
-          <p class="text-xs text-slate-500">© 2026 FinDevelopers. All rights reserved.</p>
-        </div>
+        <img src="/assets/logo.png" alt="" class="h-6 w-6">
+        <span class="font-semibold text-slate-800">FlowTrace</span>
+        <span class="text-slate-400">© 2026 FinDevelopers</span>
       </div>
 
       <div class="site-footer-credits">
-        <p><span class="credit-role">Prompting</span> Himanshu Swami</p>
-        <p><span class="credit-role">Idea &amp; Prompts</span> Vishal Yadav</p>
-        <p class="text-xs text-slate-500">And obviously, <b class="font-semibold text-indigo-700">all credit</b> goes to the Tech Lead &amp; The New PM.</p>
+        <span><span class="credit-role">Prompting</span> Himanshu Swami</span>
+        <span><span class="credit-role">Idea &amp; Prompts</span> Vishal Yadav</span>
+        <span class="text-slate-500">And obviously, <b class="font-semibold text-indigo-700">all credit</b> goes to the Tech Lead &amp; The New PM.</span>
       </div>
 
-      <blockquote class="site-footer-quote">
+      <div class="site-footer-quote">
         <p>They brought the blockers. <span>We brought the code.</span></p>
         <p>They changed the scope. <span>We changed the game.</span></p>
-      </blockquote>
+      </div>
     </div>
   </footer>
 
