@@ -121,3 +121,7 @@ env.js              loads .env
 .env.example        DATABASE_URL template
 public/             index.html, app.js, styles.css
 ```
+
+---
+
+© 2026 FinDevelopers · Developed by Himanshu Swami · Idea by Vishal Yadav

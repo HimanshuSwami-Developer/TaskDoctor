@@ -1,4 +1,4 @@
-/* FlowTrace — jQuery front-end */
+/* FlowTrace — jQuery front-end. © 2026 FinDevelopers · Developed by Himanshu Swami · Idea by Vishal Yadav */
 $(function () {
   const COLORS = ['slate', 'amber', 'sky', 'indigo', 'violet', 'pink', 'red', 'teal', 'green'];
   const WIREFRAMES = { form: 'Form', list: 'List', dashboard: 'Dashboard', detail: 'Detail' };

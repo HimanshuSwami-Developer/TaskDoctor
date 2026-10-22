@@ -16,5 +16,9 @@
     "exceljs": "^4.4.0",
     "express": "^4.21.2",
     "pg": "^8.23.0"
-  }
+  },
+  "author": "Himanshu Swami (FinDevelopers)",
+  "contributors": [
+    "Vishal Yadav (idea)"
+  ]
 }
