@@ -61,6 +61,34 @@ The server checks every request; apps a login cannot open are hidden from it com
   - Type a name and press Enter (or a comma) to assign someone; add as many people as you need and remove one with ×.
   - The card outline shows the most urgent open issue.
   - The expand button opens the full-screen **issue sheet**, where every field is editable.
+- **Pen (mark an area on a screen image):** in the large view of a screen with an image, click **Pen** and drag a box over the image. Then pick:
+  - **Add bug**: writes an issue tied to that area (issue, priority, frontend / backend).
+  - **Add navigation**: pick another screen of the app; clicking the area opens that screen.
+  - Everything on the same box is one **area** with **one underline**: a thin line in the status colour of its most urgent open bug (Pending amber, Release for Testing sky, custom tags their colour), or black when it only has links. No box is drawn. A **Complete** bug is no longer tied to its area: it leaves the area's list and line (an area with nothing else left disappears), and comes back if the bug is reopened.
+  - Hover an area (or turn the Pen on) for its **pen icon** at the end of the line: it lists the area's bugs and links (*Go to …*, × removes a link) and has **Add bug** / **Add navigation** to put more on the same area.
+  - Clicking the underline: an area with open bugs moves them to the top of the issue list, highlighted (click again to undo), even if it also has links (those are in the pen icon's list); an area with only one link opens that screen; several links are listed. The pen chip on an issue flashes its area.
+  - Esc or clicking Pen again stops drawing. Bugs need *Update tasks* or above; navigation links (add / remove) need *Developer* or above.
+- **Sheets** (header, left of *Sanity*): your own spreadsheets inside an app — release checklists, test cases, a device matrix, a tracker.
+  - A new sheet starts with *Task, Status, Owner, Flow, Due* and three empty rows; change or delete any of them.
+  - **Typed columns:** Text, Number, Date, Dropdown (your options, coloured like status tags), Checkbox, Person (a login of the app), **Flow** and **Screen** (pick one of the app's; the link button jumps to it). Changing a column's type keeps the values that fit.
+  - **+ Column** adds a column; hover a header to edit or delete it. *Add row* adds a row; hover a row for its delete button; drag the row numbers to reorder.
+  - Each cell saves on its own, and only that cell is sent, so two people can work in the same sheet.
+  - **Search** filters rows; click a column name to sort (ascending → descending → off; sorting only changes the view). Number columns are totalled and checkboxes counted at the bottom.
+  - **Share** (owner): *Private* (only you and editors), *everyone in the app can view*, or *everyone in the app can edit*, plus named **editors** who can always edit. Only the owner (or a super admin) renames, shares or deletes a sheet. View-only logins never edit.
+  - **Excel** downloads the sheet with numbers as numbers, dates as dates, people / flows / screens by name, filters and a SUM row. **Import Excel** turns the first worksheet of an .xlsx (first row = column names, up to 2,000 rows) into a new sheet.
+- **Sanity** (header, left of *Write issue*): the app's daily sanity checklist.
+  - It is a sheet: **#, Heading, Owner, Status, Remarks**, then any columns you add.
+  - **Every flow of the app is already a heading** (tap it to jump to that flow); new flows join the end by themselves. A flow removed from the list stays out (pick it again under *New heading…* to bring it back).
+  - Add your own rows with a typed heading. A typed heading can also be created as a new flow in a module (Developer or above). Drag the numbers to reorder. Each heading can have an **owner**.
+  - **+ Column** adds your own columns (e.g. Device, Build no.) to the right of Remarks; rename or delete them from the column header. Like Status and Remarks, their values start empty each day.
+  - Sanity testers tick **Done** or **Failed**, write remarks and fill the columns. Set the **version** and **sanity time** for the day.
+  - **Excel** downloads the day's sheet: heading, module, owner, status, remarks, your columns, who checked it and when, plus the version and time.
+  - The list **resets every day** at midnight (`APP_TIMEZONE`, default Asia/Kolkata). Pick an earlier date to see that day's results.
+  - **Teams:** at the sanity time the app's channel gets a reminder that @mentions the sanity testers (once a day; changing the time re-arms it). A heading marked **Failed** is posted straight away with the review, a link to the flow and the owner @mentioned. *Share on Teams* posts the day's summary.
+  - Running sanity needs the **Sanity tester** tick on the login (Admin), on top of its access level; super admins always can. Sanity testers and Full logins can change the list. Everyone else can look.
+  - **Teams channel** (super admins, at the bottom of Sanity): in Teams open the channel → *Workflows* → *Post to a channel when a webhook request is received*, and paste the URL it gives. *Send test* checks it. People are @mentioned by the **Teams email** on their login (Admin).
+- **Done today** (header): everyone writes what they finished, attaching the screens they changed (the chips open the screen). Entries are grouped by person; pick a date to see an earlier day. *Share my day on Teams* posts your entries with links to the screens. You can edit or delete only your own entries.
+- **Links from Teams** open the app at a place: `#flow=…`, `#screen=…`, `#sanity=<app>`, `#done=<app>`, `#sheet=<sheet>`. Set `APP_URL` in `.env` so the daily reminder can link back (other messages use the address the request came from).
 - **Issue status and date** (screens have no status; every issue has its own):
 
 | Status | Date shown |

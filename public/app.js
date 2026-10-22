@@ -34,6 +34,13 @@ $(function () {
     diagram: 'M3 3h7v6H3zM14 15h7v6h-7zM6.5 9v3a3 3 0 0 0 3 3H14',
     minus: 'M5 12h14',
     tap: 'M9 9l5 12 1.8-5.2L21 14zM7.2 2.2 8 5.1M5.1 8 2.2 7.2M14 4.1 12 6.2M6.2 12l-2.1 2',
+    check: 'M20 6 9 17l-5-5',
+    grid: 'M3 3h18v18H3zM3 9h18M3 15h18M9 3v18M15 3v18',
+    lock: 'M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4',
+    sort: 'M7 4v16M3 16l4 4 4-4M17 20V4M13 8l4-4 4 4',
+    share: 'M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8M16 6l-4-4-4 4M12 2v13',
+    grip: 'M9 5h.01M9 12h.01M9 19h.01M15 5h.01M15 12h.01M15 19h.01',
+    pen: 'M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z',
     link: 'M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7',
   };
   const icon = (name, size = 16) =>
@@ -53,6 +60,9 @@ $(function () {
   let dragging = false;
   let flashId = null; // newly added issue
   let refocus = null; // keep the cursor in the add box after adding
+  let pen = false; // drawing areas on the large screen image
+  let draft = null; // area just drawn, waiting for "Add bug" / "Add navigation"
+  let pickedArea = null; // area clicked on the large image: its bugs are listed first and highlighted in the popup
   const expanded = new Set(); // issues showing full text
   const flipped = new Set(); // cards turned to the issues side
 
@@ -149,8 +159,8 @@ $(function () {
     developer: `[data-action="add-module"], [data-rename-module], [data-delete-module], [data-remove-image], [data-action="add-flow"], [data-rename-flow], [data-delete-flow],
       .add-screen, .dg-add-end, .dg-plus, [data-edit-screen], [data-delete-screen],
       [data-add-condition], [data-insert-condition], [data-rename-condition], [data-cond-tool], [data-add-branch], [data-remove-branch], [data-extend-path],
-      [data-dg-new="condition"], [data-dg-branch-add], [data-dg-branch-remove]`,
-    edit: '.add-comment, [data-action="writer"], [data-remove-person], [data-bugs], [data-flip], [data-open-sheet], .issues-panel',
+      [data-dg-new="condition"], [data-dg-branch-add], [data-dg-branch-remove], [data-mark-nav], [data-remove-link]`,
+    edit: '.add-comment, [data-pen], [data-action="writer"], [data-remove-person], [data-bugs], [data-flip], [data-open-sheet], .issues-panel',
   };
   function applyAccess() {
     const $root = $('#products, #summary, #account, #tabs, #board, #popupBody, #sheetBody, #bugsBody, #videoBody, #diagramBody');
@@ -386,14 +396,108 @@ $(function () {
 
   function device(s, size) {
     // placeholder shimmer until the image has loaded
-    const content = s.image
-      ? `<img src="${esc(imageUrl(s.image, size))}" alt="${esc(s.name)}" loading="lazy" onload="this.parentNode.classList.add('loaded')" onerror="this.parentNode.classList.add('loaded')">`
+    const img = s.image
+      && `<img src="${esc(imageUrl(s.image, size))}" alt="${esc(s.name)}" loading="lazy" draggable="false" onload="this.closest('.screen').classList.add('loaded')" onerror="this.closest('.screen').classList.add('loaded')">`;
+    const content = img
+      ? (size === 'lg' ? `<div class="mark-layer ${pen ? 'drawing' : ''}" data-marks="${s.id}">${img}${marksHtml(s)}</div>` : img)
       : isPopup(s) ? `<div class="wf-dialog">${wireframe(s.wireframe || 'form')}</div>` : wireframe(s.wireframe || 'form');
     const screenClass = (s.image ? 'screen has-img' : 'screen') + (isPopup(s) && !s.image ? ' popup' : '');
     if (s.device === 'web') {
       return `<div class="device web ${size}"><div class="browser-bar"><i></i><i></i><i></i><span>${esc(s.page)}</span></div><div class="${screenClass}">${content}</div></div>`;
     }
     return `<div class="device app ${size}"><div class="${screenClass}"><div class="notch"></div>${content}</div></div>`;
+  }
+
+  // ---------------------------------------------------------------- marks: areas drawn on a screen image
+  // Bugs and navigation links drawn on the same box make one area, shown only as one thin underline: in the status
+  // colour of its most urgent open bug (Pending amber, Release for Testing sky …), or black for links only.
+  // Complete bugs are no longer tied to their area. The pen icon on an area
+  // lists what is on it and adds more bugs or links to the same box. Boxes are fractions (0–1) of the image.
+  // (Classes are not "bug" / "link": those already style issue rows.)
+
+  const boxStyle = (b) => `left:${b.x * 100}%;top:${b.y * 100}%;width:${b.w * 100}%;height:${b.h * 100}%`;
+  const boxKey = (b) => [b.x, b.y, b.w, b.h].join(',');
+
+  function areasOf(s) {
+    const map = new Map();
+    const area = (b) => {
+      const key = boxKey(b);
+      if (!map.has(key)) map.set(key, { key, box: b, bugs: [], links: [] });
+      return map.get(key);
+    };
+    // a Complete bug lets go of its area (it comes back if the bug is reopened)
+    (s.comments || []).filter((c) => c.box && !c.resolved).forEach((c) => area(c.box).bugs.push(c));
+    (s.links || []).forEach((l) => {
+      const to = findScreen(l.targetId);
+      if (to) area(l.box).links.push({ ...l, to });
+    });
+    map.forEach((a) => { a.bugs = sortIssues(a.bugs); });
+    return [...map.values()];
+  }
+
+  function marksHtml(s) {
+    // link-only areas first: an area with bugs sits on top where they overlap
+    return areasOf(s).sort((a, b) => Boolean(a.bugs.length) - Boolean(b.bugs.length)).map((a) => {
+      const tone = a.bugs.length ? `mark-bug st-${statusOf(a.bugs[0].status).color}` : 'mark-link';
+      const title = a.bugs.map((c) => c.text).concat(a.links.map((l) => `Go to ${l.to.name}`)).join('\n');
+      return `<div class="mark ${tone} ${a.key === pickedArea ? 'picked' : ''}" style="${boxStyle(a.box)}" data-area="${a.key}" data-screen="${s.id}" title="${esc(title)}">
+        <button class="mark-edit" data-area-menu title="Bugs and links on this area">${icon('pen', 11)}</button>
+      </div>`;
+    }).join('');
+  }
+  const areaOf = (el) => areasOf(findScreen($(el).data('screen'))).find((a) => a.key === String($(el).data('area')));
+
+  // A menu by a box on the image. It floats over the page (fixed) so the image's scroll box can't cut it off:
+  // under the box, or above it when there is no room below, and kept inside the window.
+  function markMenu(layer, box, html) {
+    $('.mark-menu').remove();
+    const r = layer.getBoundingClientRect();
+    const $menu = $(`<div class="mark-menu">${html}</div>`).appendTo('body');
+    const w = $menu.outerWidth();
+    const h = $menu.outerHeight();
+    const top = r.top + box.y * r.height;
+    const bottom = r.top + (box.y + box.h) * r.height;
+    const y = bottom + 6 + h <= window.innerHeight - 8 ? bottom + 6 : Math.max(8, top - 6 - h);
+    const x = Math.min(Math.max(8, r.left + box.x * r.width), window.innerWidth - w - 8);
+    $menu.css({ left: x, top: y });
+  }
+  const addButtons = () => `
+    ${can('edit') ? `<button data-mark-bug>${icon('note', 14)} Add bug</button>` : ''}
+    ${can('developer') ? `<button data-mark-nav>${icon('link', 14)} Add navigation</button>` : ''}`;
+
+  // What is on an area (its bugs, where its links go) plus Add bug / Add navigation on the same box
+  function areaMenu(el) {
+    const a = areaOf(el);
+    if (!a) return;
+    const screenId = $(el).data('screen');
+    draft = { screenId, box: a.box };
+    const adds = addButtons();
+    markMenu($(el).closest('.mark-layer')[0], a.box, `
+      ${a.bugs.map((c) => `<button data-area-pick="${a.key}" title="${esc(c.text)}"><span class="dot st st-${statusOf(c.status).color}"></span><span class="truncate">${esc(c.text)}</span></button>`).join('')}
+      ${a.links.map((l) => `<div class="mark-menu-row">
+        <button data-mark-go="${l.to.id}">${icon('right', 14)}<span class="truncate">Go to ${esc(l.to.name)}</span></button>
+        ${can('developer') ? `<button class="mark-menu-x" data-remove-link="${l.id}" data-screen="${screenId}" title="Remove link">${icon('close', 12)}</button>` : ''}
+      </div>`).join('')}
+      ${adds.trim() ? `<hr>${adds}` : ''}`);
+  }
+
+  // Bring an area's bugs to the top of the issue list, highlighted (again on the same area lets go)
+  function pickArea(key) {
+    pickedArea = pickedArea === key ? null : key;
+    renderPopup();
+    afterRender({});
+    const $list = $('#popupBody .bug-list');
+    if ($list.length) $list[0].scrollTop = 0;
+    if (pickedArea) pulse($('#popupBody .bug.picked'), 'nearest');
+  }
+
+  // Bring a marked area (or its issue) into view and pulse it
+  function pulse($el, block = 'center') {
+    if (!$el.length) return;
+    $el[0].scrollIntoView({ behavior: 'smooth', block });
+    $el.removeClass('pulse');
+    setTimeout(() => $el.addClass('pulse'), 0);
+    setTimeout(() => $el.removeClass('pulse'), 1600);
   }
 
   function deviceToggle(s) {
@@ -443,12 +547,13 @@ $(function () {
     const p = prio(c);
     const full = big || expanded.has(c.id);
     return `
-      <li class="bug ${p} ${c.resolved ? 'fixed' : ''} ${c.id === flashId ? 'new' : ''}">
+      <li class="bug ${p} ${c.resolved ? 'is-fixed' : ''} ${c.id === flashId ? 'new' : ''} ${big && c.box && !c.resolved && boxKey(c.box) === pickedArea ? 'picked' : ''}" data-issue="${c.id}">
         <input type="checkbox" class="mt-0.5 accent-indigo-600" data-resolve="${c.id}" ${c.resolved ? 'checked' : ''} title="Mark fixed">
         <div class="min-w-0 flex-1">
           <div class="bug-meta">
             <button class="prio-tag ${p}" data-cycle-priority="${c.id}" title="Change priority"><span class="dot bg-${p}"></span>${PRIORITY[p].label}</button>
             ${areaTag(c)}
+            ${c.box && !c.resolved ? `<button class="mark-chip" data-show-mark="${c.id}" title="Show the marked area">${icon('pen', 11)}</button>` : ''}
             ${statusSelect(c, 'sm')}
             ${(c.assignees || []).map((n) => `<span class="assignee">${esc(n)}</span>`).join('')}
             ${c.remarks && !full ? `<span class="text-slate-400" title="Has remarks">${icon('note', 12)}</span>` : ''}
@@ -462,6 +567,9 @@ $(function () {
 
   function issuesPanel(s, big) {
     const issues = sortIssues(s.comments);
+    // in the popup, the bugs of the area picked on the image go first
+    const onArea = (c) => Boolean(c.box && !c.resolved && boxKey(c.box) === pickedArea);
+    if (big && pickedArea) issues.sort((a, b) => onArea(b) - onArea(a));
     const open = issues.filter((c) => !c.resolved).length;
     return `
       <div class="issues ${big ? 'big' : ''}">
@@ -487,6 +595,7 @@ $(function () {
   // ---------------------------------------------------------------- board
 
   let loaded = false;
+  let routed = false; // the #flow= / #screen= / #sanity= / #done= link was opened
 
   function load() {
     return $.when(api('GET', '/api/me'), api('GET', '/api/board'), api('GET', '/api/statuses'))
@@ -501,6 +610,7 @@ $(function () {
         if (!$('#statusModal').hasClass('hidden')) renderStatuses();
         if (bugsView) { renderBugs(); applyAccess(); }
         if (diagram.flowId) renderDiagram();
+        if (!routed) { routed = true; openFromHash(); }
       })
       .fail((xhr) => {
         if (loaded || xhr.status === 401) return;
@@ -847,7 +957,7 @@ $(function () {
   function sheetRow(c) {
     const p = prio(c);
     return `
-      <div class="sheet-row ${p} ${c.resolved ? 'fixed' : ''} ${c.id === flashId ? 'new' : ''}">
+      <div class="sheet-row ${p} ${c.resolved ? 'is-fixed' : ''} ${c.id === flashId ? 'new' : ''}">
         <label class="flex items-center gap-2 pt-2 text-xs font-medium text-slate-500">
           <input type="checkbox" class="h-4 w-4 accent-indigo-600" data-resolve="${c.id}" ${c.resolved ? 'checked' : ''}>
           <span class="md:hidden">Fixed</span>
@@ -1339,6 +1449,7 @@ $(function () {
   // ---------------------------------------------------------------- screen popup
 
   function renderPopup() {
+    $('.mark-menu').remove();
     const s = findScreen(openId);
     if (!s) { closePopup(); return; }
     const linked = linkedCopies(s);
@@ -1358,7 +1469,12 @@ $(function () {
         <button class="icon-btn" data-close-popup title="Close">${icon('close', 18)}</button>
       </div>
       <div class="grid gap-6 p-5 md:grid-cols-[1fr_340px]">
-        <div class="popup-stage">${device(s, 'lg')}</div>
+        <div class="popup-stage">
+          ${s.image ? `<div class="pen-bar">
+            <button class="pen-btn ${pen ? 'on' : ''}" data-pen title="Draw a box over the image, then add a bug or a link to another screen (Esc to stop)">${icon('pen', 14)} ${pen ? 'Drawing… click to stop' : 'Pen'}</button>
+          </div>` : ''}
+          ${device(s, 'lg')}
+        </div>
         <div class="space-y-5">
           <div><span class="field-label">Platform</span>${deviceToggle(s)}</div>
           <div>
@@ -1416,6 +1532,7 @@ $(function () {
   }
 
   function openPopup(id) {
+    if (id !== openId) pickedArea = null;
     openId = id;
     renderPopup();
     afterRender({});
@@ -1425,6 +1542,10 @@ $(function () {
 
   function closePopup() {
     openId = null;
+    pen = false;
+    draft = null;
+    pickedArea = null;
+    $('.mark-menu').remove();
     $('#popup').addClass('hidden');
     unlockScroll();
   }
@@ -1507,7 +1628,7 @@ $(function () {
         ${list.map(({ c, s, f, m }) => {
           const p = prio(c);
           return `
-          <div class="bugs-row ${p} ${c.resolved ? 'fixed' : ''}">
+          <div class="bugs-row ${p} ${c.resolved ? 'is-fixed' : ''}">
             <div class="min-w-0">
               <p class="truncate text-xs text-slate-500">${esc(m.name)} › ${esc(f.name)}</p>
               <p class="truncate text-sm font-medium text-slate-900">${esc(s.name)}</p>
@@ -1600,6 +1721,9 @@ $(function () {
     $('#account').html(`
       <span class="account" title="${esc(ACCESS[me.access].hint)}">${icon('user', 14)} ${esc(me.name || me.username)}
         <span class="access-tag access-${me.access}">${ACCESS[me.access].label}</span></span>
+      <button class="btn-secondary px-3 py-1 text-xs" data-action="sheets" title="Your own sheets: typed columns, links to flows and screens, Excel in and out">${icon('grid', 12)} Sheets</button>
+      <button class="btn-secondary px-3 py-1 text-xs" data-action="sanity" title="Daily sanity checklist of this app">${icon('check', 12)} Sanity</button>
+      <button class="btn-secondary px-3 py-1 text-xs" data-action="done" title="What you finished today, shared on Teams">${icon('note', 12)} Done today</button>
       <button class="btn-primary px-3 py-1 text-xs" data-action="writer" title="Write an issue on any screen">${icon('plus', 12)} Write issue</button>
       <a class="btn-secondary px-3 py-1 text-xs" href="/api/export" title="Download every task as an Excel sheet">${icon('download', 12)} Excel</a>
       <button class="btn-secondary px-3 py-1 text-xs" data-action="admin">Admin</button>
@@ -1648,6 +1772,7 @@ $(function () {
                   <p class="truncate text-sm font-medium text-slate-900">${esc(x.name || x.username)} ${x.id === me.id ? '<span class="text-xs font-normal text-slate-400">(you)</span>' : ''}</p>
                   <p class="truncate text-xs text-slate-500"><span class="font-mono">${esc(x.username)}</span> · ${esc(appNames(x))}</p>
                 </div>
+                ${x.sanityTester ? '<span class="access-tag sanity-tag">Sanity</span>' : ''}
                 <span class="access-tag access-${x.access}">${ACCESS[x.access].label}</span>
                 <button class="icon-btn" data-admin-edit="${x.id}" title="Edit">${icon('edit', 14)}</button>
                 ${x.id === me.id ? '<span class="w-7"></span>' : `<button class="icon-btn danger" data-admin-delete="${x.id}" title="Delete login">${icon('trash', 14)}</button>`}
@@ -1669,6 +1794,12 @@ $(function () {
                 <span><span class="text-sm font-medium text-slate-900">${a.label}</span><span class="block text-xs text-slate-500">${a.hint}</span></span>
               </label>`).join('')}
           </div>
+          <label class="access-opt">
+            <input type="checkbox" name="sanityTester" class="mt-0.5 h-4 w-4 accent-indigo-600" ${u && u.sanityTester ? 'checked' : ''}>
+            <span><span class="text-sm font-medium text-slate-900">Sanity tester</span><span class="block text-xs text-slate-500">On top of the access above: can run the daily sanity checklist (Done / Failed, review, version and time). Super admins always can.</span></span>
+          </label>
+          <label class="block"><span class="field-label">Teams email <span class="font-normal text-slate-400">(optional, to @mention them)</span></span>
+            <input class="input w-full" name="teamsEmail" value="${esc(u ? u.teamsEmail : '')}" placeholder="e.g. priya@company.com" maxlength="120"></label>
           <div><span class="field-label">Apps this login can open</span>
             <label class="flex items-center gap-2 py-1 text-sm"><input type="checkbox" name="allProducts" class="h-4 w-4 accent-indigo-600" ${all ? 'checked' : ''}> All apps (also new ones)</label>
             ${products.map((p) => `
@@ -1722,6 +1853,8 @@ $(function () {
       access: $f.find('[name=access]:checked').val(),
       allProducts: $f.find('[name=allProducts]').is(':checked'),
       productIds: $f.find('[name=productIds]:checked').map((i, el) => el.value).get(),
+      sanityTester: $f.find('[name=sanityTester]').is(':checked'),
+      teamsEmail: $f.find('[name=teamsEmail]').val().trim(),
     };
     const pass = $f.find('[name=password]').val();
     if (pass) body.password = pass;
@@ -2199,7 +2332,7 @@ $(function () {
   // ← → step through the flow while the popup is on top and nothing is being typed
   $doc.on('keydown', (e) => {
     if (!openId || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || $(e.target).is('input, textarea, select, [contenteditable]')) return;
-    if (dialog.isOpen() || sheetId || videoFlowId || bugsView || $('#copyModal, #writerModal, #statusModal, #adminModal').not('.hidden').length) return;
+    if (dialog.isOpen() || sheetId || videoFlowId || bugsView || $('#copyModal, #writerModal, #statusModal, #adminModal, #sanityModal, #doneModal, #sheetsModal').not('.hidden').length) return;
     const s = findScreen(openId);
     const { prev, next } = s ? popupSiblings(s) : {};
     const to = e.key === 'ArrowLeft' ? prev : next;
@@ -2216,6 +2349,109 @@ $(function () {
     if ($pick.length) { e.preventDefault(); $pick.trigger('click'); }
   });
   $('#popup').on('mousedown', function (e) { if (e.target === this) closePopup(); });
+
+  // marks: the pen draws a box over the large image, then it becomes a bug or a link to another screen
+  const clearDraft = () => { draft = null; $('#popupBody .mark-draft, .mark-menu').remove(); };
+  $doc.on('click', '[data-pen]', () => { pen = !pen; draft = null; renderPopup(); applyAccess(); });
+  $doc.on('pointerdown', '.mark-layer.drawing', function (e) {
+    if (e.button !== 0 || $(e.target).closest('.mark-menu, .mark-edit').length) return;
+    e.preventDefault();
+    const layer = this;
+    const at = (ev) => {
+      const r = layer.getBoundingClientRect();
+      return { x: Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height)) };
+    };
+    const start = at(e);
+    clearDraft();
+    const $box = $('<div class="mark-draft"></div>').appendTo(layer);
+    let box = null;
+    const move = (ev) => {
+      const p = at(ev);
+      box = { x: Math.min(start.x, p.x), y: Math.min(start.y, p.y), w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y) };
+      $box.attr('style', boxStyle(box));
+    };
+    const up = () => {
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', up);
+      const r = layer.getBoundingClientRect();
+      if (!box || box.w * r.width < 8 || box.h * r.height < 8) { $box.remove(); return; } // a click, not a box
+      draft = { screenId: $(layer).data('marks'), box };
+      markMenu(layer, box, `${addButtons()}<button data-mark-cancel>${icon('close', 14)} Cancel</button>`);
+    };
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up);
+  });
+  $doc.on('click', '[data-mark-cancel]', clearDraft);
+  // a press anywhere outside an open area menu closes it
+  $doc.on('pointerdown', (e) => { if ($('.mark-menu').length && !$(e.target).closest('.mark-menu, .mark-edit, .mark-layer.drawing').length) clearDraft(); });
+  document.addEventListener('scroll', (e) => { if ($('.mark-menu').length && !$(e.target).closest('.mark-menu').length) clearDraft(); }, true);
+  $doc.on('click', '[data-mark-bug]', () => {
+    $('.mark-menu').remove();
+    const { screenId, box } = draft;
+    ask({
+      title: 'Add bug on this area',
+      fields: [
+        { name: 'text', label: 'Issue', placeholder: 'What is wrong here?', required: true, max: 1000 },
+        { name: 'priority', label: 'Priority', value: 'medium', options: Object.entries(PRIORITY).map(([k, v]) => [k, v.label]) },
+        { name: 'area', label: 'Area', value: 'frontend', options: Object.entries(AREA) },
+      ],
+      confirmText: 'Add bug',
+      save: (v) => api('POST', `/api/screens/${screenId}/comments`, { ...v, box }, null, QUIET).done((c) => { flashId = c.id; draft = null; load(); }),
+    }).then((v) => { if (!v) clearDraft(); });
+  });
+  $doc.on('click', '[data-mark-nav]', () => {
+    $('.mark-menu').remove();
+    const { screenId, box } = draft;
+    const s = findScreen(screenId);
+    const p = productOf(findFlow(s.flowId).moduleId);
+    const options = p.modules.flatMap((m) => m.flows.flatMap((f) => onlyScreens(f.screens).filter((x) => x.id !== s.id)
+      .map((x) => [x.id, `${m.name} › ${f.name} › ${x.name}`])));
+    if (!options.length) { clearDraft(); dialog.alert('Add another screen to this app first.', 'No screen to go to'); return; }
+    const { next } = popupSiblings(s);
+    ask({
+      title: 'Add navigation',
+      fields: [{ name: 'targetId', label: 'Opens screen', value: next && next.id && next.id !== s.id ? next.id : options[0][0], options }],
+      confirmText: 'Add link',
+      save: (v) => api('PATCH', `/api/screens/${s.id}`, { links: [...(s.links || []), { box, targetId: v.targetId }] }, null, QUIET)
+        .done(() => { draft = null; toast('Link added'); load(); }),
+    }).then((v) => { if (!v) clearDraft(); });
+  });
+  $doc.on('click', '[data-mark-go]', function () { openPopup($(this).data('mark-go')); });
+  $doc.on('click', '[data-remove-link]', function (e) {
+    e.stopPropagation();
+    clearDraft();
+    const s = findScreen($(this).data('screen'));
+    const id = $(this).data('remove-link');
+    dialog.confirm({
+      title: 'Remove this link?', message: 'The area will no longer open the other screen.', confirmText: 'Remove', danger: true,
+      onConfirm: () => api('PATCH', `/api/screens/${s.id}`, { links: s.links.filter((l) => l.id !== id) }, null, QUIET).done(load),
+    });
+  });
+  // Clicking an underline: an area with open bugs brings them to the top of the issue list (links on it stay
+  // in the pen icon's list); a lone link opens its screen; several links are listed. The pen icon always lists
+  // everything, with Add bug / Add navigation.
+  $doc.on('click', '.mark[data-area]', function (e) {
+    if ($(e.target).closest('[data-area-menu]').length) return;
+    const a = areaOf(this);
+    if (!a) return;
+    if (a.bugs.length) pickArea(a.key);
+    else if (!a.bugs.length && a.links.length === 1) openPopup(a.links[0].to.id);
+    else areaMenu(this);
+  });
+  $doc.on('click', '[data-area-menu]', function (e) {
+    e.stopPropagation();
+    areaMenu($(this).closest('.mark')[0]);
+  });
+  $doc.on('click', '[data-area-pick]', function () {
+    clearDraft();
+    pickArea(String($(this).data('area-pick')));
+  });
+  $doc.on('click', '[data-show-mark]', function () {
+    const c = allIssues().find((x) => x.id === $(this).data('show-mark'));
+    if (!c) return;
+    if (openId !== c.screenId) openPopup(c.screenId);
+    setTimeout(() => pulse($(`#popupBody .mark[data-area="${boxKey(c.box)}"]`)), 50);
+  });
   $doc.on('click', '[data-device]', function () {
     api('PATCH', `/api/screens/${$(this).data('id')}`, { device: $(this).data('device') }).done(load);
   });
@@ -2489,16 +2725,734 @@ $(function () {
     if (e.key !== 'Escape') return;
     if (dialog.isOpen()) dialog.cancel();
     else if (!$('#copyModal').hasClass('hidden')) closeCopy();
+    else if (sanity) closeSanity();
+    else if (sheetsView) closeSheets();
+    else if (doneView) closeDone();
     else if (!$('#statusModal').hasClass('hidden')) closeStatuses();
     else if (bugsView) closeBugs();
     else if (!$('#adminModal').hasClass('hidden')) closeAdmin();
     else if (videoFlowId) closeVideo();
     else if (!$('#writerModal').hasClass('hidden')) closeWriter();
     else if (sheetId) closeSheet();
+    else if ($('.mark-menu').length) clearDraft();
+    else if (openId && (pen || draft)) { pen = false; draft = null; renderPopup(); applyAccess(); }
     else if (openId && $('#popupBody .popup-choices:not(.hidden)').length) $('#popupBody .popup-choices').addClass('hidden');
     else if (openId) closePopup();
     else if (diagram.flowId && (diagram.condId || diagram.menu)) { diagram.condId = null; diagram.menu = null; renderDiagram(); }
     else if (diagram.flowId) closeDiagram();
+  });
+
+  // ---------------------------------------------------------------- go to a flow / screen anywhere (any app or module)
+
+  function showPlace(flowId) {
+    const f = findFlow(flowId);
+    const p = f && productOf(f.moduleId);
+    if (!p) { toast('That is no longer here'); return false; }
+    selectProduct(p.id);
+    activeId = f.moduleId;
+    render();
+    return true;
+  }
+  function showFlow(id) {
+    if (showPlace(id)) setTimeout(() => gotoFlow(id), 50);
+  }
+  function showScreen(id) {
+    const s = findScreen(id);
+    if (s && showPlace(s.flowId)) openPopup(id);
+  }
+
+  // Links from Teams: /#flow=<id>, #screen=<id>, #sanity=<app id>, #done=<app id>
+  function openFromHash() {
+    const h = new URLSearchParams(location.hash.slice(1));
+    if (![...h.keys()].length) return;
+    history.replaceState(null, '', location.pathname + location.search);
+    if (h.get('flow')) showFlow(h.get('flow'));
+    else if (h.get('screen')) showScreen(h.get('screen'));
+    else if (h.get('sheet')) api('GET', `/api/sheets/${encodeURIComponent(h.get('sheet'))}`).done((x) => openSheets(x.productId, x.id));
+    else if (h.get('sanity') || h.get('done')) {
+      const pid = h.get('sanity') || h.get('done');
+      if (products.some((p) => p.id === pid)) { selectProduct(pid); render(); }
+      if (h.get('sanity')) openSanity(productId); else openDone(productId, h.get('date'));
+    }
+  }
+  window.addEventListener('hashchange', () => { if (loaded) openFromHash(); });
+
+  // Teams answers 'sent', 'off' (no channel set) or why it failed
+  function teamsResult(result, sentText) {
+    if (result === 'sent') toast(sentText);
+    else if (result && result !== 'off') dialog.alert(`Saved, but the Teams message did not go out: ${result}`, 'Teams');
+  }
+
+  const flowLabel = (m, f) => `${m.name} › ${f.name}`;
+
+  // ---------------------------------------------------------------- sanity testing: daily checklist of an app
+  // Headings are flows of the app (tap to go there) or typed headings. Each day starts fresh; earlier days stay as history.
+  // Sanity testers tick Done / Failed and write a review; a failure is posted to the app's Teams channel with the
+  // owner @mentioned. The version and time are set per day; at that time the channel gets a reminder.
+
+  let sanity = null; // { productId, date, today, run, items, people, canRun, canManage, teams, webhook }
+
+  function openSanity(pid, date) {
+    if (!pid) { dialog.alert('Add an app first.', 'No app'); return null; }
+    return api('GET', `/api/sanity?product=${encodeURIComponent(pid)}${date ? `&date=${date}` : ''}`).done((d) => {
+      sanity = { productId: pid, ...d };
+      renderSanity();
+      $('#sanityModal').removeClass('hidden');
+      $('body').addClass('overflow-hidden');
+    });
+  }
+  const reloadSanity = () => sanity && openSanity(sanity.productId, sanity.date);
+
+  function closeSanity() {
+    sanity = null;
+    $('#sanityModal').addClass('hidden');
+    unlockScroll();
+  }
+
+  function renderSanity() {
+    const d = sanity;
+    const p = products.find((x) => x.id === d.productId);
+    const isToday = d.date === d.today;
+    const run = isToday && d.canRun; // tick, review, version / time
+    const flowName = (it) => (it.flowId && findFlow(it.flowId) ? findFlow(it.flowId).name : it.heading);
+    const person = (id) => (d.people.find((x) => x.id === id) || {}).name || '';
+    const n = d.items.length;
+    const count = (st) => d.items.filter((it) => it.state === st).length;
+    const used = new Set(d.items.map((it) => it.flowId).filter(Boolean));
+    const flowOptions = (p ? p.modules : []).map((m) => `<optgroup label="${esc(m.name)}">${m.flows.filter((f) => !used.has(f.id))
+      .map((f) => `<option value="${f.id}">${esc(f.name)}</option>`).join('')}</optgroup>`).join('');
+    const ownerSelect = (it) => `<select class="sanity-owner" data-sanity-owner="${it.id}" title="Owner: @mentioned on Teams when this fails">
+      <option value="">No owner</option>${d.people.map((x) => `<option value="${x.id}" ${x.id === it.ownerId ? 'selected' : ''}>${esc(x.name)}${x.teams ? '' : ' (no Teams email)'}</option>`).join('')}</select>`;
+
+    $('#sanityBody').html(`
+      <div class="flex flex-wrap items-center gap-3 border-b border-slate-200 px-5 py-3">
+        <div class="min-w-0 flex-1">
+          <h3 class="text-lg font-semibold text-slate-900">Sanity testing <span class="font-normal text-slate-400">· ${esc(p ? p.name : '')}</span></h3>
+          <p class="text-xs text-slate-500">${isToday ? `Today · ${fmtDate(d.date)} · resets at midnight (${esc(d.timezone)})` : `History of ${fmtDate(d.date)}`}</p>
+        </div>
+        <input type="date" class="input py-1 text-sm" data-sanity-date value="${d.date}" max="${d.today}" title="Look at an earlier day">
+        <a class="btn-secondary text-sm" href="/api/sanity/export?product=${encodeURIComponent(d.productId)}&date=${d.date}" title="Download this day's sheet">${icon('download', 14)} Excel</a>
+        ${isToday ? '' : `<button class="btn-secondary text-sm" data-sanity-today>Today</button>`}
+        <button class="icon-btn" data-close-sanity title="Close">${icon('close', 18)}</button>
+      </div>
+
+      <form id="sanityRun" class="sanity-run">
+        <label><span class="field-label">Version</span>
+          <input class="input w-40" name="version" value="${esc(d.run ? d.run.version : '')}" placeholder="e.g. 1.12.0 (245)" maxlength="60" ${run ? '' : 'disabled'}></label>
+        <label><span class="field-label">Sanity time</span>
+          <input class="input w-32" type="time" name="time" value="${esc(d.run ? d.run.time : '')}" ${run ? '' : 'disabled'}></label>
+        ${run ? '<button class="btn-secondary self-end">Save</button>' : ''}
+        <div class="sanity-progress self-end">
+          <span class="chip pass">${icon('check', 12)} ${count('pass')} / ${n} done</span>
+          <span class="chip fail">${icon('close', 12)} ${count('fail')} failed</span>
+          <span class="chip">${count('pending')} left</span>
+        </div>
+        ${run && d.teams && n ? `<button type="button" class="btn-primary self-end" data-sanity-summary title="Post today's result to Teams">${icon('share', 14)} Share on Teams</button>` : ''}
+      </form>
+      ${isToday && d.run && d.run.time ? `<p class="px-5 pt-2 text-xs text-slate-500">${d.teams
+        ? (d.run.remindedAt ? 'Teams reminder sent today.' : `Teams reminder at ${esc(d.run.time)}.`)
+        : 'No Teams channel for this app yet, so no reminder goes out.'}</p>` : ''}
+      ${isToday && !d.canRun ? '<p class="mx-5 mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">You can look at the sanity list. To run it, ask an admin to tick <b>Sanity tester</b> on your login.</p>' : ''}
+
+      <div class="sanity-sheet-wrap">
+        <table class="sanity-sheet">
+          <thead><tr>
+            <th class="w-10">#</th><th class="min-w-[220px]">Heading</th><th>Owner</th><th>Status</th><th class="min-w-[220px]">Remarks</th>
+            ${d.columns.map((c) => `<th class="min-w-[150px]" data-col="${c.id}"><div class="sanity-col">
+              <span class="truncate">${esc(c.name)}</span>
+              ${d.canManage ? `<button class="icon-btn sm" data-col-rename="${c.id}" title="Rename column">${icon('edit', 12)}</button>
+                <button class="icon-btn sm danger" data-col-delete="${c.id}" title="Delete column">${icon('close', 12)}</button>` : ''}
+            </div></th>`).join('')}
+            <th class="w-px whitespace-nowrap">${d.canManage ? `<button class="sanity-addcol" data-col-add title="Add a column">${icon('plus', 12)} Column</button>` : ''}</th>
+          </tr></thead>
+          <tbody id="sanityList">
+          ${d.items.map((it, i) => {
+            const f = it.flowId && findFlow(it.flowId);
+            const m = f && allModules.find((x) => x.id === f.moduleId);
+            return `
+            <tr class="sanity-row ${it.state}" data-item="${it.id}">
+              <td><span class="sanity-no ${d.canManage ? 'drag' : ''}" title="${d.canManage ? 'Drag to reorder' : ''}">${i + 1}</span></td>
+              <td>
+                ${f ? `<button class="sanity-heading link" data-sanity-go="${it.flowId}" title="Go to this flow">${esc(flowName(it))} ${icon('link', 12)}</button>`
+                  : `<span class="sanity-heading">${esc(flowName(it))}</span>`}
+                <div class="sanity-meta">
+                  ${m ? `<span>${esc(m.name)}</span>` : '<span>Manual heading</span>'}
+                  ${it.resultAt && it.state !== 'pending' ? `<span>${it.state === 'pass' ? 'Done' : 'Failed'} by ${esc(person(it.resultBy) || '—')}</span>` : ''}
+                  ${it.sharedAt ? `<span class="text-indigo-600">${icon('share', 11)} on Teams</span>` : ''}
+                </div>
+              </td>
+              <td>${d.canManage ? ownerSelect(it) : `<span class="text-sm text-slate-600">${esc(person(it.ownerId)) || '—'}</span>`}</td>
+              <td><div class="seg sanity-state">
+                <button data-sanity-state="pass" class="${it.state === 'pass' ? 'on pass' : ''}" ${run ? '' : 'disabled'} title="Done">${icon('check', 13)} Done</button>
+                <button data-sanity-state="fail" class="${it.state === 'fail' ? 'on fail' : ''}" ${run ? '' : 'disabled'} title="Failed: posts to Teams">${icon('close', 13)} Failed</button>
+              </div></td>
+              <td><textarea class="input sanity-review" data-sanity-review rows="1" maxlength="1000" placeholder="${run ? 'Remarks / what failed' : ''}" ${run ? '' : 'disabled'}>${esc(it.review)}</textarea></td>
+              ${d.columns.map((c) => `<td><input class="input sanity-cell" data-sanity-cell="${c.id}" value="${esc(it.cells[c.id] || '')}" maxlength="500" ${run ? '' : 'disabled'}></td>`).join('')}
+              <td><div class="flex items-center justify-end">
+                ${run && d.teams && it.state === 'fail' ? `<button class="icon-btn" data-sanity-share="${it.id}" title="Share this failure on Teams again">${icon('share', 14)}</button>` : ''}
+                ${d.canManage ? `<button class="icon-btn danger" data-sanity-delete="${it.id}" title="Remove from the list">${icon('trash', 14)}</button>` : ''}
+              </div></td>
+            </tr>`;
+          }).join('') || `<tr><td colspan="${6 + d.columns.length}" class="py-10 text-center text-sm text-slate-400">No headings yet. Every flow of this app shows up here, and you can add your own below.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+
+      ${d.canManage ? `
+      <form id="sanityAdd" class="sanity-add">
+        <select class="input" name="flowId" title="A flow of this app, or a new heading">
+          <option value="">New heading…</option>${flowOptions.replace(/<optgroup[^>]*><\/optgroup>/g, '')}
+        </select>
+        <input class="input min-w-0 flex-1" name="heading" placeholder="New row: heading, e.g. Login with OTP" maxlength="120" autocomplete="off">
+        <select class="input" name="ownerId" title="Owner"><option value="">Owner</option>${d.people.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select>
+        <button class="btn-primary">${icon('plus', 14)} Add</button>
+        ${can('developer') && p && p.modules.length ? `
+        <label class="sanity-newflow"><input type="checkbox" name="createFlow" class="h-4 w-4 accent-indigo-600">
+          Also create it as a flow in <select class="input py-0.5 text-sm" name="moduleId">${p.modules.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('')}</select></label>` : ''}
+      </form>` : ''}
+
+      ${me.access === 'super' ? `
+      <details class="sanity-teams" ${d.teams ? '' : 'open'}>
+        <summary>Teams channel for ${esc(p ? p.name : '')} ${d.teams ? '<span class="chip pass">connected</span>' : '<span class="chip">not set</span>'}</summary>
+        <form id="teamsForm" class="mt-3 space-y-2">
+          <p class="text-xs text-slate-500">In Teams, open the channel → <b>Workflows</b> → <b>Post to a channel when a webhook request is received</b>, finish the steps and paste the URL it gives you here. Logins are @mentioned by the <b>Teams email</b> set in Admin.</p>
+          <div class="flex flex-wrap gap-2">
+            <input class="input min-w-0 flex-1 font-mono text-xs" name="webhook" value="${esc(d.webhook || '')}" placeholder="https://…logic.azure.com/workflows/…" autocomplete="off">
+            <button class="btn-secondary">Save</button>
+            ${d.teams ? '<button type="button" class="btn-secondary" data-teams-test>Send test</button>' : ''}
+          </div>
+        </form>
+      </details>` : ''}`);
+
+    if (d.canManage) {
+      Sortable.create($('#sanityList')[0], {
+        handle: '.sanity-no', animation: 150, draggable: 'tr.sanity-row',
+        onEnd: () => api('PUT', '/api/sanity/order', { productId: d.productId, ids: $('#sanityList .sanity-row').map((i, el) => $(el).data('item')).get() }).done(reloadSanity),
+      });
+    }
+    $('#sanityList .sanity-review').each((i, el) => autoGrow(el));
+  }
+
+  const sanityItemOf = (el) => sanity.items.find((it) => it.id === $(el).closest('[data-item]').data('item'));
+  const saveResult = (it, body) => api('PUT', `/api/sanity/items/${it.id}/result`, body)
+    .done((r) => { teamsResult(r.teams, 'Failure posted on Teams'); reloadSanity(); });
+
+  $doc.on('click', '[data-action="sanity"]', () => openSanity(productId));
+  $doc.on('click', '[data-close-sanity]', closeSanity);
+  $('#sanityModal').on('mousedown', function (e) { if (e.target === this) closeSanity(); });
+  $doc.on('change', '[data-sanity-date]', function () { if (this.value) openSanity(sanity.productId, this.value); });
+  $doc.on('click', '[data-sanity-today]', () => openSanity(sanity.productId));
+  $doc.on('submit', '#sanityRun', function (e) {
+    e.preventDefault();
+    const v = Object.fromEntries(new FormData(this));
+    api('PUT', '/api/sanity/run', { productId: sanity.productId, version: v.version, time: v.time }).done(() => { toast('Saved'); reloadSanity(); });
+  });
+  $doc.on('click', '[data-sanity-state]', function () {
+    const it = sanityItemOf(this);
+    const state = $(this).data('sanity-state');
+    const review = $(this).closest('.sanity-row').find('[data-sanity-review]').val().trim();
+    saveResult(it, { state: it.state === state ? 'pending' : state, review });
+  });
+  $doc.on('change', '[data-sanity-review]', function () { saveResult(sanityItemOf(this), { review: this.value.trim() }); });
+  $doc.on('input', '[data-sanity-review]', function () { autoGrow(this); });
+  $doc.on('change', '[data-sanity-cell]', function () {
+    saveResult(sanityItemOf(this), { cells: { [$(this).data('sanity-cell')]: this.value.trim() } });
+  });
+  $doc.on('click', '[data-col-add]', () => ask({
+    title: 'New column', fields: [{ name: 'name', label: 'Column name', placeholder: 'e.g. Device, Build no., Tested on', required: true, max: 60 }],
+    confirmText: 'Add column',
+    save: (v) => api('POST', '/api/sanity/columns', { productId: sanity.productId, name: v.name }, null, QUIET).done(reloadSanity),
+  }));
+  $doc.on('click', '[data-col-rename]', function () {
+    const c = sanity.columns.find((x) => x.id === $(this).data('col-rename'));
+    ask({
+      title: 'Rename column', fields: [{ name: 'name', label: 'Column name', value: c.name, required: true, max: 60 }],
+      save: (v) => api('PATCH', `/api/sanity/columns/${c.id}`, v, null, QUIET).done(reloadSanity),
+    });
+  });
+  $doc.on('click', '[data-col-delete]', function () {
+    const c = sanity.columns.find((x) => x.id === $(this).data('col-delete'));
+    dialog.confirm({
+      title: `Delete column “${c.name}”?`, message: 'It disappears from the sheet and the Excel download.', confirmText: 'Delete', danger: true,
+      onConfirm: () => api('DELETE', `/api/sanity/columns/${c.id}`, null, null, QUIET).done(reloadSanity),
+    });
+  });
+  $doc.on('click', '[data-sanity-share]', function () {
+    api('POST', '/api/sanity/share', { productId: sanity.productId, itemId: $(this).data('sanity-share') })
+      .done((r) => { teamsResult(r.teams, 'Shared on Teams'); reloadSanity(); });
+  });
+  $doc.on('click', '[data-sanity-summary]', () => {
+    api('POST', '/api/sanity/share', { productId: sanity.productId }).done((r) => teamsResult(r.teams, 'Sanity result posted on Teams'));
+  });
+  $doc.on('change', '[data-sanity-owner]', function () {
+    api('PATCH', `/api/sanity/items/${$(this).data('sanity-owner')}`, { ownerId: this.value }).done(reloadSanity);
+  });
+  $doc.on('click', '[data-sanity-delete]', function () {
+    const it = sanity.items.find((x) => x.id === $(this).data('sanity-delete'));
+    dialog.confirm({
+      title: 'Remove this heading?', message: 'It leaves the sanity list (earlier days keep their result). The flow itself stays.', confirmText: 'Remove', danger: true,
+      onConfirm: () => api('DELETE', `/api/sanity/items/${it.id}`, null, null, QUIET).done(reloadSanity),
+    });
+  });
+  // picking a flow hides the typed heading and "create as a flow"
+  $doc.on('change', '#sanityAdd [name=flowId]', function () {
+    $('#sanityAdd [name=heading], #sanityAdd .sanity-newflow').toggleClass('hidden', Boolean(this.value));
+  });
+  $doc.on('submit', '#sanityAdd', function (e) {
+    e.preventDefault();
+    const v = Object.fromEntries(new FormData(this));
+    if (!v.flowId && !v.heading.trim()) { $(this).find('[name=heading]').trigger('focus'); return; }
+    const body = { productId: sanity.productId, flowId: v.flowId, heading: v.flowId ? '' : v.heading, ownerId: v.ownerId };
+    if (!v.flowId && v.createFlow) body.newFlowModuleId = v.moduleId;
+    api('POST', '/api/sanity/items', body).done(() => {
+      if (body.newFlowModuleId) load(); // the new flow shows on the board too
+      reloadSanity();
+    });
+  });
+  $doc.on('click', '[data-sanity-go]', function () { const id = $(this).data('sanity-go'); closeSanity(); showFlow(id); });
+  $doc.on('submit', '#teamsForm', function (e) {
+    e.preventDefault();
+    api('PUT', `/api/products/${sanity.productId}/teams`, { webhook: $(this).find('[name=webhook]').val().trim() })
+      .done(() => { toast('Teams channel saved'); reloadSanity(); load(); });
+  });
+  $doc.on('click', '[data-teams-test]', () => {
+    api('POST', `/api/products/${sanity.productId}/teams/test`).done(() => toast('Test message sent to Teams'));
+  });
+
+  // ---------------------------------------------------------------- done today: what each person finished, with the screens they changed
+
+  let doneView = null; // { productId, date, today, items, teams }
+  let donePicked = []; // screens attached to the entry being written
+
+  function openDone(pid, date) {
+    if (!pid) { dialog.alert('Add an app first.', 'No app'); return null; }
+    return api('GET', `/api/done?product=${encodeURIComponent(pid)}${date ? `&date=${date}` : ''}`).done((d) => {
+      if (!doneView || doneView.productId !== pid) donePicked = [];
+      doneView = { productId: pid, ...d };
+      renderDone();
+      $('#doneModal').removeClass('hidden');
+      $('body').addClass('overflow-hidden');
+    });
+  }
+  const reloadDone = () => doneView && openDone(doneView.productId, doneView.date);
+
+  function closeDone() {
+    doneView = null;
+    $('#doneModal').addClass('hidden');
+    unlockScroll();
+  }
+
+  const screenChip = (id, removable) => {
+    const s = findScreen(id);
+    if (!s) return '';
+    const f = findFlow(s.flowId);
+    return `<span class="screen-chip"><button type="button" data-done-screen="${id}" title="${esc(f ? f.name : '')} › ${esc(s.name)}">${esc(s.name)}</button>${removable ? `<button type="button" data-done-unpick="${id}" title="Remove">${icon('close', 10)}</button>` : ''}</span>`;
+  };
+
+  function renderDone() {
+    const d = doneView;
+    const p = products.find((x) => x.id === d.productId);
+    const isToday = d.date === d.today;
+    const mine = d.items.filter((x) => x.userId === me.id);
+    const byPerson = [...new Map(d.items.map((x) => [x.userId, x.userName])).entries()]
+      .sort(([a], [b]) => (b === me.id) - (a === me.id)); // you first
+    const screenOptions = (p ? p.modules : []).flatMap((m) => m.flows.map((f) => `<optgroup label="${esc(flowLabel(m, f))}">${onlyScreens(f.screens)
+      .filter((s) => !donePicked.includes(s.id)).map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</optgroup>`)).join('');
+
+    $('#doneBody').html(`
+      <div class="flex flex-wrap items-center gap-3 border-b border-slate-200 px-5 py-3">
+        <div class="min-w-0 flex-1">
+          <h3 class="text-lg font-semibold text-slate-900">Done ${isToday ? 'today' : `on ${fmtDate(d.date)}`} <span class="font-normal text-slate-400">· ${esc(p ? p.name : '')}</span></h3>
+          <p class="text-xs text-slate-500">${d.items.length} entr${d.items.length === 1 ? 'y' : 'ies'} by ${byPerson.length} ${byPerson.length === 1 ? 'person' : 'people'}</p>
+        </div>
+        <input type="date" class="input py-1 text-sm" data-done-date value="${d.date}" max="${d.today}">
+        <button class="icon-btn" data-close-done title="Close">${icon('close', 18)}</button>
+      </div>
+
+      ${isToday && can('edit') ? `
+      <form id="doneAdd" class="done-add">
+        <textarea class="input w-full" name="text" rows="2" maxlength="1000" placeholder="What did you finish? e.g. Fixed OTP timer on Login, new KYC upload flow"></textarea>
+        <div class="flex flex-wrap items-center gap-2">
+          <select class="input max-w-xs py-1 text-sm" data-done-pick><option value="">Attach a screen you changed…</option>${screenOptions}</select>
+          ${donePicked.map((id) => screenChip(id, true)).join('')}
+          <button class="btn-primary ml-auto">${icon('plus', 14)} Add</button>
+        </div>
+      </form>` : ''}
+
+      <div class="max-h-[55vh] space-y-4 overflow-y-auto px-5 py-4">
+        ${byPerson.map(([uid, name]) => `
+          <div>
+            <p class="mb-1.5 flex items-center gap-2 text-sm font-semibold text-slate-900">${icon('user', 14)} ${esc(name)}${uid === me.id ? ' <span class="text-xs font-normal text-slate-400">(you)</span>' : ''}</p>
+            <ul class="space-y-1.5">
+              ${d.items.filter((x) => x.userId === uid).map((x) => `
+                <li class="done-item">
+                  <div class="min-w-0 flex-1">
+                    <p class="whitespace-pre-wrap text-sm text-slate-800">${esc(x.text)}</p>
+                    ${x.screenIds.length ? `<div class="mt-1 flex flex-wrap gap-1">${x.screenIds.map((id) => screenChip(id)).join('')}</div>` : ''}
+                    <p class="mt-1 text-xs text-slate-400">${new Date(x.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}${x.sharedAt ? ` · <span class="text-indigo-600">shared on Teams</span>` : ''}</p>
+                  </div>
+                  ${uid === me.id || me.access === 'super' ? `
+                    <button class="icon-btn" data-done-edit="${x.id}" title="Edit">${icon('edit', 14)}</button>
+                    <button class="icon-btn danger" data-done-delete="${x.id}" title="Delete">${icon('trash', 14)}</button>` : ''}
+                </li>`).join('')}
+            </ul>
+          </div>`).join('') || `<p class="py-10 text-center text-sm text-slate-400">Nothing logged ${isToday ? 'yet today' : 'on this day'}.</p>`}
+      </div>
+
+      ${mine.length && can('edit') ? `
+      <div class="flex items-center gap-3 border-t border-slate-200 px-5 py-3">
+        <p class="flex-1 text-xs text-slate-500">${d.teams ? 'Posts your entries of this day to the app\'s Teams channel, with links to the screens.' : 'This app has no Teams channel yet. A super admin can add it in Sanity → Teams channel.'}</p>
+        <button class="btn-primary" data-done-share ${d.teams ? '' : 'disabled'}>${icon('share', 14)} Share my day on Teams</button>
+      </div>` : ''}`);
+  }
+
+  $doc.on('click', '[data-action="done"]', () => openDone(productId));
+  $doc.on('click', '[data-close-done]', closeDone);
+  $('#doneModal').on('mousedown', function (e) { if (e.target === this) closeDone(); });
+  $doc.on('change', '[data-done-date]', function () { if (this.value) openDone(doneView.productId, this.value); });
+  // keep what is typed while a screen is attached / removed
+  const keepText = (fn) => { const t = $('#doneAdd [name=text]').val(); fn(); renderDone(); $('#doneAdd [name=text]').val(t); };
+  $doc.on('change', '[data-done-pick]', function () { const id = this.value; if (id) keepText(() => donePicked.push(id)); });
+  $doc.on('click', '[data-done-unpick]', function () { const id = $(this).data('done-unpick'); keepText(() => { donePicked = donePicked.filter((x) => x !== id); }); });
+  $doc.on('submit', '#doneAdd', function (e) {
+    e.preventDefault();
+    const t = $(this).find('[name=text]').val().trim();
+    if (!t) { $(this).find('[name=text]').trigger('focus'); return; }
+    api('POST', '/api/done', { productId: doneView.productId, text: t, screenIds: donePicked }).done(() => { donePicked = []; reloadDone(); });
+  });
+  $doc.on('click', '[data-done-screen]', function () { const id = $(this).data('done-screen'); closeDone(); showScreen(id); });
+  $doc.on('click', '[data-done-edit]', function () {
+    const x = doneView.items.find((i) => i.id === $(this).data('done-edit'));
+    ask({
+      title: 'Edit entry', fields: [{ name: 'text', label: 'What you did', value: x.text, required: true, max: 1000 }],
+      save: (v) => api('PATCH', `/api/done/${x.id}`, v, null, QUIET).done(reloadDone),
+    });
+  });
+  $doc.on('click', '[data-done-delete]', function () {
+    const id = $(this).data('done-delete');
+    dialog.confirm({ title: 'Delete this entry?', confirmText: 'Delete', danger: true, onConfirm: () => api('DELETE', `/api/done/${id}`, null, null, QUIET).done(reloadDone) });
+  });
+  $doc.on('click', '[data-done-share]', () => {
+    api('POST', '/api/done/share', { productId: doneView.productId, date: doneView.date }).done(() => { toast('Shared on Teams'); reloadDone(); });
+  });
+
+  // ---------------------------------------------------------------- sheets: spreadsheets made inside an app
+  // Typed columns (text, number, date, dropdown, checkbox, person, flow, screen), search, sort, totals, drag to
+  // reorder rows, sharing (private / app can view / app can edit + editors), Excel download and import.
+  // A cell saves on its own (only that cell is sent), so the grid is not redrawn while you type.
+
+  const SHEET_TYPES = {
+    text: 'Text', number: 'Number', date: 'Date', select: 'Dropdown', checkbox: 'Checkbox', person: 'Person', flow: 'Flow', screen: 'Screen',
+  };
+  const SHEET_SHARES = [['private', 'Private: only me and editors'], ['view', 'Everyone in the app can view'], ['edit', 'Everyone in the app can edit']];
+  const TONE_TAG = { success: 'green', pending: 'amber', fail: 'red', other: 'slate' }; // dropdown value → status tag colour
+
+  let sheetsView = null; // { productId, list, people, canCreate, doc, search, sort: { col, dir } }
+
+  function openSheets(pid, sheetId) {
+    if (!pid) { dialog.alert('Add an app first.', 'No app'); return; }
+    api('GET', `/api/sheets?product=${encodeURIComponent(pid)}`).done((d) => {
+      const keep = sheetsView && sheetsView.productId === pid ? sheetsView : {};
+      sheetsView = { productId: pid, list: d.sheets, people: d.people, canCreate: d.canCreate, doc: null, search: keep.search || '', sort: keep.sort || null };
+      const id = sheetId || (keep.doc && d.sheets.some((x) => x.id === keep.doc.id) ? keep.doc.id : d.sheets[0] && d.sheets[0].id);
+      $('#sheetsModal').removeClass('hidden');
+      $('body').addClass('overflow-hidden');
+      if (id) openSheetDoc(id); else renderSheets();
+    });
+  }
+  function openSheetDoc(id) {
+    return api('GET', `/api/sheets/${id}`).done((doc) => {
+      if (!sheetsView.doc || sheetsView.doc.id !== id) { sheetsView.sort = null; sheetsView.search = ''; }
+      sheetsView.doc = doc;
+      renderSheets();
+    });
+  }
+  const reloadSheet = () => sheetsView && sheetsView.doc && openSheetDoc(sheetsView.doc.id);
+  const reloadSheets = (id) => sheetsView && openSheets(sheetsView.productId, id);
+
+  function closeSheets() {
+    sheetsView = null;
+    $('#sheetsModal').addClass('hidden');
+    unlockScroll();
+  }
+
+  const sheetPerson = (id) => (sheetsView.people.find((x) => x.id === id) || {}).name || '';
+  function sheetFlows() {
+    const p = products.find((x) => x.id === sheetsView.productId);
+    return (p ? p.modules : []).flatMap((m) => m.flows.map((f) => ({ m, f })));
+  }
+  // what a cell shows as text (search, sort)
+  function cellText(col, v) {
+    if (v === '' || v === undefined || v === null) return '';
+    if (col.type === 'checkbox') return v ? 'yes' : '';
+    if (col.type === 'person') return sheetPerson(v);
+    if (col.type === 'flow') { const f = findFlow(v); return f ? f.name : ''; }
+    if (col.type === 'screen') { const x = findScreen(v); return x ? x.name : ''; }
+    return String(v);
+  }
+
+  function sheetCell(col, row, edit) {
+    const v = row.cells[col.id];
+    const has = v !== undefined && v !== null && v !== '';
+    const attrs = `data-sc data-row="${row.id}" data-col="${col.id}" ${edit ? '' : 'disabled'}`;
+    const none = '<option value=""></option>';
+    switch (col.type) {
+      case 'number': return `<input class="sc-input num" type="number" step="any" value="${has ? esc(v) : ''}" ${attrs}>`;
+      case 'date': return `<input class="sc-input" type="date" value="${has ? esc(v) : ''}" ${attrs}>`;
+      case 'checkbox': return `<label class="sc-check"><input type="checkbox" class="h-4 w-4 accent-indigo-600" ${v ? 'checked' : ''} ${attrs}></label>`;
+      case 'select': return `<select class="sc-input sc-select ${has ? `st st-${TONE_TAG[tone(v)]}` : ''}" ${attrs}>${none}${col.options.map((o) => `<option ${o === v ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
+      case 'person': return `<select class="sc-input" ${attrs}>${none}${sheetsView.people.map((x) => `<option value="${x.id}" ${x.id === v ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>`;
+      case 'flow': {
+        const groups = {};
+        sheetFlows().forEach(({ m, f }) => { (groups[m.name] ||= []).push(`<option value="${f.id}" ${f.id === v ? 'selected' : ''}>${esc(f.name)}</option>`); });
+        return `<div class="sc-link"><select class="sc-input" ${attrs}>${none}${Object.entries(groups).map(([g, o]) => `<optgroup label="${esc(g)}">${o.join('')}</optgroup>`).join('')}</select>
+          ${has && findFlow(v) ? `<button class="icon-btn sm" data-sheet-go-flow="${esc(v)}" title="Go to this flow">${icon('link', 12)}</button>` : ''}</div>`;
+      }
+      case 'screen': {
+        const groups = sheetFlows().map(({ m, f }) => `<optgroup label="${esc(flowLabel(m, f))}">${onlyScreens(f.screens).map((x) => `<option value="${x.id}" ${x.id === v ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</optgroup>`);
+        return `<div class="sc-link"><select class="sc-input" ${attrs}>${none}${groups.join('')}</select>
+          ${has && findScreen(v) ? `<button class="icon-btn sm" data-sheet-go-screen="${esc(v)}" title="Open this screen">${icon('link', 12)}</button>` : ''}</div>`;
+      }
+      default: return `<textarea class="sc-input sc-text" rows="1" maxlength="2000" ${attrs}>${has ? esc(v) : ''}</textarea>`;
+    }
+  }
+
+  // rows after search and sort (sorting is only a view; drag order is what is saved)
+  function sheetRows() {
+    const { doc, search, sort } = sheetsView;
+    let rows = doc.rowList;
+    const q = search.trim().toLowerCase();
+    if (q) rows = rows.filter((r) => doc.columns.some((c) => cellText(c, r.cells[c.id]).toLowerCase().includes(q)));
+    const col = sort && doc.columns.find((c) => c.id === sort.col);
+    if (col) {
+      const key = (r) => (col.type === 'number' ? (r.cells[col.id] === '' || r.cells[col.id] === undefined ? null : Number(r.cells[col.id])) : cellText(col, r.cells[col.id]).toLowerCase());
+      rows = rows.slice().sort((a, b) => {
+        const x = key(a); const y = key(b);
+        if (x === null || x === '') return 1; if (y === null || y === '') return -1; // empty last
+        return (x < y ? -1 : x > y ? 1 : 0) * sort.dir;
+      });
+    }
+    return rows;
+  }
+
+  function sheetTotals() {
+    const { doc } = sheetsView;
+    const rows = sheetRows();
+    if (!rows.length || !doc.columns.some((c) => c.type === 'number' || c.type === 'checkbox')) return '';
+    return `<tr><td class="sc-num">Σ</td>${doc.columns.map((c) => {
+      if (c.type === 'number') {
+        const sum = rows.reduce((t, r) => t + (Number(r.cells[c.id]) || 0), 0);
+        return `<td class="num">${sum.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>`;
+      }
+      if (c.type === 'checkbox') return `<td>${rows.filter((r) => r.cells[c.id] === true).length} / ${rows.length}</td>`;
+      return '<td></td>';
+    }).join('')}<td></td></tr>`;
+  }
+
+  function renderSheets() {
+    const v = sheetsView;
+    const p = products.find((x) => x.id === v.productId);
+    const doc = v.doc;
+    const edit = doc && doc.edit;
+    const rows = doc ? sheetRows() : [];
+    const dragOk = edit && !v.search.trim() && !v.sort;
+    $('#sheetsBody').html(`
+      <div class="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
+        <h3 class="min-w-0 flex-1 text-lg font-semibold text-slate-900">Sheets <span class="font-normal text-slate-400">· ${esc(p ? p.name : '')}</span></h3>
+        <button class="icon-btn" data-close-sheets title="Close">${icon('close', 18)}</button>
+      </div>
+      <div class="sheets-layout">
+        <aside class="sheets-side">
+          ${v.canCreate ? `
+            <button class="btn-primary w-full justify-center" data-sheet-new>${icon('plus', 14)} New sheet</button>
+            <label class="btn-secondary w-full cursor-pointer justify-center">${icon('upload', 14)} Import Excel
+              <input type="file" class="hidden" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" data-sheet-import></label>` : ''}
+          <div class="mt-2 space-y-0.5">
+            ${v.list.map((x) => `
+              <button class="sheets-item ${doc && doc.id === x.id ? 'on' : ''}" data-sheet-open="${x.id}">
+                ${icon(x.share === 'private' ? 'lock' : 'grid', 13)}<span class="min-w-0 flex-1 truncate text-left">${esc(x.name)}</span><span class="text-xs text-slate-400">${x.rows}</span>
+              </button>`).join('') || '<p class="px-2 py-6 text-center text-xs text-slate-400">No sheets yet</p>'}
+          </div>
+        </aside>
+        <section class="sheets-main">
+          ${doc ? `
+          <div class="sheets-bar">
+            <h4 class="min-w-0 truncate text-base font-semibold text-slate-900">${esc(doc.name)}</h4>
+            ${doc.manage ? `<button class="icon-btn" data-sheet-rename title="Rename sheet">${icon('edit', 14)}</button>` : ''}
+            ${edit ? '' : '<span class="chip">Read only</span>'}
+            <span class="text-xs text-slate-400">Owner: ${esc(sheetPerson(doc.ownerId) || '—')}</span>
+            <div class="ml-auto flex flex-wrap items-center gap-2">
+              <input class="input w-48 py-1 text-sm" type="search" placeholder="Search rows" value="${esc(v.search)}" data-sheet-search>
+              ${doc.manage ? `
+              <details class="sheet-share">
+                <summary class="btn-secondary text-sm">${icon(doc.share === 'private' ? 'lock' : 'user', 14)} Share</summary>
+                <div class="sheet-share-pop">
+                  <span class="field-label">Who can see it</span>
+                  <select class="input w-full text-sm" data-sheet-share>${SHEET_SHARES.map(([k, label]) => `<option value="${k}" ${k === doc.share ? 'selected' : ''}>${label}</option>`).join('')}</select>
+                  <span class="field-label mt-3">Editors <span class="font-normal text-slate-400">(can always edit)</span></span>
+                  <div class="max-h-48 overflow-y-auto">${v.people.filter((x) => x.id !== doc.ownerId).map((x) => `
+                    <label class="flex items-center gap-2 py-0.5 text-sm"><input type="checkbox" class="h-4 w-4 accent-indigo-600" data-sheet-editor value="${x.id}" ${doc.editors.includes(x.id) ? 'checked' : ''}> ${esc(x.name)}</label>`).join('')}</div>
+                  <p class="mt-2 text-xs text-slate-400">View-only logins can never edit.</p>
+                </div>
+              </details>` : ''}
+              <a class="btn-secondary text-sm" href="/api/sheets/${doc.id}/export" title="Download as Excel">${icon('download', 14)} Excel</a>
+              ${doc.manage ? `<button class="icon-btn danger" data-sheet-delete title="Delete sheet">${icon('trash', 14)}</button>` : ''}
+            </div>
+          </div>
+          <div class="sheets-grid">
+            <table class="sheet-table">
+              <thead><tr>
+                <th class="sc-num">#</th>
+                ${doc.columns.map((c) => `
+                  <th style="width:${c.width}px;min-width:${c.width}px" data-col-id="${c.id}">
+                    <div class="sc-head">
+                      <button class="sc-name" data-sheet-sort="${c.id}" title="Sort by ${esc(c.name)}">
+                        <span class="sc-type">${SHEET_TYPES[c.type]}</span><span class="truncate">${esc(c.name)}</span>
+                        ${v.sort && v.sort.col === c.id ? icon(v.sort.dir > 0 ? 'down' : 'up', 12) : ''}
+                      </button>
+                      ${edit ? `<button class="icon-btn sm" data-sheet-col-edit="${c.id}" title="Edit column">${icon('edit', 12)}</button>
+                        <button class="icon-btn sm danger" data-sheet-col-delete="${c.id}" title="Delete column">${icon('close', 12)}</button>` : ''}
+                    </div>
+                  </th>`).join('')}
+                <th class="sc-add">${edit ? `<button class="sanity-addcol" data-sheet-col-add>${icon('plus', 12)} Column</button>` : ''}</th>
+              </tr></thead>
+              <tbody id="sheetRowsBody">
+                ${rows.map((r) => `
+                  <tr data-row-id="${r.id}">
+                    <td class="sc-num"><span class="${dragOk ? 'drag' : ''}" title="${dragOk ? 'Drag to reorder' : ''}">${doc.rowList.indexOf(r) + 1}</span></td>
+                    ${doc.columns.map((c) => `<td>${sheetCell(c, r, edit)}</td>`).join('')}
+                    <td class="sc-tools">${edit ? `<button class="icon-btn sm danger" data-sheet-row-delete="${r.id}" title="Delete row">${icon('trash', 12)}</button>` : ''}</td>
+                  </tr>`).join('') || `<tr><td colspan="${doc.columns.length + 2}" class="py-10 text-center text-sm text-slate-400">${v.search ? 'No rows match' : 'No rows yet'}</td></tr>`}
+              </tbody>
+              <tfoot id="sheetTotals">${sheetTotals()}</tfoot>
+            </table>
+          </div>
+          <div class="flex items-center gap-3 px-4 py-2 text-xs text-slate-500">
+            ${edit ? `<button class="btn-secondary text-sm" data-sheet-row-add>${icon('plus', 14)} Add row</button>` : ''}
+            <span>${rows.length}${rows.length !== doc.rowList.length ? ` of ${doc.rowList.length}` : ''} row${doc.rowList.length === 1 ? '' : 's'} · ${doc.columns.length} column${doc.columns.length === 1 ? '' : 's'}</span>
+            ${v.sort ? '<button class="text-indigo-600 hover:underline" data-sheet-unsort>Clear sort</button>' : ''}
+            ${edit && !dragOk ? '<span>Clear search and sort to drag rows.</span>' : ''}
+          </div>` : `
+          <div class="flex h-full flex-col items-center justify-center gap-3 p-10 text-center">
+            <p class="text-sm text-slate-500">Make a sheet for anything: release checklists, test cases, device matrix, a tracker…<br>Columns can link to people, flows and screens of this app.</p>
+            ${v.canCreate ? `<button class="btn-primary" data-sheet-new>${icon('plus', 14)} New sheet</button>` : ''}
+          </div>`}
+        </section>
+      </div>`);
+    $('#sheetRowsBody .sc-text').each((i, el) => autoGrow(el));
+    if (dragOk) {
+      Sortable.create($('#sheetRowsBody')[0], {
+        handle: '.drag', animation: 150, draggable: 'tr[data-row-id]',
+        onEnd: () => api('PUT', `/api/sheets/${doc.id}/row-order`, { ids: $('#sheetRowsBody tr[data-row-id]').map((i, el) => $(el).data('row-id')).get() }).done(reloadSheet),
+      });
+    }
+  }
+
+  // keep the search box focused while it filters
+  function refilter() {
+    const el = $('[data-sheet-search]')[0];
+    const at = el ? el.selectionStart : 0;
+    renderSheets();
+    const box = $('[data-sheet-search]')[0];
+    if (box) { box.focus(); box.setSelectionRange(at, at); }
+  }
+
+  const columnDialog = (c = { name: '', type: 'text', options: [] }) => [
+    { name: 'name', label: 'Column name', value: c.name, placeholder: 'e.g. Device, Build, Tester', required: true, max: 60 },
+    { name: 'type', label: 'Type', value: c.type, options: Object.entries(SHEET_TYPES) },
+    { name: 'options', label: 'Dropdown options, comma separated (Dropdown only)', value: c.options.join(', '), placeholder: 'e.g. To do, In progress, Done', max: 600 },
+  ];
+
+  $doc.on('click', '[data-action="sheets"]', () => openSheets(productId));
+  $doc.on('click', '[data-close-sheets]', closeSheets);
+  $('#sheetsModal').on('mousedown', function (e) { if (e.target === this) closeSheets(); });
+  $doc.on('click', '[data-sheet-open]', function () { openSheetDoc($(this).data('sheet-open')); });
+  $doc.on('click', '[data-sheet-new]', () => ask({
+    title: 'New sheet', fields: [{ name: 'name', label: 'Sheet name', placeholder: 'e.g. Release 1.12 checklist', required: true, max: 80 }],
+    confirmText: 'Create',
+    save: (val) => api('POST', '/api/sheets', { productId: sheetsView.productId, name: val.name }, null, QUIET).done((x) => reloadSheets(x.id)),
+  }));
+  $doc.on('change', '[data-sheet-import]', function () {
+    const file = this.files[0];
+    this.value = '';
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { dialog.alert('Please choose an Excel file under 5 MB.', 'File too large'); return; }
+    const reader = new FileReader();
+    reader.onload = () => api('POST', '/api/sheets/import', { productId: sheetsView.productId, name: file.name.replace(/\.xlsx$/i, ''), dataUrl: reader.result })
+      .done((x) => { toast(`Imported ${x.rows} rows, ${x.columns} columns`); reloadSheets(x.id); });
+    reader.readAsDataURL(file);
+  });
+  $doc.on('click', '[data-sheet-rename]', () => ask({
+    title: 'Rename sheet', fields: [{ name: 'name', label: 'Sheet name', value: sheetsView.doc.name, required: true, max: 80 }],
+    save: (val) => api('PATCH', `/api/sheets/${sheetsView.doc.id}`, val, null, QUIET).done(() => reloadSheets(sheetsView.doc.id)),
+  }));
+  $doc.on('click', '[data-sheet-delete]', () => {
+    const doc = sheetsView.doc;
+    dialog.confirm({
+      title: `Delete sheet “${doc.name}”?`, message: `Its ${doc.rowList.length} rows go with it.`, confirmText: 'Delete', danger: true,
+      onConfirm: () => api('DELETE', `/api/sheets/${doc.id}`, null, null, QUIET).done(() => { sheetsView.doc = null; reloadSheets(); }),
+    });
+  });
+  $doc.on('change', '[data-sheet-share]', function () {
+    api('PATCH', `/api/sheets/${sheetsView.doc.id}`, { share: this.value }).done(() => { toast('Sharing saved'); reloadSheets(sheetsView.doc.id); });
+  });
+  $doc.on('change', '[data-sheet-editor]', () => {
+    const editors = $('[data-sheet-editor]:checked').map((i, el) => el.value).get();
+    api('PATCH', `/api/sheets/${sheetsView.doc.id}`, { editors }).done(() => { sheetsView.doc.editors = editors; toast('Editors saved'); });
+  });
+  $doc.on('input', '[data-sheet-search]', function () { sheetsView.search = this.value; refilter(); });
+  $doc.on('click', '[data-sheet-sort]', function () {
+    const col = $(this).data('sheet-sort');
+    const s = sheetsView.sort;
+    sheetsView.sort = !s || s.col !== col ? { col, dir: 1 } : s.dir > 0 ? { col, dir: -1 } : null; // asc → desc → off
+    renderSheets();
+  });
+  $doc.on('click', '[data-sheet-unsort]', () => { sheetsView.sort = null; renderSheets(); });
+
+  // a cell saves itself; the grid only redraws its totals (and the row when a link button needs to appear)
+  $doc.on('change', '[data-sc]', function () {
+    const { doc } = sheetsView;
+    const row = doc.rowList.find((r) => r.id === $(this).data('row'));
+    const col = doc.columns.find((c) => c.id === $(this).data('col'));
+    const value = col.type === 'checkbox' ? this.checked : this.value.trim();
+    const el = this;
+    api('PATCH', `/api/sheet-rows/${row.id}`, { cells: { [col.id]: value } }, el)
+      .done((saved) => {
+        row.cells = saved.cells;
+        $('#sheetTotals').html(sheetTotals());
+        if (['select', 'flow', 'screen'].includes(col.type)) $(el).closest('td').html(sheetCell(col, row, true));
+      })
+      .fail(() => { el.value = row.cells[col.id] ?? ''; });
+  });
+  $doc.on('input', '#sheetRowsBody .sc-text', function () { autoGrow(this); });
+  $doc.on('click', '[data-sheet-go-flow]', function () { const id = $(this).data('sheet-go-flow'); closeSheets(); showFlow(id); });
+  $doc.on('click', '[data-sheet-go-screen]', function () { const id = $(this).data('sheet-go-screen'); closeSheets(); showScreen(id); });
+  $doc.on('click', '[data-sheet-row-add]', () => {
+    api('POST', `/api/sheets/${sheetsView.doc.id}/rows`, {}).done(() => reloadSheet().done(() => {
+      const $last = $('#sheetRowsBody tr[data-row-id]').last();
+      if ($last.length) { $last[0].scrollIntoView({ block: 'nearest' }); $last.find('[data-sc]').first().trigger('focus'); }
+    }));
+  });
+  $doc.on('click', '[data-sheet-row-delete]', function () {
+    api('DELETE', `/api/sheet-rows/${$(this).data('sheet-row-delete')}`).done(reloadSheet);
+  });
+  $doc.on('click', '[data-sheet-col-add]', () => ask({
+    title: 'New column', fields: columnDialog(), confirmText: 'Add column',
+    save: (val) => api('POST', `/api/sheets/${sheetsView.doc.id}/columns`, val, null, QUIET).done(reloadSheet),
+  }));
+  $doc.on('click', '[data-sheet-col-edit]', function () {
+    const c = sheetsView.doc.columns.find((x) => x.id === $(this).data('sheet-col-edit'));
+    ask({
+      title: 'Edit column', fields: columnDialog(c),
+      save: (val) => api('PATCH', `/api/sheet-columns/${c.id}`, val, null, QUIET).done(reloadSheet),
+    });
+  });
+  $doc.on('click', '[data-sheet-col-delete]', function () {
+    const c = sheetsView.doc.columns.find((x) => x.id === $(this).data('sheet-col-delete'));
+    dialog.confirm({
+      title: `Delete column “${c.name}”?`, message: 'Its values in every row go with it.', confirmText: 'Delete', danger: true,
+      onConfirm: () => api('DELETE', `/api/sheet-columns/${c.id}`, null, null, QUIET).done(reloadSheet),
+    });
   });
 
   load();

@@ -8,6 +8,8 @@ const { Pool, types } = require('pg');
 
 // int8 columns (sort_order) → JS number instead of string
 types.setTypeParser(20, (value) => Number(value));
+// date columns (sanity run day, done-today day) → 'YYYY-MM-DD' as stored, not a Date shifted by the server's timezone
+types.setTypeParser(1082, (value) => value);
 
 if (!process.env.DATABASE_URL) {
   console.error('DATABASE_URL is not set. Copy .env.example to .env and paste your Neon connection string.');
@@ -170,6 +172,117 @@ ALTER TABLE users ADD CONSTRAINT users_access_check CHECK (access IN ('view', 'e
 -- Which side of the product an issue is in: frontend | backend | both ('' = not set, issues logged before this existed)
 ALTER TABLE comments ADD COLUMN IF NOT EXISTS area text NOT NULL DEFAULT '';
 
+-- Areas drawn on a screen image with the pen, as { x, y, w, h } fractions (0–1) of the image.
+-- An issue can point at one area; a screen keeps navigation links [{ id, box, targetId }] that open another screen.
+ALTER TABLE comments ADD COLUMN IF NOT EXISTS box jsonb;
+ALTER TABLE screens ADD COLUMN IF NOT EXISTS links jsonb NOT NULL DEFAULT '[]'::jsonb;
+
+-- Teams: each app posts to its own Workflows webhook; a login's Teams email is used to @mention them.
+-- Sanity testers (a flag on top of the access level) run the daily sanity checklist.
+ALTER TABLE products ADD COLUMN IF NOT EXISTS teams_webhook text NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS sanity_tester boolean NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS teams_email text NOT NULL DEFAULT '';
+
+-- Sanity checklist of an app: one row per heading, linked to a flow or just a typed heading.
+-- owner_id is @mentioned on Teams when the heading fails.
+CREATE TABLE IF NOT EXISTS sanity_items (
+  id          text PRIMARY KEY,
+  product_id  text NOT NULL REFERENCES products(id),
+  flow_id     text REFERENCES flows(id),
+  heading     text NOT NULL DEFAULT '',
+  owner_id    text REFERENCES users(id),
+  sort_order  bigint NOT NULL DEFAULT 0,
+  is_deleted  boolean NOT NULL DEFAULT false,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS sanity_items_product_idx ON sanity_items(product_id);
+
+-- One sanity run per app per day ("daily reset"): the version under test and the time it is due.
+-- reminded_at is set once the Teams reminder for that time went out.
+CREATE TABLE IF NOT EXISTS sanity_runs (
+  id          text PRIMARY KEY,
+  product_id  text NOT NULL REFERENCES products(id),
+  run_date    date NOT NULL,
+  version     text NOT NULL DEFAULT '',
+  run_time    text NOT NULL DEFAULT '',
+  reminded_at timestamptz,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (product_id, run_date)
+);
+
+-- Result of one heading in one run: pass (done) / fail, with the tester's review.
+CREATE TABLE IF NOT EXISTS sanity_results (
+  run_id      text NOT NULL REFERENCES sanity_runs(id),
+  item_id     text NOT NULL REFERENCES sanity_items(id),
+  state       text NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'pass', 'fail')),
+  review      text NOT NULL DEFAULT '',
+  shared_at   timestamptz,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (run_id, item_id)
+);
+
+-- Extra columns of an app's sanity sheet (after Status and Remarks); their values are per day, in sanity_results.cells
+CREATE TABLE IF NOT EXISTS sanity_columns (
+  id          text PRIMARY KEY,
+  product_id  text NOT NULL REFERENCES products(id),
+  name        text NOT NULL,
+  sort_order  bigint NOT NULL DEFAULT 0,
+  is_deleted  boolean NOT NULL DEFAULT false,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE sanity_results ADD COLUMN IF NOT EXISTS cells jsonb NOT NULL DEFAULT '{}'::jsonb;
+
+-- Sheets: spreadsheets people make inside an app. Columns are typed (text, number, date, select, checkbox,
+-- person, flow, screen); row values live in rows.cells as { columnId: value }.
+-- share: who else in the app sees it: private (owner + editors) | view | edit; editors can always edit.
+CREATE TABLE IF NOT EXISTS sheets (
+  id          text PRIMARY KEY,
+  product_id  text NOT NULL REFERENCES products(id),
+  name        text NOT NULL,
+  owner_id    text REFERENCES users(id),
+  share       text NOT NULL DEFAULT 'edit' CHECK (share IN ('private', 'view', 'edit')),
+  editors     text[] NOT NULL DEFAULT '{}',
+  sort_order  bigint NOT NULL DEFAULT 0,
+  is_deleted  boolean NOT NULL DEFAULT false,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS sheets_product_idx ON sheets(product_id);
+CREATE TABLE IF NOT EXISTS sheet_columns (
+  id          text PRIMARY KEY,
+  sheet_id    text NOT NULL REFERENCES sheets(id),
+  name        text NOT NULL,
+  type        text NOT NULL DEFAULT 'text' CHECK (type IN ('text', 'number', 'date', 'select', 'checkbox', 'person', 'flow', 'screen')),
+  options     text[] NOT NULL DEFAULT '{}',
+  width       int NOT NULL DEFAULT 180,
+  sort_order  bigint NOT NULL DEFAULT 0,
+  is_deleted  boolean NOT NULL DEFAULT false,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS sheet_columns_sheet_idx ON sheet_columns(sheet_id);
+CREATE TABLE IF NOT EXISTS sheet_rows (
+  id          text PRIMARY KEY,
+  sheet_id    text NOT NULL REFERENCES sheets(id),
+  cells       jsonb NOT NULL DEFAULT '{}'::jsonb,
+  sort_order  bigint NOT NULL DEFAULT 0,
+  is_deleted  boolean NOT NULL DEFAULT false,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS sheet_rows_sheet_idx ON sheet_rows(sheet_id);
+
+-- "Done today": what someone finished on a day in an app, with the screens they changed.
+CREATE TABLE IF NOT EXISTS done_items (
+  id          text PRIMARY KEY,
+  user_id     text NOT NULL REFERENCES users(id),
+  product_id  text NOT NULL REFERENCES products(id),
+  work_date   date NOT NULL,
+  text        text NOT NULL,
+  screen_ids  text[] NOT NULL DEFAULT '{}',
+  shared_at   timestamptz,
+  is_deleted  boolean NOT NULL DEFAULT false,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS done_items_day_idx ON done_items(product_id, work_date);
+
 -- Audit columns on every table: who created / last changed a row and when. created_by / updated_by are the
 -- signed-in user (NULL for rows made by the server itself, e.g. the seeded statuses or the first super admin).
 -- updated_at starts as created_at for old rows and is kept current by a trigger on every UPDATE.
@@ -182,7 +295,9 @@ END $$ LANGUAGE plpgsql;
 DO $$
 DECLARE t text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['products', 'modules', 'flows', 'screens', 'comments', 'statuses', 'users', 'sessions'] LOOP
+  FOREACH t IN ARRAY ARRAY['products', 'modules', 'flows', 'screens', 'comments', 'statuses', 'users', 'sessions',
+                          'sanity_items', 'sanity_runs', 'sanity_results', 'sanity_columns', 'done_items',
+                          'sheets', 'sheet_columns', 'sheet_rows'] LOOP
     EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS created_by text REFERENCES users(id)', t);
     EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS updated_by text REFERENCES users(id)', t);
     EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS updated_at timestamptz', t);

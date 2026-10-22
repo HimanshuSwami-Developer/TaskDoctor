@@ -5,6 +5,7 @@ const { randomUUID } = require('crypto');
 const db = require('./db');
 const cloud = require('./cloud');
 const auth = require('./auth');
+const teams = require('./teams');
 const ExcelJS = require('exceljs');
 
 const PORT = Number(process.env.PORT) || 4000;
@@ -62,6 +63,16 @@ function oneOf(value, list, field) {
 function people(value) {
   const list = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : [];
   return [...new Set(list.map((x) => text(x, 60)).filter(Boolean))].slice(0, 10);
+}
+
+// An area drawn on a screen image: { x, y, w, h } as fractions (0–1) of the image, kept inside it.
+function markBox(value) {
+  const n = (k) => Math.round(Math.min(1, Math.max(0, Number(value && value[k]))) * 10000) / 10000;
+  const b = { x: n('x'), y: n('y'), w: n('w'), h: n('h') };
+  if (Object.values(b).some(Number.isNaN) || !b.w || !b.h) throw new HttpError(400, 'Invalid area');
+  b.w = Math.min(b.w, 1 - b.x);
+  b.h = Math.min(b.h, 1 - b.y);
+  return b;
 }
 
 // Developers only move issues between Pending and Release for Testing (never to or from any other status).
@@ -135,7 +146,8 @@ const SCREEN_SELECT = 'SELECT s.* FROM screens s';
 // Who created / last changed a row and when (on every API object).
 const audit = (r) => ({ createdAt: r.created_at, createdBy: r.created_by, updatedAt: r.updated_at, updatedBy: r.updated_by });
 
-const toProduct = (r) => ({ id: r.id, name: r.name, order: r.sort_order, ...audit(r) });
+// teams: whether the app has a Teams webhook (the URL itself is only shown to super admins, in Sanity → Teams)
+const toProduct = (r) => ({ id: r.id, name: r.name, order: r.sort_order, teams: Boolean(r.teams_webhook), ...audit(r) });
 const toModule = (r) => ({ id: r.id, productId: r.product_id, name: r.name, order: r.sort_order, ...audit(r) });
 const toFlow = (r) => ({
   id: r.id, moduleId: r.module_id, name: r.name, order: r.sort_order,
@@ -146,13 +158,14 @@ const toFlow = (r) => ({
 });
 const toUser = (r) => ({
   id: r.id, username: r.username, name: r.name, access: r.access,
-  allProducts: r.access === 'super' || r.all_products, productIds: r.product_ids, ...audit(r),
+  allProducts: r.access === 'super' || r.all_products, productIds: r.product_ids,
+  sanityTester: r.sanity_tester, teamsEmail: r.teams_email, ...audit(r),
 });
 const toStatus = (r) => ({ id: r.id, label: r.label, color: r.color, builtIn: BUILT_IN_STATUSES.includes(r.id), deleted: r.is_deleted, ...audit(r) });
 const toComment = (r) => ({
   id: r.id, screenId: r.screen_id, text: r.text, priority: r.priority, area: r.area,
   assignees: r.assignees, remarks: r.remarks, status: r.status, statusDate: r.status_date,
-  resolved: r.status === 'complete', ...audit(r),
+  resolved: r.status === 'complete', box: r.box || null, ...audit(r),
 });
 
 function toScreen(r) {
@@ -171,6 +184,7 @@ function toScreen(r) {
     wireframe: r.wireframe,
     image: r.image_url || null, // Cloudinary URL (contains a version, so replaced images are not cached)
     linkId: r.link_id,
+    links: r.links || [], // areas on the image that open another screen
     order: r.sort_order,
     ...audit(r),
   };
@@ -214,6 +228,13 @@ const expireSessions = (userId, by) => db.query(
   'UPDATE sessions SET expires_at = now(), updated_by = $2 WHERE user_id = $1 AND expires_at > now()', [userId, by]);
 
 // Only real, live products can be granted.
+// The address Teams knows a person by (used to @mention them); empty = no mentions.
+function teamsEmail(value) {
+  const email = text(value, 120);
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'Teams email does not look like an email address');
+  return email;
+}
+
 async function productIds(value) {
   const ids = Array.isArray(value) ? value.filter((x) => typeof x === 'string') : [];
   const { rows } = await db.query('SELECT id FROM products WHERE id = ANY($1) AND NOT is_deleted', [ids]);
@@ -239,10 +260,11 @@ app.post('/api/users', route(async (req, res) => {
   const { rows: taken } = await db.query('SELECT id FROM users WHERE lower(username) = lower($1) AND NOT is_deleted', [username]);
   if (taken[0]) throw new HttpError(409, 'That username is already used');
   const { rows } = await db.query(
-    `INSERT INTO users (id, username, name, password_hash, access, all_products, product_ids, created_by, updated_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8) RETURNING *`,
+    `INSERT INTO users (id, username, name, password_hash, access, all_products, product_ids, sanity_tester, teams_email, created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10) RETURNING *`,
     [randomUUID(), username, text(b.name, 80), await auth.hashPassword(password(b.password)),
-      oneOf(b.access, ACCESS, 'access'), Boolean(b.allProducts), await productIds(b.productIds), req.user.id]);
+      oneOf(b.access, ACCESS, 'access'), Boolean(b.allProducts), await productIds(b.productIds),
+      Boolean(b.sanityTester), teamsEmail(b.teamsEmail), req.user.id]);
   res.status(201).json(toUser(rows[0]));
 }));
 
@@ -255,6 +277,8 @@ app.patch('/api/users/:id', route(async (req, res) => {
   if (b.access !== undefined) fields.access = oneOf(b.access, ACCESS, 'access');
   if (b.allProducts !== undefined) fields.all_products = Boolean(b.allProducts);
   if (b.productIds !== undefined) fields.product_ids = await productIds(b.productIds);
+  if (b.sanityTester !== undefined) fields.sanity_tester = Boolean(b.sanityTester);
+  if (b.teamsEmail !== undefined) fields.teams_email = teamsEmail(b.teamsEmail);
   if (b.password) fields.password_hash = await auth.hashPassword(password(b.password));
   if (user.id === req.user.id && fields.access && fields.access !== 'super') throw new HttpError(400, 'You cannot remove your own super admin access');
   await update('users', user.id, fields, req.user.id);
@@ -317,6 +341,8 @@ async function loadBoard(user) {
   shown.filter((s) => s.type === 'condition').forEach((c) => {
     c.branches = c.branches.map((b) => (b.targetId && !visible.has(b.targetId) ? { ...b, targetId: null } : b));
   });
+  // Navigation links to a deleted screen are hidden the same way.
+  shown.filter((s) => s.links).forEach((s) => { s.links = s.links.filter((l) => visible.has(l.targetId)); });
   return board;
 }
 
@@ -614,6 +640,24 @@ app.patch('/api/screens/:id', route(async (req, res) => {
     })));
   }
 
+  // Navigation links: an area of the image that opens another screen of the same app
+  if (b.links !== undefined) {
+    if (screen.type === 'condition' || !Array.isArray(b.links)) throw new HttpError(400, 'Invalid links');
+    const wanted = b.links.map((x) => x && x.targetId).filter((x) => typeof x === 'string');
+    const { rows } = await db.query(
+      `SELECT s.id FROM screens s JOIN flows f ON f.id = s.flow_id JOIN modules m ON m.id = f.module_id
+       WHERE s.id = ANY($1) AND s.type <> 'condition' AND s.id <> $2 AND NOT s.is_deleted AND m.product_id = $3`,
+      [wanted, screen.id, productId]);
+    const valid = new Set(rows.map((r) => r.id));
+    const links = b.links.slice(0, 50).filter((x) => valid.has(x.targetId));
+    if (links.length < b.links.length) throw new HttpError(400, 'Pick a screen in this app to go to');
+    fields.links = JSON.stringify(links.map((x) => ({
+      id: typeof x.id === 'string' && x.id ? x.id.slice(0, 64) : randomUUID(),
+      box: markBox(x.box),
+      targetId: x.targetId,
+    })));
+  }
+
   await update('screens', screen.id, fields, req.user.id);
   res.json(await getScreen(screen.id));
 }));
@@ -823,8 +867,8 @@ app.post('/api/screens/:id/comments', route(async (req, res) => {
   developerStatus(req, null, req.body.status || 'pending');
   const s = await statusFields(req.body.status || 'pending');
   const { rows } = await db.query(
-    `INSERT INTO comments (id, screen_id, text, priority, assignees, remarks, status, status_date, resolved, created_by, updated_by, area)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11) RETURNING *`,
+    `INSERT INTO comments (id, screen_id, text, priority, assignees, remarks, status, status_date, resolved, created_by, updated_by, area, box)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11, $12) RETURNING *`,
     [
       randomUUID(),
       req.params.id,
@@ -835,6 +879,7 @@ app.post('/api/screens/:id/comments', route(async (req, res) => {
       s.status, s.status_date, s.resolved,
       req.user.id,
       AREAS.includes(req.body.area) ? req.body.area : 'frontend',
+      req.body.box ? JSON.stringify(markBox(req.body.box)) : null, // area marked on the screen image
     ]);
   res.status(201).json(toComment(rows[0]));
 }));
@@ -863,6 +908,813 @@ app.delete('/api/comments/:id', route(async (req, res) => {
   await allowed(req, 'comments', req.params.id, 'full');
   await softDelete('comments', req.params.id, req.user.id);
   res.json({ ok: true });
+}));
+
+// ---------------------------------------------------------------- Teams, sanity testing, done today
+
+// Days and times are the team's local ones: sanity resets at midnight there and reminders follow its clock.
+const TIMEZONE = process.env.APP_TIMEZONE || 'Asia/Kolkata';
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+const SANITY_STATES = ['pending', 'pass', 'fail'];
+
+function localNow() {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(new Date()).map((x) => [x.type, x.value]));
+  return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}` };
+}
+const minutes = (hhmm) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3));
+// a day that is today or earlier, else today
+const pastDay = (value, today) => (DATE.test(value || '') && value <= today ? value : today);
+
+// Teams buttons open the app at a place (#flow=…, #screen=…, #sanity=…, #done=…).
+// APP_URL in .env, else the address the request came in on (the scheduled reminder needs APP_URL).
+function deeplink(req, hash) {
+  const proto = req && String(req.headers['x-forwarded-proto'] || req.protocol).split(',')[0];
+  const base = (process.env.APP_URL || (req ? `${proto}://${req.get('host')}` : '')).replace(/\/+$/, '');
+  return base ? `${base}/#${hash}` : '';
+}
+
+const personName = (u) => (u && (u.name || u.username)) || '';
+const mention = (u) => (u && u.teams_email ? [{ name: personName(u), email: u.teams_email }] : []);
+
+// Post to the app's Teams channel without failing the request: 'sent', 'off' (no webhook) or the reason it failed.
+async function toTeams(product, message) {
+  if (!product.teams_webhook) return 'off';
+  try {
+    return await teams.post(product.teams_webhook, message);
+  } catch (err) {
+    console.error(`Teams (${product.name}):`, err.message);
+    return err.message;
+  }
+}
+
+/** An app the login can open, with at least `level` access. */
+async function productFor(req, id, level) {
+  need(req, level);
+  const product = await live('products', text(id), '*');
+  if (!auth.seesProduct(req.user, product.id)) throw new HttpError(404, 'Not found');
+  return product;
+}
+
+// Logins that can open an app (to pick a heading's owner, and to @mention sanity testers)
+const peopleOf = (productId) => db.query(
+  `SELECT id, name, username, teams_email, sanity_tester, access FROM users
+   WHERE NOT is_deleted AND (access = 'super' OR all_products OR $1 = ANY(product_ids))
+   ORDER BY lower(coalesce(nullif(name, ''), username))`, [productId]);
+
+// ---- sanity
+
+const canRunSanity = (user) => user.sanity_tester || user.access === 'super';
+const canManageSanity = (user) => canRunSanity(user) || auth.atLeast(user, 'full');
+function needSanity(req, manage) {
+  if (!(manage ? canManageSanity(req.user) : canRunSanity(req.user))) {
+    throw new HttpError(403, manage ? 'Only sanity testers and Full logins can change the sanity list.' : 'Only sanity testers can run sanity. Ask an admin to tick "Sanity tester" on your login.');
+  }
+}
+
+// One run per app per day; a new day starts empty with the previous run's time carried over.
+async function runFor(productId, date) {
+  await db.query(
+    `INSERT INTO sanity_runs (id, product_id, run_date, run_time)
+     SELECT $1, $2, $3::date, coalesce((SELECT run_time FROM sanity_runs WHERE product_id = $2 AND run_date < $3::date ORDER BY run_date DESC LIMIT 1), '')
+     ON CONFLICT (product_id, run_date) DO NOTHING`, [randomUUID(), productId, date]);
+  return one('SELECT * FROM sanity_runs WHERE product_id = $1 AND run_date = $2', [productId, date]);
+}
+
+const toSanityItem = (r) => ({
+  id: r.id, flowId: r.flow_id, heading: r.flow_name || r.heading, ownerId: r.owner_id, order: r.sort_order,
+  state: r.state || 'pending', review: r.review || '', cells: r.cells || {}, sharedAt: r.shared_at || null,
+  resultAt: r.result_at || null, resultBy: r.result_by || null,
+});
+
+// Every flow of the app is a sanity heading on its own (new flows join the end of the list as they are made).
+// A flow whose heading was removed from the list is not added again; it can be picked back by hand.
+const syncFlowHeadings = (productId) => db.query(
+  `INSERT INTO sanity_items (id, product_id, flow_id, heading, sort_order)
+   SELECT gen_random_uuid()::text, $1, f.id, f.name,
+     -- after everything already listed, in board order (module, then flow)
+     (SELECT coalesce(max(sort_order), 0) FROM sanity_items WHERE product_id = $1)
+       + row_number() OVER (ORDER BY m.sort_order, m.created_at, f.sort_order, f.created_at)
+   FROM flows f JOIN modules m ON m.id = f.module_id
+   WHERE m.product_id = $1 AND NOT f.is_deleted AND NOT m.is_deleted
+     AND NOT EXISTS (SELECT 1 FROM sanity_items i WHERE i.flow_id = f.id)`, [productId]);
+
+// Headings still shown: typed ones, and flow ones while the flow (and its module) exists. Name follows the flow.
+const SANITY_ITEMS = `
+  FROM sanity_items i
+  LEFT JOIN flows f ON f.id = i.flow_id
+  LEFT JOIN modules m ON m.id = f.module_id
+  WHERE i.product_id = $1 AND NOT i.is_deleted AND (i.flow_id IS NULL OR (NOT f.is_deleted AND NOT m.is_deleted))`;
+
+const sanityColumns = (productId) => db.query(
+  'SELECT * FROM sanity_columns WHERE product_id = $1 AND NOT is_deleted ORDER BY sort_order, created_at', [productId]);
+const toSanityColumn = (r) => ({ id: r.id, name: r.name, order: r.sort_order });
+
+async function sanityItem(req, id) {
+  const item = await live('sanity_items', id, '*');
+  const product = await productFor(req, item.product_id, 'view');
+  return { item, product };
+}
+
+async function ownerFor(productId, ownerId) {
+  if (!ownerId) return null;
+  const { rows } = await peopleOf(productId);
+  if (!rows.some((u) => u.id === ownerId)) throw new HttpError(400, 'Pick an owner who can open this app');
+  return ownerId;
+}
+
+app.get('/api/sanity', route(async (req, res) => {
+  const product = await productFor(req, req.query.product, 'view');
+  const { date: today } = localNow();
+  const date = pastDay(req.query.date, today);
+  const run = date === today ? await runFor(product.id, today)
+    : (await db.query('SELECT * FROM sanity_runs WHERE product_id = $1 AND run_date = $2', [product.id, date])).rows[0] || null;
+  await syncFlowHeadings(product.id);
+  const [items, people, columns] = await Promise.all([
+    db.query(
+      `SELECT i.*, f.name AS flow_name, r.state, r.review, r.cells, r.shared_at, r.updated_at AS result_at, r.updated_by AS result_by
+       ${SANITY_ITEMS.replace('WHERE', 'LEFT JOIN sanity_results r ON r.item_id = i.id AND r.run_id = $2 WHERE')}
+       ORDER BY i.sort_order, i.created_at`, [product.id, run ? run.id : '']),
+    peopleOf(product.id),
+    sanityColumns(product.id),
+  ]);
+  res.json({
+    date, today, timezone: TIMEZONE,
+    run: run && { version: run.version, time: run.run_time, remindedAt: run.reminded_at },
+    items: items.rows.map(toSanityItem),
+    columns: columns.rows.map(toSanityColumn),
+    people: people.rows.map((u) => ({ id: u.id, name: personName(u), teams: Boolean(u.teams_email) })),
+    canRun: canRunSanity(req.user), canManage: canManageSanity(req.user),
+    teams: Boolean(product.teams_webhook),
+    webhook: req.user.access === 'super' ? product.teams_webhook : undefined,
+  });
+}));
+
+// Add a heading: an existing flow, a typed heading, or a typed heading that is also created as a new flow
+app.post('/api/sanity/items', route(async (req, res) => {
+  const b = req.body;
+  const product = await productFor(req, b.productId, 'view');
+  needSanity(req, true);
+  let flowId = null;
+  let heading = text(b.heading, 120);
+  if (b.flowId) {
+    const f = await one(
+      `SELECT f.id, f.name, m.product_id FROM flows f JOIN modules m ON m.id = f.module_id
+       WHERE f.id = $1 AND NOT f.is_deleted AND NOT m.is_deleted`, [text(b.flowId)]);
+    if (f.product_id !== product.id) throw new HttpError(400, 'Pick a flow of this app');
+    flowId = f.id;
+    heading = heading || f.name;
+  } else if (b.newFlowModuleId) {
+    need(req, 'developer');
+    const m = await live('modules', text(b.newFlowModuleId), 'id, product_id');
+    if (m.product_id !== product.id) throw new HttpError(400, 'Pick a module of this app');
+    const { rows } = await db.query(
+      'INSERT INTO flows (id, module_id, name, sort_order, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $5) RETURNING id',
+      [randomUUID(), m.id, required(heading, 'Heading'), Date.now(), req.user.id]);
+    flowId = rows[0].id;
+  }
+  const { rows } = await db.query(
+    `INSERT INTO sanity_items (id, product_id, flow_id, heading, owner_id, sort_order, created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $7) RETURNING *`,
+    [randomUUID(), product.id, flowId, required(heading, 'Heading'), await ownerFor(product.id, text(b.ownerId)), Date.now(), req.user.id]);
+  res.status(201).json(toSanityItem(rows[0]));
+}));
+
+app.patch('/api/sanity/items/:id', route(async (req, res) => {
+  const { item, product } = await sanityItem(req, req.params.id);
+  needSanity(req, true);
+  const fields = {};
+  if (req.body.heading !== undefined) fields.heading = required(text(req.body.heading, 120), 'Heading');
+  if (req.body.ownerId !== undefined) fields.owner_id = await ownerFor(product.id, text(req.body.ownerId));
+  await update('sanity_items', item.id, fields, req.user.id);
+  res.json(toSanityItem(await live('sanity_items', item.id, '*')));
+}));
+
+app.delete('/api/sanity/items/:id', route(async (req, res) => {
+  const { item } = await sanityItem(req, req.params.id);
+  needSanity(req, true);
+  await softDelete('sanity_items', item.id, req.user.id);
+  res.json({ ok: true });
+}));
+
+app.put('/api/sanity/order', route(async (req, res) => {
+  const product = await productFor(req, req.body.productId, 'view');
+  needSanity(req, true);
+  const ids = Array.isArray(req.body.ids) ? req.body.ids.filter((x) => typeof x === 'string') : [];
+  await db.tx((client) => Promise.all(ids.map((id, i) =>
+    client.query('UPDATE sanity_items SET sort_order = $3, updated_by = $4 WHERE id = $1 AND product_id = $2', [id, product.id, i, req.user.id]))));
+  res.json({ ok: true });
+}));
+
+// Extra columns of the sanity sheet (sanity testers and Full logins)
+app.post('/api/sanity/columns', route(async (req, res) => {
+  const product = await productFor(req, req.body.productId, 'view');
+  needSanity(req, true);
+  const { rows } = await db.query(
+    'INSERT INTO sanity_columns (id, product_id, name, sort_order, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $5) RETURNING *',
+    [randomUUID(), product.id, required(text(req.body.name, 60), 'Column name'), Date.now(), req.user.id]);
+  res.status(201).json(toSanityColumn(rows[0]));
+}));
+
+app.patch('/api/sanity/columns/:id', route(async (req, res) => {
+  const col = await live('sanity_columns', req.params.id, '*');
+  await productFor(req, col.product_id, 'view');
+  needSanity(req, true);
+  await update('sanity_columns', col.id, { name: required(text(req.body.name, 60), 'Column name') }, req.user.id);
+  res.json(toSanityColumn(await live('sanity_columns', col.id, '*')));
+}));
+
+app.delete('/api/sanity/columns/:id', route(async (req, res) => {
+  const col = await live('sanity_columns', req.params.id, '*');
+  await productFor(req, col.product_id, 'view');
+  needSanity(req, true);
+  await softDelete('sanity_columns', col.id, req.user.id);
+  res.json({ ok: true });
+}));
+
+// The sanity sheet of one day as Excel: heading, flow, owner, status, remarks, the extra columns, who and when
+app.get('/api/sanity/export', route(async (req, res) => {
+  const product = await productFor(req, req.query.product, 'view');
+  const { date: today } = localNow();
+  const date = pastDay(req.query.date, today);
+  const run = date === today ? await runFor(product.id, today)
+    : (await db.query('SELECT * FROM sanity_runs WHERE product_id = $1 AND run_date = $2', [product.id, date])).rows[0] || null;
+  await syncFlowHeadings(product.id);
+  const [{ rows: items }, { rows: cols }, { rows: people }] = await Promise.all([
+    db.query(
+      `SELECT i.*, f.name AS flow_name, m.name AS module_name, r.state, r.review, r.cells, r.updated_at AS result_at, r.updated_by AS result_by
+       ${SANITY_ITEMS.replace('WHERE', 'LEFT JOIN sanity_results r ON r.item_id = i.id AND r.run_id = $2 WHERE')}
+       ORDER BY i.sort_order, i.created_at`, [product.id, run ? run.id : '']),
+    sanityColumns(product.id),
+    db.query('SELECT id, name, username FROM users'),
+  ]);
+  const who = (id) => personName(people.find((u) => u.id === id));
+  const STATE = { pending: 'Not checked', pass: 'Done', fail: 'Failed' };
+
+  const book = new ExcelJS.Workbook();
+  book.creator = 'Task Doctor';
+  const sheet = book.addWorksheet('Sanity', { views: [{ state: 'frozen', ySplit: 1, xSplit: 2 }] });
+  sheet.columns = [
+    { header: '#', key: 'no', width: 5 }, { header: 'Heading', key: 'heading', width: 30 }, { header: 'Module', key: 'module', width: 16 },
+    { header: 'Owner', key: 'owner', width: 18 }, { header: 'Status', key: 'status', width: 12 }, { header: 'Remarks', key: 'review', width: 40 },
+    ...cols.map((c) => ({ header: c.name, key: `c_${c.id}`, width: Math.max(14, Math.min(40, c.name.length + 4)) })),
+    { header: 'Checked by', key: 'by', width: 18 }, { header: 'Checked at', key: 'at', width: 18, style: { numFmt: 'dd mmm yyyy hh:mm' } },
+  ];
+  items.forEach((it, i) => {
+    const state = it.state || 'pending';
+    const row = sheet.addRow({
+      no: i + 1, heading: it.flow_name || it.heading, module: it.module_name || '', owner: who(it.owner_id),
+      status: STATE[state], review: it.review || '',
+      ...Object.fromEntries(cols.map((c) => [`c_${c.id}`, (it.cells || {})[c.id] || ''])),
+      by: state === 'pending' ? '' : who(it.result_by), at: state === 'pending' || !it.result_at ? null : new Date(it.result_at),
+    });
+    const fill = { pass: 'FFDCFCE7', fail: 'FFFEE2E2' }[state];
+    if (fill) row.getCell('status').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
+  });
+  sheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4F46E5' } };
+  sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: sheet.columnCount } };
+  sheet.getColumn('review').alignment = { wrapText: true, vertical: 'top' };
+  // version / date / time under the table
+  sheet.addRow([]);
+  [['App', product.name], ['Date', date], ['Version', run ? run.version : ''], ['Sanity time', run ? run.run_time : '']]
+    .forEach(([k, v]) => { const r = sheet.addRow({ heading: k, module: v }); r.getCell('heading').font = { bold: true }; });
+
+  const safe = product.name.replace(/[^\w-]+/g, '-');
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="sanity-${safe}-${date}.xlsx"`);
+  await book.xlsx.write(res);
+  res.end();
+}));
+
+// Today's version and time. Changing the time re-arms the Teams reminder.
+app.put('/api/sanity/run', route(async (req, res) => {
+  const product = await productFor(req, req.body.productId, 'view');
+  needSanity(req);
+  const time = text(req.body.time, 5);
+  if (time && !TIME.test(time)) throw new HttpError(400, 'Time must look like 18:30');
+  const run = await runFor(product.id, localNow().date);
+  const { rows } = await db.query(
+    `UPDATE sanity_runs SET version = $2, run_time = $3, updated_by = $4,
+       reminded_at = CASE WHEN run_time = $3 THEN reminded_at END
+     WHERE id = $1 RETURNING *`, [run.id, text(req.body.version, 60), time, req.user.id]);
+  res.json({ version: rows[0].version, time: rows[0].run_time, remindedAt: rows[0].reminded_at });
+}));
+
+async function shareFailure(req, product, run, item, review) {
+  const [{ rows: [owner] }, { rows: [flow] }] = await Promise.all([
+    db.query('SELECT name, username, teams_email FROM users WHERE id = $1 AND NOT is_deleted', [item.owner_id]),
+    db.query('SELECT name FROM flows WHERE id = $1 AND NOT is_deleted', [item.flow_id]),
+  ]);
+  return toTeams(product, {
+    title: `❌ Sanity failed: ${flow ? flow.name : item.heading}`,
+    lines: [review && `**Review:** ${review}`],
+    facts: [['App', product.name], ['Version', run.version || '—'], ['Date', run.run_date], ['Tested by', personName(req.user)], ['Owner', personName(owner)]],
+    actions: [
+      ['Open flow', flow ? deeplink(req, `flow=${item.flow_id}`) : ''],
+      ['Sanity checklist', deeplink(req, `sanity=${product.id}`)],
+    ],
+    mentions: mention(owner),
+  });
+}
+
+// Tick a heading done / failed (or back to pending) and write a review. Failing posts to Teams straight away.
+app.put('/api/sanity/items/:id/result', route(async (req, res) => {
+  const { item, product } = await sanityItem(req, req.params.id);
+  needSanity(req);
+  const run = await runFor(product.id, localNow().date);
+  const { rows: [before] } = await db.query('SELECT * FROM sanity_results WHERE run_id = $1 AND item_id = $2', [run.id, item.id]);
+  const state = req.body.state !== undefined ? oneOf(req.body.state, SANITY_STATES, 'state') : (before ? before.state : 'pending');
+  const review = req.body.review !== undefined ? text(req.body.review, 1000) : (before ? before.review : '');
+  // values of the extra columns: { columnId: 'text' }, merged into what is there
+  const cells = { ...(before ? before.cells : {}) };
+  if (req.body.cells && typeof req.body.cells === 'object') {
+    const { rows: cols } = await sanityColumns(product.id);
+    Object.entries(req.body.cells).forEach(([id, value]) => {
+      if (!cols.some((c) => c.id === id)) throw new HttpError(400, 'That column no longer exists');
+      cells[id] = text(value, 500);
+    });
+  }
+  await db.query(
+    `INSERT INTO sanity_results (run_id, item_id, state, review, cells, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $6)
+     ON CONFLICT (run_id, item_id) DO UPDATE SET state = EXCLUDED.state, review = EXCLUDED.review, cells = EXCLUDED.cells, updated_by = EXCLUDED.updated_by`,
+    [run.id, item.id, state, review, JSON.stringify(cells), req.user.id]);
+  let sent = null;
+  if (state === 'fail' && (!before || before.state !== 'fail')) {
+    sent = await shareFailure(req, product, run, item, review);
+    if (sent === 'sent') await db.query('UPDATE sanity_results SET shared_at = now() WHERE run_id = $1 AND item_id = $2', [run.id, item.id]);
+  }
+  res.json({ state, review, cells, teams: sent });
+}));
+
+// Share again: one failed heading, or today's summary (passed / failed / left, owners of failures @mentioned)
+app.post('/api/sanity/share', route(async (req, res) => {
+  const product = await productFor(req, req.body.productId, 'view');
+  needSanity(req);
+  const run = await runFor(product.id, localNow().date);
+  if (req.body.itemId) {
+    const { item } = await sanityItem(req, text(req.body.itemId));
+    const { rows: [r] } = await db.query('SELECT * FROM sanity_results WHERE run_id = $1 AND item_id = $2', [run.id, item.id]);
+    if (!r || r.state !== 'fail') throw new HttpError(400, 'Only a failed heading can be shared');
+    const sent = await shareFailure(req, product, run, item, r.review);
+    if (sent === 'sent') await db.query('UPDATE sanity_results SET shared_at = now() WHERE run_id = $1 AND item_id = $2', [run.id, item.id]);
+    return res.json({ teams: sent });
+  }
+  await syncFlowHeadings(product.id);
+  const { rows } = await db.query(
+    `SELECT i.heading, f.name AS flow_name, coalesce(r.state, 'pending') AS state, r.review, u.name, u.username, u.teams_email
+     ${SANITY_ITEMS.replace('WHERE', `LEFT JOIN sanity_results r ON r.item_id = i.id AND r.run_id = $2
+       LEFT JOIN users u ON u.id = i.owner_id AND NOT u.is_deleted WHERE`)}
+     ORDER BY i.sort_order, i.created_at`, [product.id, run.id]);
+  if (!rows.length) throw new HttpError(400, 'The sanity list is empty');
+  const count = (st) => rows.filter((r) => r.state === st).length;
+  const failed = rows.filter((r) => r.state === 'fail');
+  const owners = [...new Map(failed.flatMap((r) => mention(r)).map((m) => [m.email, m])).values()];
+  const sent = await toTeams(product, {
+    title: `${failed.length ? '⚠️' : '✅'} Sanity ${count('pending') ? 'progress' : 'done'}: ${product.name}`,
+    lines: failed.map((r) => `❌ **${r.flow_name || r.heading}**${r.review ? ` — ${r.review}` : ''}`),
+    facts: [['Version', run.version || '—'], ['Date', run.run_date], ['Passed', `${count('pass')} / ${rows.length}`],
+      ['Failed', String(failed.length)], ['Not checked', String(count('pending'))], ['Tested by', personName(req.user)]],
+    actions: [['Sanity checklist', deeplink(req, `sanity=${product.id}`)]],
+    mentions: owners,
+  });
+  res.json({ teams: sent });
+}));
+
+// The app's Teams channel (super admins): a Workflows "post when a webhook request is received" URL
+app.put('/api/products/:id/teams', route(async (req, res) => {
+  const product = await productFor(req, req.params.id, 'super');
+  const webhook = text(req.body.webhook, 2000);
+  if (webhook && !teams.valid(webhook)) throw new HttpError(400, 'Paste the https:// URL from the Teams workflow');
+  await update('products', product.id, { teams_webhook: webhook }, req.user.id);
+  res.json({ teams: Boolean(webhook) });
+}));
+
+app.post('/api/products/:id/teams/test', route(async (req, res) => {
+  const product = await productFor(req, req.params.id, 'super');
+  if (!product.teams_webhook) throw new HttpError(400, 'Save a Teams webhook first');
+  const sent = await toTeams(product, {
+    title: `👋 Task Doctor is connected to this channel for ${product.name}`,
+    lines: ['Sanity reminders, failures and "done today" updates will be posted here.'],
+    actions: [['Open Task Doctor', deeplink(req, `sanity=${product.id}`)]],
+  });
+  if (sent !== 'sent') throw new HttpError(502, sent);
+  res.json({ teams: sent });
+}));
+
+// Every minute: when an app's sanity time has come today, remind its channel once (@mentioning sanity testers).
+// The UPDATE … WHERE reminded_at IS NULL claims the reminder, so it goes out once even with several servers.
+async function sanityReminders() {
+  const { date, time } = localNow();
+  const { rows: apps } = await db.query(
+    `SELECT p.* FROM products p WHERE NOT p.is_deleted AND p.teams_webhook <> ''
+       AND (EXISTS (SELECT 1 FROM sanity_items i WHERE i.product_id = p.id AND NOT i.is_deleted)
+         OR EXISTS (SELECT 1 FROM flows f JOIN modules m ON m.id = f.module_id WHERE m.product_id = p.id AND NOT f.is_deleted AND NOT m.is_deleted))`);
+  for (const product of apps) {
+    const run = await runFor(product.id, date);
+    // due now, and not more than an hour ago (a server started late in the day doesn't remind about the morning)
+    if (!TIME.test(run.run_time) || run.run_time > time || minutes(time) - minutes(run.run_time) > 60) continue;
+    const { rows: claimed } = await db.query('UPDATE sanity_runs SET reminded_at = now() WHERE id = $1 AND reminded_at IS NULL RETURNING id', [run.id]);
+    if (!claimed.length) continue;
+    const [{ rows: people }, { rows: [{ n }] }] = await Promise.all([
+      peopleOf(product.id),
+      syncFlowHeadings(product.id).then(() => db.query(`SELECT count(*)::int AS n ${SANITY_ITEMS}`, [product.id])),
+    ]);
+    await toTeams(product, {
+      title: `🧪 Sanity due: ${product.name}`,
+      lines: [`${n} heading${n === 1 ? '' : 's'} to check.`],
+      facts: [['Version', run.version || 'not set yet'], ['Time', run.run_time], ['Date', date]],
+      actions: [['Start sanity', deeplink(null, `sanity=${product.id}`)]],
+      mentions: people.filter((u) => u.sanity_tester).flatMap(mention),
+    });
+  }
+}
+
+// ---- done today
+
+const toDone = (r) => ({
+  id: r.id, userId: r.user_id, userName: personName(r), date: r.work_date, text: r.text, screenIds: r.screen_ids,
+  sharedAt: r.shared_at, ...audit(r),
+});
+
+// Screens (not conditions) of this app, in the order given; others are dropped
+async function appScreens(productId, ids) {
+  const wanted = (Array.isArray(ids) ? ids : []).filter((x) => typeof x === 'string').slice(0, 20);
+  const { rows } = await db.query(
+    `SELECT s.id, s.name FROM screens s JOIN flows f ON f.id = s.flow_id JOIN modules m ON m.id = f.module_id
+     WHERE s.id = ANY($1) AND s.type <> 'condition' AND NOT s.is_deleted AND m.product_id = $2`, [wanted, productId]);
+  return wanted.map((id) => rows.find((r) => r.id === id)).filter(Boolean);
+}
+
+async function ownDone(req, id) {
+  const row = await live('done_items', id, '*');
+  await productFor(req, row.product_id, 'edit');
+  if (row.user_id !== req.user.id && req.user.access !== 'super') throw new HttpError(403, 'You can only change your own entries');
+  return row;
+}
+const DONE_SELECT = 'SELECT d.*, u.name, u.username FROM done_items d JOIN users u ON u.id = d.user_id';
+
+app.get('/api/done', route(async (req, res) => {
+  const product = await productFor(req, req.query.product, 'view');
+  const { date: today } = localNow();
+  const date = pastDay(req.query.date, today);
+  const { rows } = await db.query(`${DONE_SELECT} WHERE d.product_id = $1 AND d.work_date = $2 AND NOT d.is_deleted ORDER BY d.created_at`, [product.id, date]);
+  res.json({ date, today, items: rows.map(toDone), teams: Boolean(product.teams_webhook) });
+}));
+
+app.post('/api/done', route(async (req, res) => {
+  const product = await productFor(req, req.body.productId, 'edit');
+  const screens = await appScreens(product.id, req.body.screenIds);
+  const { rows } = await db.query(
+    `INSERT INTO done_items (id, user_id, product_id, work_date, text, screen_ids, created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $2, $2) RETURNING id`,
+    [randomUUID(), req.user.id, product.id, localNow().date, required(text(req.body.text, 1000), 'What you did'), screens.map((x) => x.id)]);
+  res.status(201).json(toDone((await db.query(`${DONE_SELECT} WHERE d.id = $1`, [rows[0].id])).rows[0]));
+}));
+
+app.patch('/api/done/:id', route(async (req, res) => {
+  const row = await ownDone(req, req.params.id);
+  const fields = {};
+  if (req.body.text !== undefined) fields.text = required(text(req.body.text, 1000), 'What you did');
+  if (req.body.screenIds !== undefined) fields.screen_ids = (await appScreens(row.product_id, req.body.screenIds)).map((x) => x.id);
+  await update('done_items', row.id, fields, req.user.id);
+  res.json(toDone((await db.query(`${DONE_SELECT} WHERE d.id = $1`, [row.id])).rows[0]));
+}));
+
+app.delete('/api/done/:id', route(async (req, res) => {
+  const row = await ownDone(req, req.params.id);
+  await softDelete('done_items', row.id, req.user.id);
+  res.json({ ok: true });
+}));
+
+// Share my day: every entry I wrote on that day, with links to the screens I changed
+app.post('/api/done/share', route(async (req, res) => {
+  const product = await productFor(req, req.body.productId, 'edit');
+  const { date: today } = localNow();
+  const date = pastDay(req.body.date, today);
+  const { rows } = await db.query(
+    'SELECT * FROM done_items WHERE product_id = $1 AND user_id = $2 AND work_date = $3 AND NOT is_deleted ORDER BY created_at',
+    [product.id, req.user.id, date]);
+  if (!rows.length) throw new HttpError(400, 'Add what you did first');
+  if (!product.teams_webhook) throw new HttpError(400, 'This app has no Teams channel yet. A super admin can add it in Sanity → Teams channel.');
+  const lines = await Promise.all(rows.map(async (r) => {
+    const screens = await appScreens(product.id, r.screen_ids);
+    const links = screens.map((x) => { const url = deeplink(req, `screen=${x.id}`); return url ? `[${x.name}](${url})` : x.name; });
+    return `• ${r.text}${links.length ? `\n  ↳ ${links.join(', ')}` : ''}`;
+  }));
+  const sent = await toTeams(product, {
+    title: `✅ ${personName(req.user)} — done ${date === today ? 'today' : `on ${date}`}`,
+    lines,
+    facts: [['App', product.name], ['Date', date]],
+    actions: [['Open in Task Doctor', deeplink(req, `done=${product.id}`)]],
+  });
+  if (sent !== 'sent') throw new HttpError(502, sent);
+  await db.query('UPDATE done_items SET shared_at = now(), updated_by = $2 WHERE id = ANY($1)', [rows.map((r) => r.id), req.user.id]);
+  res.json({ teams: sent });
+}));
+
+// ---------------------------------------------------------------- sheets: spreadsheets made inside an app
+
+const SHEET_TYPES = ['text', 'number', 'date', 'select', 'checkbox', 'person', 'flow', 'screen'];
+const SHEET_SHARES = ['private', 'view', 'edit'];
+
+// Who may do what with a sheet: owner and super admins manage it (rename, share, delete); they, the editors and,
+// when shared to edit, anyone in the app with Update tasks or more change columns and rows; view-only logins only look.
+function sheetRights(user, sheet) {
+  const manage = user.access === 'super' || sheet.owner_id === user.id;
+  const editor = sheet.editors.includes(user.id);
+  const edit = auth.atLeast(user, 'edit') && (manage || editor || sheet.share === 'edit');
+  const view = edit || manage || editor || sheet.share !== 'private';
+  return { view, edit, manage };
+}
+
+async function sheetFor(req, id, need = 'view') {
+  const sheet = await live('sheets', id, '*');
+  await productFor(req, sheet.product_id, 'view');
+  const rights = sheetRights(req.user, sheet);
+  if (!rights.view) throw new HttpError(404, 'Not found');
+  if (!rights[need]) throw new HttpError(403, need === 'manage' ? 'Only the owner of this sheet can do that.' : 'This sheet is read only for you.');
+  return { sheet, rights };
+}
+
+const toSheet = (r, user) => ({
+  id: r.id, productId: r.product_id, name: r.name, ownerId: r.owner_id, share: r.share, editors: r.editors,
+  rows: r.row_count, ...sheetRights(user, r), ...audit(r),
+});
+const toSheetColumn = (r) => ({ id: r.id, name: r.name, type: r.type, options: r.options, width: r.width, order: r.sort_order });
+const toSheetRow = (r) => ({ id: r.id, cells: r.cells, order: r.sort_order, updatedAt: r.updated_at, updatedBy: r.updated_by });
+
+function columnFields(b, current = {}) {
+  const fields = {};
+  if (b.name !== undefined) fields.name = required(text(b.name, 60), 'Column name');
+  if (b.type !== undefined) fields.type = oneOf(b.type, SHEET_TYPES, 'column type');
+  if (b.options !== undefined) {
+    const list = Array.isArray(b.options) ? b.options : String(b.options).split(',');
+    fields.options = [...new Set(list.map((x) => text(x, 40)).filter(Boolean))].slice(0, 30);
+  }
+  if ((fields.type || current.type) === 'select' && !(fields.options || current.options || []).length) throw new HttpError(400, 'A dropdown needs at least one option');
+  if (b.width !== undefined) fields.width = Math.max(80, Math.min(600, Math.round(Number(b.width)) || 180));
+  return fields;
+}
+
+// A cell value of a column's type ('' clears it). Links (person / flow / screen) are kept as ids; ones that
+// no longer exist show as empty in the app.
+function cellValue(col, value) {
+  if (value === null || value === undefined || value === '') return '';
+  switch (col.type) {
+    case 'number': {
+      const n = Number(String(value).replace(/,/g, ''));
+      if (!Number.isFinite(n)) throw new HttpError(400, `${col.name}: enter a number`);
+      return n;
+    }
+    case 'date':
+      if (!DATE.test(String(value))) throw new HttpError(400, `${col.name}: pick a date`);
+      return String(value);
+    case 'checkbox': return value === true || value === 'true';
+    case 'select': return col.options.includes(String(value)) ? String(value) : (() => { throw new HttpError(400, `${col.name}: pick one of the options`); })();
+    default: return text(String(value), 2000);
+  }
+}
+
+async function cleanCells(sheetId, cells) {
+  if (!cells || typeof cells !== 'object') return {};
+  const { rows: cols } = await db.query('SELECT * FROM sheet_columns WHERE sheet_id = $1 AND NOT is_deleted', [sheetId]);
+  const out = {};
+  Object.entries(cells).forEach(([id, value]) => {
+    const col = cols.find((c) => c.id === id);
+    if (!col) throw new HttpError(400, 'That column no longer exists. Refresh the sheet.');
+    out[id] = cellValue(col, value);
+  });
+  return out;
+}
+
+app.get('/api/sheets', route(async (req, res) => {
+  const product = await productFor(req, req.query.product, 'view');
+  const { rows } = await db.query(
+    `SELECT s.*, (SELECT count(*)::int FROM sheet_rows r WHERE r.sheet_id = s.id AND NOT r.is_deleted) AS row_count
+     FROM sheets s WHERE s.product_id = $1 AND NOT s.is_deleted ORDER BY s.sort_order, s.created_at`, [product.id]);
+  const { rows: people } = await peopleOf(product.id);
+  res.json({
+    sheets: rows.map((r) => toSheet(r, req.user)).filter((x) => x.view),
+    people: people.map((u) => ({ id: u.id, name: personName(u) })),
+    canCreate: auth.atLeast(req.user, 'edit'),
+  });
+}));
+
+app.get('/api/sheets/:id', route(async (req, res) => {
+  const { sheet } = await sheetFor(req, req.params.id);
+  const [cols, rows] = await Promise.all([
+    db.query('SELECT * FROM sheet_columns WHERE sheet_id = $1 AND NOT is_deleted ORDER BY sort_order, created_at', [sheet.id]),
+    db.query('SELECT * FROM sheet_rows WHERE sheet_id = $1 AND NOT is_deleted ORDER BY sort_order, created_at', [sheet.id]),
+  ]);
+  res.json({ ...toSheet({ ...sheet, row_count: rows.rows.length }, req.user), columns: cols.rows.map(toSheetColumn), rowList: rows.rows.map(toSheetRow) });
+}));
+
+// New sheet with a few starter columns and empty rows (all of them can be changed)
+app.post('/api/sheets', route(async (req, res) => {
+  const product = await productFor(req, req.body.productId, 'edit');
+  const id = randomUUID();
+  await db.tx(async (client) => {
+    await client.query(
+      'INSERT INTO sheets (id, product_id, name, owner_id, share, sort_order, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $4, $4)',
+      [id, product.id, required(text(req.body.name, 80), 'Sheet name'), req.user.id, SHEET_SHARES.includes(req.body.share) ? req.body.share : 'edit', Date.now()]);
+    const starter = [['Task', 'text', []], ['Status', 'select', ['To do', 'In progress', 'Done']], ['Owner', 'person', []], ['Flow', 'flow', []], ['Due', 'date', []]];
+    for (const [i, [name, type, options]] of starter.entries()) {
+      await client.query('INSERT INTO sheet_columns (id, sheet_id, name, type, options, sort_order, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)',
+        [randomUUID(), id, name, type, options, i, req.user.id]);
+    }
+    for (let i = 0; i < 3; i += 1) {
+      await client.query('INSERT INTO sheet_rows (id, sheet_id, sort_order, created_by, updated_by) VALUES ($1, $2, $3, $4, $4)', [randomUUID(), id, i, req.user.id]);
+    }
+  });
+  res.status(201).json({ id });
+}));
+
+// Excel → new sheet: the first worksheet, its first row as column names, every column as text
+app.post('/api/sheets/import', route(async (req, res) => {
+  const product = await productFor(req, req.body.productId, 'edit');
+  const m = /^data:[\w/.+-]*;base64,([A-Za-z0-9+/=]+)$/.exec(req.body.dataUrl || '');
+  if (!m) throw new HttpError(400, 'Please choose an .xlsx file');
+  const book = new ExcelJS.Workbook();
+  try { await book.xlsx.load(Buffer.from(m[1], 'base64')); } catch (err) { throw new HttpError(400, 'That file could not be read as an Excel (.xlsx) sheet'); }
+  const ws = book.worksheets[0];
+  if (!ws || ws.rowCount < 1) throw new HttpError(400, 'The Excel file is empty');
+  const plain = (v) => {
+    if (v === null || v === undefined) return '';
+    if (v instanceof Date) return v.toISOString().slice(0, 10);
+    if (typeof v === 'object') return v.text || v.result || (v.richText ? v.richText.map((t) => t.text).join('') : '') || v.hyperlink || '';
+    return String(v);
+  };
+  const width = Math.min(ws.columnCount, 50);
+  const headers = Array.from({ length: width }, (_, i) => text(plain(ws.getRow(1).getCell(i + 1).value), 60) || `Column ${i + 1}`);
+  const id = randomUUID();
+  const colIds = headers.map(() => randomUUID());
+  let count = 0;
+  await db.tx(async (client) => {
+    await client.query('INSERT INTO sheets (id, product_id, name, owner_id, sort_order, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $4, $4)',
+      [id, product.id, text(req.body.name, 80) || ws.name || 'Imported sheet', req.user.id, Date.now()]);
+    for (const [i, name] of headers.entries()) {
+      await client.query('INSERT INTO sheet_columns (id, sheet_id, name, type, sort_order, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $6)',
+        [colIds[i], id, name, 'text', i, req.user.id]);
+    }
+    for (let r = 2; r <= Math.min(ws.rowCount, 2001); r += 1) {
+      const row = ws.getRow(r);
+      const cells = {};
+      headers.forEach((_, i) => { const v = text(plain(row.getCell(i + 1).value), 2000); if (v) cells[colIds[i]] = v; });
+      if (!Object.keys(cells).length) continue;
+      await client.query('INSERT INTO sheet_rows (id, sheet_id, cells, sort_order, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $5)',
+        [randomUUID(), id, JSON.stringify(cells), count, req.user.id]);
+      count += 1;
+    }
+  });
+  res.status(201).json({ id, rows: count, columns: headers.length });
+}));
+
+app.patch('/api/sheets/:id', route(async (req, res) => {
+  const { sheet } = await sheetFor(req, req.params.id, 'manage');
+  const b = req.body;
+  const fields = {};
+  if (b.name !== undefined) fields.name = required(text(b.name, 80), 'Sheet name');
+  if (b.share !== undefined) fields.share = oneOf(b.share, SHEET_SHARES, 'sharing');
+  if (b.editors !== undefined) {
+    const { rows } = await peopleOf(sheet.product_id);
+    fields.editors = (Array.isArray(b.editors) ? b.editors : []).filter((x) => rows.some((u) => u.id === x));
+  }
+  await update('sheets', sheet.id, fields, req.user.id);
+  res.json({ ok: true });
+}));
+
+app.delete('/api/sheets/:id', route(async (req, res) => {
+  const { sheet } = await sheetFor(req, req.params.id, 'manage');
+  await softDelete('sheets', sheet.id, req.user.id);
+  res.json({ ok: true });
+}));
+
+app.post('/api/sheets/:id/columns', route(async (req, res) => {
+  const { sheet } = await sheetFor(req, req.params.id, 'edit');
+  const f = columnFields({ type: 'text', ...req.body });
+  required(f.name, 'Column name');
+  const { rows } = await db.query(
+    `INSERT INTO sheet_columns (id, sheet_id, name, type, options, sort_order, created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $7) RETURNING *`,
+    [randomUUID(), sheet.id, f.name, f.type, f.options || [], Date.now(), req.user.id]);
+  res.status(201).json(toSheetColumn(rows[0]));
+}));
+
+app.patch('/api/sheet-columns/:id', route(async (req, res) => {
+  const col = await live('sheet_columns', req.params.id, '*');
+  await sheetFor(req, col.sheet_id, 'edit');
+  const fields = columnFields(req.body, col);
+  await update('sheet_columns', col.id, fields, req.user.id);
+  // a new type: values that don't fit it are cleared from every row
+  if (fields.type && fields.type !== col.type) {
+    const next = { ...col, ...fields };
+    const { rows } = await db.query('SELECT id, cells FROM sheet_rows WHERE sheet_id = $1 AND cells ? $2', [col.sheet_id, col.id]);
+    for (const r of rows) {
+      let v;
+      try { v = cellValue(next, next.type === 'checkbox' ? r.cells[col.id] === true || ['yes', 'true', '1', 'done', 'x'].includes(String(r.cells[col.id]).toLowerCase()) : r.cells[col.id]); } catch (err) { v = ''; }
+      await db.query('UPDATE sheet_rows SET cells = cells || jsonb_build_object($2::text, $3::jsonb) WHERE id = $1', [r.id, col.id, JSON.stringify(v)]);
+    }
+  }
+  res.json(toSheetColumn(await live('sheet_columns', col.id, '*')));
+}));
+
+app.delete('/api/sheet-columns/:id', route(async (req, res) => {
+  const col = await live('sheet_columns', req.params.id, '*');
+  await sheetFor(req, col.sheet_id, 'edit');
+  await softDelete('sheet_columns', col.id, req.user.id);
+  res.json({ ok: true });
+}));
+
+const reorder = (table, sheetId, ids, by) => db.tx((client) => Promise.all((Array.isArray(ids) ? ids : []).filter((x) => typeof x === 'string')
+  .map((id, i) => client.query(`UPDATE ${table} SET sort_order = $3, updated_by = $4 WHERE id = $1 AND sheet_id = $2`, [id, sheetId, i, by]))));
+
+app.put('/api/sheets/:id/column-order', route(async (req, res) => {
+  const { sheet } = await sheetFor(req, req.params.id, 'edit');
+  await reorder('sheet_columns', sheet.id, req.body.ids, req.user.id);
+  res.json({ ok: true });
+}));
+
+app.put('/api/sheets/:id/row-order', route(async (req, res) => {
+  const { sheet } = await sheetFor(req, req.params.id, 'edit');
+  await reorder('sheet_rows', sheet.id, req.body.ids, req.user.id);
+  res.json({ ok: true });
+}));
+
+app.post('/api/sheets/:id/rows', route(async (req, res) => {
+  const { sheet } = await sheetFor(req, req.params.id, 'edit');
+  const cells = await cleanCells(sheet.id, req.body.cells);
+  const { rows } = await db.query(
+    `INSERT INTO sheet_rows (id, sheet_id, cells, sort_order, created_by, updated_by)
+     VALUES ($1, $2, $3, (SELECT coalesce(max(sort_order), 0) + 1 FROM sheet_rows WHERE sheet_id = $2), $4, $4) RETURNING *`,
+    [randomUUID(), sheet.id, JSON.stringify(cells), req.user.id]);
+  res.status(201).json(toSheetRow(rows[0]));
+}));
+
+// Saves only the cells sent, merged into the row (two people editing different cells don't overwrite each other)
+app.patch('/api/sheet-rows/:id', route(async (req, res) => {
+  const row = await live('sheet_rows', req.params.id, '*');
+  const { sheet } = await sheetFor(req, row.sheet_id, 'edit');
+  const cells = await cleanCells(sheet.id, req.body.cells);
+  const { rows } = await db.query('UPDATE sheet_rows SET cells = cells || $2::jsonb, updated_by = $3 WHERE id = $1 RETURNING *',
+    [row.id, JSON.stringify(cells), req.user.id]);
+  res.json(toSheetRow(rows[0]));
+}));
+
+app.delete('/api/sheet-rows/:id', route(async (req, res) => {
+  const row = await live('sheet_rows', req.params.id, '*');
+  await sheetFor(req, row.sheet_id, 'edit');
+  await softDelete('sheet_rows', row.id, req.user.id);
+  res.json({ ok: true });
+}));
+
+// The sheet as Excel: numbers as numbers, dates as dates, people / flows / screens by name, totals under number columns
+app.get('/api/sheets/:id/export', route(async (req, res) => {
+  const { sheet } = await sheetFor(req, req.params.id);
+  const [{ rows: cols }, { rows }, { rows: people }, { rows: flows }, { rows: screens }] = await Promise.all([
+    db.query('SELECT * FROM sheet_columns WHERE sheet_id = $1 AND NOT is_deleted ORDER BY sort_order, created_at', [sheet.id]),
+    db.query('SELECT * FROM sheet_rows WHERE sheet_id = $1 AND NOT is_deleted ORDER BY sort_order, created_at', [sheet.id]),
+    db.query('SELECT id, name, username FROM users'),
+    db.query('SELECT f.id, f.name, m.name AS module FROM flows f JOIN modules m ON m.id = f.module_id WHERE m.product_id = $1', [sheet.product_id]),
+    db.query(`SELECT s.id, s.name, f.name AS flow FROM screens s JOIN flows f ON f.id = s.flow_id JOIN modules m ON m.id = f.module_id
+              WHERE m.product_id = $1`, [sheet.product_id]),
+  ]);
+  const named = (list, id, label) => { const x = list.find((y) => y.id === id); return x ? label(x) : ''; };
+  const show = (col, v) => {
+    if (v === '' || v === undefined || v === null) return null;
+    if (col.type === 'date') return new Date(`${v}T00:00:00Z`);
+    if (col.type === 'checkbox') return v ? 'Yes' : 'No';
+    if (col.type === 'person') return named(people, v, personName);
+    if (col.type === 'flow') return named(flows, v, (f) => `${f.module} › ${f.name}`);
+    if (col.type === 'screen') return named(screens, v, (x) => `${x.flow} › ${x.name}`);
+    return v;
+  };
+  const book = new ExcelJS.Workbook();
+  book.creator = 'Task Doctor';
+  const ws = book.addWorksheet(sheet.name.replace(/[\\/?*[\]:]/g, ' ').slice(0, 31) || 'Sheet', { views: [{ state: 'frozen', ySplit: 1 }] });
+  ws.columns = cols.map((c) => ({
+    header: c.name, key: c.id, width: Math.max(8, Math.round(c.width / 7)),
+    style: c.type === 'date' ? { numFmt: 'dd mmm yyyy' } : c.type === 'number' ? { numFmt: '#,##0.##' } : {},
+  }));
+  rows.forEach((r) => ws.addRow(Object.fromEntries(cols.map((c) => [c.id, show(c, r.cells[c.id])]))));
+  ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4F46E5' } };
+  if (cols.length) ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: cols.length } };
+  if (rows.length && cols.some((c) => c.type === 'number')) {
+    const total = ws.addRow({});
+    cols.forEach((c, i) => {
+      if (c.type === 'number') total.getCell(i + 1).value = { formula: `SUM(${ws.getColumn(i + 1).letter}2:${ws.getColumn(i + 1).letter}${rows.length + 1})` };
+    });
+    total.font = { bold: true };
+    if (cols[0].type !== 'number') total.getCell(1).value = 'Total';
+  }
+  const safe = sheet.name.replace(/[^\w-]+/g, '-');
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${safe || 'sheet'}.xlsx"`);
+  await book.xlsx.write(res);
+  res.end();
 }));
 
 // ---------------------------------------------------------------- errors + start
@@ -898,6 +1750,8 @@ db.init()
   .then(() => app.listen(PORT, () => {
     console.log(`Task Doctor running at http://localhost:${PORT}`);
     if (!cloud.configured()) console.log('Image uploads are off: add the Cloudinary keys to .env to turn them on.');
+    if (!process.env.APP_URL) console.log('APP_URL is not set: Teams reminders will have no "Start sanity" link.');
+    setInterval(() => sanityReminders().catch((err) => console.error('Sanity reminders:', err.message)), 60 * 1000);
   }))
   .catch((err) => {
     console.error('Could not connect to the database:', err.message);
