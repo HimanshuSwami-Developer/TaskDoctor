@@ -625,7 +625,7 @@ select.is-busy, input.is-busy, textarea.is-busy { opacity: .55; cursor: progress
 
 /* Sanity page (in place of the board) */
 .sanity-page { border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; box-shadow: 0 1px 2px rgba(15, 23, 42, .05); }
-.sanity-page .sanity-sheet-wrap { max-height: calc(100vh - 300px - var(--footer-h, 0px)); min-height: 240px; }
+.sanity-page .sanity-sheet-wrap { max-height: calc(100vh - 300px); min-height: 240px; }
 .btn-secondary.on { border-color: #a5b4fc; background: #eef2ff; color: #3730a3; }
 
 /* sanity: submit checks, recipients, logs */
@@ -662,17 +662,19 @@ select.is-busy, input.is-busy, textarea.is-busy { opacity: .55; cursor: progress
 .done-item.closed > div > p.whitespace-pre-wrap { color: #64748b; }
 .done-share { margin-top: 8px; padding: 10px 12px; border: 1px solid #c7d2fe; border-radius: 8px; background: #f8faff; }
 
-/* footer: a slim bar fixed to the bottom of the screen, styled like the header (overlays cover it) */
-.site-footer { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; border-top: 1px solid #e2e8f0; background: #fff; font-size: 12px; color: #475569; }
-.site-footer-inner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 24px; max-width: 1400px; margin: 0 auto; padding: 8px 24px; }
-.site-footer-brand { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
-.site-footer-credits { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 16px; }
-.credit-role { margin-right: 4px; font-size: 10px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: #94a3b8; }
-.site-footer-quote { font-style: italic; line-height: 1.45; text-align: right; color: #64748b; }
+/* footer: last on the page (margin-top: auto keeps it at the bottom of short pages) */
+.site-footer { margin-top: auto; border-top: 1px solid #e2e8f0; background: #fff; }
+.site-footer-inner { max-width: 1400px; margin: 0 auto; padding: 0 24px; }
+.site-footer-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px 40px; padding: 20px 0; }
+.site-footer-brand { display: flex; align-items: center; gap: 12px; }
+.site-footer-quote { font-size: 13px; font-style: italic; line-height: 1.6; text-align: right; color: #64748b; }
 .site-footer-quote span { font-weight: 600; font-style: normal; color: #033469; }
-.toast { bottom: calc(var(--footer-h, 0px) + 16px); }
-@media (max-width: 900px) {
-  .site-footer-inner { justify-content: center; padding: 6px 16px; text-align: center; }
-  .site-footer-credits { justify-content: center; }
-  .site-footer-quote { text-align: center; }
+.site-footer-bottom { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 24px; padding: 12px 0 16px; border-top: 1px solid #f1f5f9; font-size: 12px; color: #94a3b8; }
+.site-footer-credits { display: flex; flex-wrap: wrap; gap: 4px 0; }
+.site-footer-credits span + span::before { content: '·'; margin: 0 8px; color: #cbd5e1; }
+.site-footer-credits b { font-weight: 600; color: #475569; }
+@media (max-width: 760px) {
+  .site-footer-inner { padding: 0 16px; }
+  .site-footer-top, .site-footer-bottom { flex-direction: column; align-items: flex-start; }
+  .site-footer-quote { text-align: left; }
 }

@@ -18,7 +18,7 @@
   </script>
   <link rel="stylesheet" href="/styles.css">
 </head>
-<body class="min-h-screen bg-slate-50 font-body text-slate-800 antialiased">
+<body class="flex min-h-screen flex-col bg-slate-50 font-body text-slate-800 antialiased">
   <div id="progress" class="progress" role="progressbar" aria-label="Loading"></div>
 
   <header class="sticky top-0 z-30 border-b border-slate-200 bg-white">
@@ -35,7 +35,7 @@
     <nav id="tabs" class="mx-auto flex max-w-[1400px] flex-wrap items-end gap-1 px-6 pt-3"></nav>
   </header>
 
-  <main id="board" class="mx-auto max-w-[1400px] px-6 py-6">
+  <main id="board" class="mx-auto w-full max-w-[1400px] px-6 py-6">
     <div aria-busy="true" aria-label="Loading">
       <div class="mb-6 flex items-center gap-4"><div class="skeleton h-8 w-48"></div><div class="skeleton h-2 w-40"></div></div>
       <div class="skeleton mb-3 h-5 w-32"></div>
@@ -49,26 +49,31 @@
   </main>
 
   <!-- Sanity is its own page: shown instead of the board (and the module tabs) -->
-  <main id="sanityPage" class="mx-auto hidden max-w-[1400px] px-6 py-6"></main>
+  <main id="sanityPage" class="mx-auto hidden w-full max-w-[1400px] px-6 py-6"></main>
 
-  <!-- Always at the bottom of the screen; app.js pads the page by its height so it never covers anything -->
-  <footer id="siteFooter" class="site-footer">
+  <!-- Last thing on the page: the body is a full-height column, so on short pages it still sits at the bottom -->
+  <footer class="site-footer">
     <div class="site-footer-inner">
-      <div class="site-footer-brand">
-        <img src="/assets/logo.png" alt="" class="h-6 w-6">
-        <span class="font-semibold text-slate-800">FlowTrace</span>
-        <span class="text-slate-400">© 2026 FinDevelopers</span>
+      <div class="site-footer-top">
+        <div class="site-footer-brand">
+          <img src="/assets/logo.png" alt="" class="h-9 w-9">
+          <div>
+            <p class="text-sm font-semibold text-slate-900">FlowTrace</p>
+            <p class="text-xs text-slate-500">Flows, screens, issues and sanity of every app, in one place.</p>
+          </div>
+        </div>
+        <div class="site-footer-quote">
+          <p>They brought the blockers. <span>We brought the code.</span></p>
+          <p>They changed the scope. <span>We changed the game.</span></p>
+        </div>
       </div>
-
-      <div class="site-footer-credits">
-        <span><span class="credit-role">Prompting</span> Himanshu Swami</span>
-        <span><span class="credit-role">Idea &amp; Prompts</span> Vishal Yadav</span>
-        <span class="text-slate-500">And obviously, <b class="font-semibold text-indigo-700">all credit</b> goes to the Tech Lead &amp; The New PM.</span>
-      </div>
-
-      <div class="site-footer-quote">
-        <p>They brought the blockers. <span>We brought the code.</span></p>
-        <p>They changed the scope. <span>We changed the game.</span></p>
+      <div class="site-footer-bottom">
+        <p>© 2026 FinDevelopers. All rights reserved.</p>
+        <p class="site-footer-credits">
+          <span>Prompting by <b>Himanshu Swami</b></span>
+          <span>Idea &amp; Prompts by <b>Vishal Yadav</b></span>
+          <span>And obviously, all credit goes to the <b>Tech Lead &amp; The New PM</b></span>
+        </p>
       </div>
     </div>
   </footer>

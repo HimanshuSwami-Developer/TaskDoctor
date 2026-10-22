@@ -3803,18 +3803,5 @@ $(function () {
     else dialog.alert(url, 'Copy this link');
   });
 
-  // The footer is fixed to the bottom: pad the page by its height (it wraps on narrow screens) so it never covers content
-  const footer = document.getElementById('siteFooter');
-  const fitFooter = () => {
-    const h = `${footer.offsetHeight}px`;
-    document.body.style.paddingBottom = h;
-    document.documentElement.style.setProperty('--footer-h', h);
-  };
-  if (footer) {
-    fitFooter();
-    if (window.ResizeObserver) new ResizeObserver(fitFooter).observe(footer);
-    else $(window).on('resize', fitFooter);
-  }
-
   load();
 });
