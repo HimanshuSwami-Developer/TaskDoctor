@@ -885,9 +885,9 @@ app.post('/api/screens/:id/comments', route(async (req, res) => {
 }));
 
 app.patch('/api/comments/:id', route(async (req, res) => {
-  await allowed(req, 'comments', req.params.id, 'edit');
+  const productId = await allowed(req, 'comments', req.params.id, 'edit');
   const b = req.body;
-  const issue = await live('comments', req.params.id, 'status');
+  const issue = await live('comments', req.params.id, 'status, text, screen_id');
   const fields = {};
   // The "Fixed" tick is a shortcut: ticked → Complete, unticked → back to Pending.
   const status = b.status !== undefined ? b.status : b.resolved !== undefined ? (b.resolved ? 'complete' : 'pending') : undefined;
@@ -901,8 +901,27 @@ app.patch('/api/comments/:id', route(async (req, res) => {
   if (b.assignees !== undefined) fields.assignees = people(b.assignees);
   if (b.remarks !== undefined) fields.remarks = text(b.remarks, 1000);
   await update('comments', req.params.id, fields, req.user.id);
+  if (fields.status && (fields.status === 'complete') !== (issue.status === 'complete')) {
+    await resolvedToday(req, productId, { id: req.params.id, ...issue, text: fields.text || issue.text }, fields.status === 'complete');
+  }
   res.json(toComment(await one('SELECT * FROM comments WHERE id = $1', [req.params.id])));
 }));
+
+// An issue set to Complete goes on the resolver's "done today" (with its screen); reopened the same day, it comes off again.
+async function resolvedToday(req, productId, issue, resolved) {
+  const { date } = localNow();
+  if (!resolved) {
+    await db.query('UPDATE done_items SET is_deleted = true, updated_by = $3 WHERE comment_id = $1 AND work_date = $2 AND NOT is_deleted',
+      [issue.id, date, req.user.id]);
+    return;
+  }
+  const { rows: [screen] } = await db.query('SELECT name FROM screens WHERE id = $1', [issue.screen_id]);
+  await db.query(
+    `INSERT INTO done_items (id, user_id, product_id, work_date, text, screen_ids, comment_id, created_by, updated_by)
+     SELECT $1, $2, $3, $4, $5, $6, $7, $2, $2
+     WHERE NOT EXISTS (SELECT 1 FROM done_items WHERE comment_id = $7 AND work_date = $4 AND NOT is_deleted)`,
+    [randomUUID(), req.user.id, productId, date, `Resolved${screen ? ` on ${screen.name}` : ''}: ${issue.text}`.slice(0, 1000), [issue.screen_id], issue.id]);
+}
 
 app.delete('/api/comments/:id', route(async (req, res) => {
   await allowed(req, 'comments', req.params.id, 'full');
@@ -1049,6 +1068,7 @@ app.get('/api/sanity', route(async (req, res) => {
     canRun: canRunSanity(req.user), canManage: canManageSanity(req.user),
     teams: Boolean(product.teams_webhook),
     webhook: req.user.access === 'super' ? product.teams_webhook : undefined,
+    recipients: product.sanity_recipients,
   });
 }));
 
@@ -1108,6 +1128,160 @@ app.put('/api/sanity/order', route(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// ---- submitting a sanity: checks, a log kept for good, a "done today" entry and the report on Teams
+
+const toSanityLog = (r, full) => ({
+  id: r.id, productId: r.product_id, date: r.run_date, version: r.version, time: r.run_time,
+  passed: r.passed, failed: r.failed, total: r.total, testers: r.testers, submittedBy: personName(r) || '',
+  submittedById: r.created_by, submittedAt: r.created_at, sharedAt: r.shared_at,
+  ...(full ? { columns: r.columns, rows: r.rows } : {}),
+});
+const LOG_SELECT = 'SELECT l.*, u.name, u.username FROM sanity_logs l LEFT JOIN users u ON u.id = l.created_by';
+
+async function sanityLog(req, id) {
+  const log = await one(`${LOG_SELECT} WHERE l.id = $1`, [id]);
+  const product = await productFor(req, log.product_id, 'view');
+  return { log, product };
+}
+
+// The report card: date, version, passed / failed, who did it, every failure with its remark
+async function shareReport(req, product, log, userIds) {
+  const { rows: people } = await peopleOf(product.id);
+  const to = people.filter((u) => userIds.includes(u.id));
+  const failed = log.rows.filter((r) => r.state === 'fail');
+  const sent = await toTeams(product, {
+    title: `${log.failed ? '⚠️' : '✅'} Sanity report: ${product.name} — ${log.run_date}`,
+    lines: [
+      ...failed.map((r) => `❌ **${r.heading}**${r.review ? ` — ${r.review}` : ''}`),
+      to.length && !to.some((u) => u.teams_email) ? `For: ${to.map(personName).join(', ')}` : '',
+    ],
+    facts: [['Version', log.version], ['Date', log.run_date], ['Passed', `${log.passed} / ${log.total}`], ['Failed', String(log.failed)],
+      ['Done by', log.testers.join(', ') || personName(req.user)], ['Submitted by', personName(log) || personName(req.user)]],
+    actions: [['Open report', deeplink(req, `sanity=${product.id}&log=${log.id}`)]],
+    mentions: to.flatMap(mention),
+  });
+  if (sent === 'sent') await db.query('UPDATE sanity_logs SET shared_at = now() WHERE id = $1', [log.id]);
+  return sent;
+}
+
+app.post('/api/sanity/submit', route(async (req, res) => {
+  const product = await productFor(req, req.body.productId, 'view');
+  needSanity(req);
+  const { date } = localNow();
+  const run = await runFor(product.id, date);
+  const version = text(req.body.version !== undefined ? req.body.version : run.version, 60);
+  await syncFlowHeadings(product.id);
+  const [{ rows: items }, { rows: cols }, { rows: users }] = await Promise.all([
+    db.query(
+      `SELECT i.*, f.name AS flow_name, m.name AS module_name, r.state, r.review, r.cells, r.updated_by AS result_by
+       ${SANITY_ITEMS.replace('WHERE', 'LEFT JOIN sanity_results r ON r.item_id = i.id AND r.run_id = $2 WHERE')}
+       ORDER BY i.sort_order, i.created_at`, [product.id, run.id]),
+    sanityColumns(product.id),
+    db.query('SELECT id, name, username FROM users'),
+  ]);
+  // checks: a version, at least one heading, every heading Done or Failed
+  const problems = [];
+  if (!version) problems.push('Enter the version you tested.');
+  if (!items.length) problems.push('The sanity list is empty.');
+  const unchecked = items.filter((it) => !it.state || it.state === 'pending');
+  if (unchecked.length) problems.push(`Mark Done or Failed on ${unchecked.length} heading${unchecked.length === 1 ? '' : 's'}: ${unchecked.slice(0, 5).map((it) => it.flow_name || it.heading).join(', ')}${unchecked.length > 5 ? '…' : ''}.`);
+  if (problems.length) {
+    return res.status(400).json({ error: problems.join(' '), problems, missing: unchecked.map((it) => it.id) });
+  }
+
+  const who = (id) => personName(users.find((u) => u.id === id));
+  const rows = items.map((it) => ({
+    heading: it.flow_name || it.heading, module: it.module_name || '', state: it.state, review: it.review || '',
+    cells: Object.fromEntries(cols.map((c) => [c.name, (it.cells || {})[c.id] || ''])), checkedBy: who(it.result_by),
+  }));
+  const passed = rows.filter((r) => r.state === 'pass').length;
+  const failed = rows.length - passed;
+  const testers = [...new Set(rows.map((r) => r.checkedBy).filter(Boolean))];
+  const id = randomUUID();
+  await db.tx(async (client) => {
+    await client.query('UPDATE sanity_runs SET version = $2, updated_by = $3 WHERE id = $1', [run.id, version, req.user.id]);
+    await client.query(
+      `INSERT INTO sanity_logs (id, product_id, run_id, run_date, version, run_time, passed, failed, total, columns, rows, testers, created_by, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13)`,
+      [id, product.id, run.id, date, version, run.run_time, passed, failed, rows.length, JSON.stringify(cols.map((c) => c.name)), JSON.stringify(rows), testers, req.user.id]);
+    // the submitter's "done today"
+    await client.query(
+      `INSERT INTO done_items (id, user_id, product_id, work_date, text, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $2, $2)`,
+      [randomUUID(), req.user.id, product.id, date,
+        `Sanity done on version ${version}: ${passed} passed, ${failed} failed of ${rows.length}${failed ? ` (failed: ${rows.filter((r) => r.state === 'fail').map((r) => r.heading).join(', ')})` : ''}`]);
+  });
+  const log = await one(`${LOG_SELECT} WHERE l.id = $1`, [id]);
+  const sent = await shareReport(req, product, log, product.sanity_recipients);
+  res.status(201).json({ log: toSanityLog(log), teams: sent });
+}));
+
+// Every submitted sanity of an app, newest first (optionally one day)
+app.get('/api/sanity/logs', route(async (req, res) => {
+  const product = await productFor(req, req.query.product, 'view');
+  const day = DATE.test(req.query.date || '') ? req.query.date : null;
+  const { rows } = await db.query(
+    `${LOG_SELECT} WHERE l.product_id = $1 AND ($2::date IS NULL OR l.run_date = $2::date) ORDER BY l.created_at DESC LIMIT 200`, [product.id, day]);
+  res.json(rows.map((r) => toSanityLog(r)));
+}));
+
+app.get('/api/sanity/logs/:id', route(async (req, res) => {
+  const { log } = await sanityLog(req, req.params.id);
+  res.json(toSanityLog(log, true));
+}));
+
+// Send a report to anyone of the app (on Teams, @mentioned)
+app.post('/api/sanity/logs/:id/share', route(async (req, res) => {
+  const { log, product } = await sanityLog(req, req.params.id);
+  need(req, 'edit');
+  if (!product.teams_webhook) throw new HttpError(400, 'This app has no Teams channel yet. A super admin can add it at the bottom of the Sanity page.');
+  const ids = (Array.isArray(req.body.userIds) ? req.body.userIds : []).filter((x) => typeof x === 'string');
+  const sent = await shareReport(req, product, log, ids);
+  if (sent !== 'sent') throw new HttpError(502, sent);
+  res.json({ teams: sent });
+}));
+
+app.get('/api/sanity/logs/:id/export', route(async (req, res) => {
+  const { log, product } = await sanityLog(req, req.params.id);
+  const STATE = { pass: 'Done', fail: 'Failed' };
+  const book = new ExcelJS.Workbook();
+  book.creator = 'Task Doctor';
+  const ws = book.addWorksheet('Sanity report', { views: [{ state: 'frozen', ySplit: 1, xSplit: 2 }] });
+  ws.columns = [
+    { header: '#', key: 'no', width: 5 }, { header: 'Heading', key: 'heading', width: 30 }, { header: 'Module', key: 'module', width: 16 },
+    { header: 'Status', key: 'status', width: 10 }, { header: 'Remarks', key: 'review', width: 40 },
+    ...log.columns.map((name, i) => ({ header: name, key: `c${i}`, width: Math.max(14, Math.min(40, name.length + 4)) })),
+    { header: 'Checked by', key: 'by', width: 18 },
+  ];
+  log.rows.forEach((r, i) => {
+    const row = ws.addRow({ no: i + 1, heading: r.heading, module: r.module, status: STATE[r.state] || '', review: r.review,
+      ...Object.fromEntries(log.columns.map((name, j) => [`c${j}`, r.cells[name] || ''])), by: r.checkedBy });
+    row.getCell('status').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: r.state === 'pass' ? 'FFDCFCE7' : 'FFFEE2E2' } };
+  });
+  ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4F46E5' } };
+  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: ws.columnCount } };
+  ws.getColumn('review').alignment = { wrapText: true, vertical: 'top' };
+  ws.addRow([]);
+  [['App', product.name], ['Date', log.run_date], ['Version', log.version], ['Passed', `${log.passed} / ${log.total}`], ['Failed', log.failed],
+    ['Done by', log.testers.join(', ')], ['Submitted by', personName(log)], ['Submitted at', new Date(log.created_at).toLocaleString('en-GB', { timeZone: TIMEZONE })]]
+    .forEach(([k, v]) => { const r = ws.addRow({ heading: k, module: v }); r.getCell('heading').font = { bold: true }; });
+  const safe = product.name.replace(/[^\w-]+/g, '-');
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="sanity-report-${safe}-${log.run_date}-${log.version.replace(/[^\w.-]+/g, '-')}.xlsx"`);
+  await book.xlsx.write(res);
+  res.end();
+}));
+
+// Who the report goes to on every submit (sanity testers and Full logins)
+app.put('/api/sanity/recipients', route(async (req, res) => {
+  const product = await productFor(req, req.body.productId, 'view');
+  needSanity(req, true);
+  const { rows } = await peopleOf(product.id);
+  const ids = (Array.isArray(req.body.userIds) ? req.body.userIds : []).filter((x) => rows.some((u) => u.id === x));
+  await update('products', product.id, { sanity_recipients: ids }, req.user.id);
+  res.json({ recipients: ids });
+}));
+
 // Extra columns of the sanity sheet (sanity testers and Full logins)
 app.post('/api/sanity/columns', route(async (req, res) => {
   const product = await productFor(req, req.body.productId, 'view');
@@ -1158,14 +1332,14 @@ app.get('/api/sanity/export', route(async (req, res) => {
   const sheet = book.addWorksheet('Sanity', { views: [{ state: 'frozen', ySplit: 1, xSplit: 2 }] });
   sheet.columns = [
     { header: '#', key: 'no', width: 5 }, { header: 'Heading', key: 'heading', width: 30 }, { header: 'Module', key: 'module', width: 16 },
-    { header: 'Owner', key: 'owner', width: 18 }, { header: 'Status', key: 'status', width: 12 }, { header: 'Remarks', key: 'review', width: 40 },
+    { header: 'Status', key: 'status', width: 12 }, { header: 'Remarks', key: 'review', width: 40 },
     ...cols.map((c) => ({ header: c.name, key: `c_${c.id}`, width: Math.max(14, Math.min(40, c.name.length + 4)) })),
     { header: 'Checked by', key: 'by', width: 18 }, { header: 'Checked at', key: 'at', width: 18, style: { numFmt: 'dd mmm yyyy hh:mm' } },
   ];
   items.forEach((it, i) => {
     const state = it.state || 'pending';
     const row = sheet.addRow({
-      no: i + 1, heading: it.flow_name || it.heading, module: it.module_name || '', owner: who(it.owner_id),
+      no: i + 1, heading: it.flow_name || it.heading, module: it.module_name || '',
       status: STATE[state], review: it.review || '',
       ...Object.fromEntries(cols.map((c) => [`c_${c.id}`, (it.cells || {})[c.id] || ''])),
       by: state === 'pending' ? '' : who(it.result_by), at: state === 'pending' || !it.result_at ? null : new Date(it.result_at),

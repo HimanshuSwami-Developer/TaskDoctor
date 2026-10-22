@@ -1722,7 +1722,7 @@ $(function () {
       <span class="account" title="${esc(ACCESS[me.access].hint)}">${icon('user', 14)} ${esc(me.name || me.username)}
         <span class="access-tag access-${me.access}">${ACCESS[me.access].label}</span></span>
       <button class="btn-secondary px-3 py-1 text-xs" data-action="sheets" title="Your own sheets: typed columns, links to flows and screens, Excel in and out">${icon('grid', 12)} Sheets</button>
-      <button class="btn-secondary px-3 py-1 text-xs" data-action="sanity" title="Daily sanity checklist of this app">${icon('check', 12)} Sanity</button>
+      <button class="btn-secondary px-3 py-1 text-xs ${sanity ? 'on' : ''}" data-action="sanity" title="Daily sanity checklist of this app">${icon('check', 12)} Sanity</button>
       <button class="btn-secondary px-3 py-1 text-xs" data-action="done" title="What you finished today, shared on Teams">${icon('note', 12)} Done today</button>
       <button class="btn-primary px-3 py-1 text-xs" data-action="writer" title="Write an issue on any screen">${icon('plus', 12)} Write issue</button>
       <a class="btn-secondary px-3 py-1 text-xs" href="/api/export" title="Download every task as an Excel sheet">${icon('download', 12)} Excel</a>
@@ -2186,7 +2186,11 @@ $(function () {
   $doc.on('click', '[data-tab]', function () { activeId = $(this).data('tab'); render(); });
 
   // products
-  $doc.on('click', '[data-product]', function () { selectProduct($(this).data('product')); render(); });
+  $doc.on('click', '[data-product]', function () {
+    selectProduct($(this).data('product'));
+    render();
+    if (sanity) openSanity(productId); // on the Sanity page: that app's sanity
+  });
   $doc.on('click', '[data-action="add-product"]', () => ask({
     title: 'New product',
     fields: [{ name: 'name', label: 'Product name', placeholder: 'e.g. Finzoom, Findost, IPO', required: true }],
@@ -2332,7 +2336,7 @@ $(function () {
   // ← → step through the flow while the popup is on top and nothing is being typed
   $doc.on('keydown', (e) => {
     if (!openId || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || $(e.target).is('input, textarea, select, [contenteditable]')) return;
-    if (dialog.isOpen() || sheetId || videoFlowId || bugsView || $('#copyModal, #writerModal, #statusModal, #adminModal, #sanityModal, #doneModal, #sheetsModal').not('.hidden').length) return;
+    if (dialog.isOpen() || sheetId || videoFlowId || bugsView || $('#copyModal, #writerModal, #statusModal, #adminModal, #doneModal, #sheetsModal, #sanityLogModal').not('.hidden').length) return;
     const s = findScreen(openId);
     const { prev, next } = s ? popupSiblings(s) : {};
     const to = e.key === 'ArrowLeft' ? prev : next;
@@ -2725,7 +2729,7 @@ $(function () {
     if (e.key !== 'Escape') return;
     if (dialog.isOpen()) dialog.cancel();
     else if (!$('#copyModal').hasClass('hidden')) closeCopy();
-    else if (sanity) closeSanity();
+    else if (sanityLog) closeSanityLog();
     else if (sheetsView) closeSheets();
     else if (doneView) closeDone();
     else if (!$('#statusModal').hasClass('hidden')) closeStatuses();
@@ -2745,6 +2749,7 @@ $(function () {
   // ---------------------------------------------------------------- go to a flow / screen anywhere (any app or module)
 
   function showPlace(flowId) {
+    if (sanity) closeSanity(); // going to a flow or screen leaves the Sanity page
     const f = findFlow(flowId);
     const p = f && productOf(f.moduleId);
     if (!p) { toast('That is no longer here'); return false; }
@@ -2772,7 +2777,10 @@ $(function () {
     else if (h.get('sanity') || h.get('done')) {
       const pid = h.get('sanity') || h.get('done');
       if (products.some((p) => p.id === pid)) { selectProduct(pid); render(); }
-      if (h.get('sanity')) openSanity(productId); else openDone(productId, h.get('date'));
+      if (h.get('sanity')) {
+        const req = openSanity(productId);
+        if (req && h.get('log')) req.done(() => openSanityLog(h.get('log')));
+      } else openDone(productId, h.get('date'));
     }
   }
   window.addEventListener('hashchange', () => { if (loaded) openFromHash(); });
@@ -2794,19 +2802,31 @@ $(function () {
 
   function openSanity(pid, date) {
     if (!pid) { dialog.alert('Add an app first.', 'No app'); return null; }
-    return api('GET', `/api/sanity?product=${encodeURIComponent(pid)}${date ? `&date=${date}` : ''}`).done((d) => {
-      sanity = { productId: pid, ...d };
+    return $.when(
+      api('GET', `/api/sanity?product=${encodeURIComponent(pid)}${date ? `&date=${date}` : ''}`),
+      api('GET', `/api/sanity/logs?product=${encodeURIComponent(pid)}`),
+    ).done(([d], [logs]) => {
+      const fresh = !sanity;
+      // rows flagged by a refused submit stay flagged until they are fixed
+      const missing = sanity && sanity.productId === pid ? sanity.missing : new Set();
+      sanity = { productId: pid, ...d, logs, missing };
       renderSanity();
-      $('#sanityModal').removeClass('hidden');
-      $('body').addClass('overflow-hidden');
+      // the page takes the board's place; the address keeps it, so a refresh or a shared link comes back here
+      $('#board, #tabs').addClass('hidden');
+      $('#sanityPage').removeClass('hidden');
+      $('[data-action="sanity"]').addClass('on');
+      history.replaceState(null, '', `${location.pathname}${location.search}#sanity=${encodeURIComponent(pid)}`);
+      if (fresh) window.scrollTo(0, 0);
     });
   }
   const reloadSanity = () => sanity && openSanity(sanity.productId, sanity.date);
 
   function closeSanity() {
     sanity = null;
-    $('#sanityModal').addClass('hidden');
-    unlockScroll();
+    $('#sanityPage').addClass('hidden').empty();
+    $('#board, #tabs').removeClass('hidden');
+    $('[data-action="sanity"]').removeClass('on');
+    history.replaceState(null, '', location.pathname + location.search);
   }
 
   function renderSanity() {
@@ -2821,11 +2841,10 @@ $(function () {
     const used = new Set(d.items.map((it) => it.flowId).filter(Boolean));
     const flowOptions = (p ? p.modules : []).map((m) => `<optgroup label="${esc(m.name)}">${m.flows.filter((f) => !used.has(f.id))
       .map((f) => `<option value="${f.id}">${esc(f.name)}</option>`).join('')}</optgroup>`).join('');
-    const ownerSelect = (it) => `<select class="sanity-owner" data-sanity-owner="${it.id}" title="Owner: @mentioned on Teams when this fails">
-      <option value="">No owner</option>${d.people.map((x) => `<option value="${x.id}" ${x.id === it.ownerId ? 'selected' : ''}>${esc(x.name)}${x.teams ? '' : ' (no Teams email)'}</option>`).join('')}</select>`;
 
-    $('#sanityBody').html(`
+    $('#sanityPage').html(`<div class="sanity-page">
       <div class="flex flex-wrap items-center gap-3 border-b border-slate-200 px-5 py-3">
+        <button class="btn-secondary text-sm" data-close-sanity title="Back to the board">${icon('left', 14)} Board</button>
         <div class="min-w-0 flex-1">
           <h3 class="text-lg font-semibold text-slate-900">Sanity testing <span class="font-normal text-slate-400">· ${esc(p ? p.name : '')}</span></h3>
           <p class="text-xs text-slate-500">${isToday ? `Today · ${fmtDate(d.date)} · resets at midnight (${esc(d.timezone)})` : `History of ${fmtDate(d.date)}`}</p>
@@ -2833,7 +2852,6 @@ $(function () {
         <input type="date" class="input py-1 text-sm" data-sanity-date value="${d.date}" max="${d.today}" title="Look at an earlier day">
         <a class="btn-secondary text-sm" href="/api/sanity/export?product=${encodeURIComponent(d.productId)}&date=${d.date}" title="Download this day's sheet">${icon('download', 14)} Excel</a>
         ${isToday ? '' : `<button class="btn-secondary text-sm" data-sanity-today>Today</button>`}
-        <button class="icon-btn" data-close-sanity title="Close">${icon('close', 18)}</button>
       </div>
 
       <form id="sanityRun" class="sanity-run">
@@ -2847,8 +2865,22 @@ $(function () {
           <span class="chip fail">${icon('close', 12)} ${count('fail')} failed</span>
           <span class="chip">${count('pending')} left</span>
         </div>
-        ${run && d.teams && n ? `<button type="button" class="btn-primary self-end" data-sanity-summary title="Post today's result to Teams">${icon('share', 14)} Share on Teams</button>` : ''}
+        ${run && n ? `<button type="button" class="btn-primary self-end" data-sanity-submit title="Check everything, save the log and send the report">${icon('check', 14)} Submit sanity</button>` : ''}
       </form>
+      <div class="sanity-recipients">
+        <span class="text-xs font-medium text-slate-500">Report goes to</span>
+        ${d.recipients.map((id) => `<span class="person">${esc(person(id) || '—')}</span>`).join('') || '<span class="text-xs text-slate-400">nobody yet</span>'}
+        ${d.canManage ? `
+        <details class="sheet-share">
+          <summary class="text-xs font-medium text-indigo-600 hover:underline">Change</summary>
+          <div class="sheet-share-pop left-0 right-auto">
+            <span class="field-label">@mention on Teams when a sanity is submitted</span>
+            <div class="max-h-56 overflow-y-auto">${d.people.map((x) => `
+              <label class="flex items-center gap-2 py-0.5 text-sm"><input type="checkbox" class="h-4 w-4 accent-indigo-600" data-sanity-recipient value="${x.id}" ${d.recipients.includes(x.id) ? 'checked' : ''}> ${esc(x.name)}${x.teams ? '' : ' <span class="text-xs text-slate-400">(no Teams email)</span>'}</label>`).join('')}</div>
+          </div>
+        </details>` : ''}
+        ${d.teams ? '' : '<span class="text-xs text-amber-700">· no Teams channel yet, so reports are only kept in the logs</span>'}
+      </div>
       ${isToday && d.run && d.run.time ? `<p class="px-5 pt-2 text-xs text-slate-500">${d.teams
         ? (d.run.remindedAt ? 'Teams reminder sent today.' : `Teams reminder at ${esc(d.run.time)}.`)
         : 'No Teams channel for this app yet, so no reminder goes out.'}</p>` : ''}
@@ -2857,7 +2889,7 @@ $(function () {
       <div class="sanity-sheet-wrap">
         <table class="sanity-sheet">
           <thead><tr>
-            <th class="w-10">#</th><th class="min-w-[220px]">Heading</th><th>Owner</th><th>Status</th><th class="min-w-[220px]">Remarks</th>
+            <th class="w-10">#</th><th class="min-w-[220px]">Heading</th><th>Status</th><th class="min-w-[220px]">Remarks</th>
             ${d.columns.map((c) => `<th class="min-w-[150px]" data-col="${c.id}"><div class="sanity-col">
               <span class="truncate">${esc(c.name)}</span>
               ${d.canManage ? `<button class="icon-btn sm" data-col-rename="${c.id}" title="Rename column">${icon('edit', 12)}</button>
@@ -2870,7 +2902,7 @@ $(function () {
             const f = it.flowId && findFlow(it.flowId);
             const m = f && allModules.find((x) => x.id === f.moduleId);
             return `
-            <tr class="sanity-row ${it.state}" data-item="${it.id}">
+            <tr class="sanity-row ${it.state} ${d.missing.has(it.id) && it.state === 'pending' ? 'missing' : ''}" data-item="${it.id}">
               <td><span class="sanity-no ${d.canManage ? 'drag' : ''}" title="${d.canManage ? 'Drag to reorder' : ''}">${i + 1}</span></td>
               <td>
                 ${f ? `<button class="sanity-heading link" data-sanity-go="${it.flowId}" title="Go to this flow">${esc(flowName(it))} ${icon('link', 12)}</button>`
@@ -2881,7 +2913,6 @@ $(function () {
                   ${it.sharedAt ? `<span class="text-indigo-600">${icon('share', 11)} on Teams</span>` : ''}
                 </div>
               </td>
-              <td>${d.canManage ? ownerSelect(it) : `<span class="text-sm text-slate-600">${esc(person(it.ownerId)) || '—'}</span>`}</td>
               <td><div class="seg sanity-state">
                 <button data-sanity-state="pass" class="${it.state === 'pass' ? 'on pass' : ''}" ${run ? '' : 'disabled'} title="Done">${icon('check', 13)} Done</button>
                 <button data-sanity-state="fail" class="${it.state === 'fail' ? 'on fail' : ''}" ${run ? '' : 'disabled'} title="Failed: posts to Teams">${icon('close', 13)} Failed</button>
@@ -2893,7 +2924,7 @@ $(function () {
                 ${d.canManage ? `<button class="icon-btn danger" data-sanity-delete="${it.id}" title="Remove from the list">${icon('trash', 14)}</button>` : ''}
               </div></td>
             </tr>`;
-          }).join('') || `<tr><td colspan="${6 + d.columns.length}" class="py-10 text-center text-sm text-slate-400">No headings yet. Every flow of this app shows up here, and you can add your own below.</td></tr>`}
+          }).join('') || `<tr><td colspan="${5 + d.columns.length}" class="py-10 text-center text-sm text-slate-400">No headings yet. Every flow of this app shows up here, and you can add your own below.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -2904,12 +2935,36 @@ $(function () {
           <option value="">New heading…</option>${flowOptions.replace(/<optgroup[^>]*><\/optgroup>/g, '')}
         </select>
         <input class="input min-w-0 flex-1" name="heading" placeholder="New row: heading, e.g. Login with OTP" maxlength="120" autocomplete="off">
-        <select class="input" name="ownerId" title="Owner"><option value="">Owner</option>${d.people.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select>
         <button class="btn-primary">${icon('plus', 14)} Add</button>
         ${can('developer') && p && p.modules.length ? `
         <label class="sanity-newflow"><input type="checkbox" name="createFlow" class="h-4 w-4 accent-indigo-600">
           Also create it as a flow in <select class="input py-0.5 text-sm" name="moduleId">${p.modules.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('')}</select></label>` : ''}
       </form>` : ''}
+
+      <section class="sanity-logs">
+        <div class="flex flex-wrap items-baseline gap-2">
+          <h4 class="text-sm font-semibold text-slate-900">Sanity logs</h4>
+          <span class="text-xs text-slate-500">The checklist resets every day; every submitted sanity is kept here.</span>
+        </div>
+        ${d.logs.length ? `
+        <div class="mt-2 overflow-x-auto">
+          <table class="sanity-log-table">
+            <thead><tr><th>Date</th><th>Version</th><th>Result</th><th>Done by</th><th>Submitted</th><th></th></tr></thead>
+            <tbody>${d.logs.map((l) => `
+              <tr>
+                <td class="whitespace-nowrap font-medium text-slate-900">${fmtDate(l.date)}</td>
+                <td class="font-mono text-xs">${esc(l.version)}</td>
+                <td><div class="flex items-center gap-2">
+                  <span class="log-bar"><i class="pass" style="width:${l.total ? (l.passed / l.total) * 100 : 0}%"></i><i class="fail" style="width:${l.total ? (l.failed / l.total) * 100 : 0}%"></i></span>
+                  <span class="chip pass">${l.passed} passed</span>${l.failed ? `<span class="chip fail">${l.failed} failed</span>` : ''}
+                </div></td>
+                <td class="text-sm">${esc(l.testers.join(', ') || l.submittedBy)}</td>
+                <td class="whitespace-nowrap text-xs text-slate-500">${esc(l.submittedBy)} · ${new Date(l.submittedAt).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}${l.sharedAt ? ` · <span class="text-indigo-600">on Teams</span>` : ''}</td>
+                <td class="whitespace-nowrap text-right"><button class="btn-secondary px-2 py-1 text-xs" data-sanity-log="${l.id}">View</button></td>
+              </tr>`).join('')}</tbody>
+          </table>
+        </div>` : '<p class="mt-2 text-sm text-slate-400">No sanity submitted yet.</p>'}
+      </section>
 
       ${me.access === 'super' ? `
       <details class="sanity-teams" ${d.teams ? '' : 'open'}>
@@ -2922,7 +2977,8 @@ $(function () {
             ${d.teams ? '<button type="button" class="btn-secondary" data-teams-test>Send test</button>' : ''}
           </div>
         </form>
-      </details>` : ''}`);
+      </details>` : ''}
+    </div>`);
 
     if (d.canManage) {
       Sortable.create($('#sanityList')[0], {
@@ -2937,9 +2993,9 @@ $(function () {
   const saveResult = (it, body) => api('PUT', `/api/sanity/items/${it.id}/result`, body)
     .done((r) => { teamsResult(r.teams, 'Failure posted on Teams'); reloadSanity(); });
 
-  $doc.on('click', '[data-action="sanity"]', () => openSanity(productId));
+  // the Sanity button opens the page, and goes back to the board when it is already open
+  $doc.on('click', '[data-action="sanity"]', () => (sanity ? closeSanity() : openSanity(productId)));
   $doc.on('click', '[data-close-sanity]', closeSanity);
-  $('#sanityModal').on('mousedown', function (e) { if (e.target === this) closeSanity(); });
   $doc.on('change', '[data-sanity-date]', function () { if (this.value) openSanity(sanity.productId, this.value); });
   $doc.on('click', '[data-sanity-today]', () => openSanity(sanity.productId));
   $doc.on('submit', '#sanityRun', function (e) {
@@ -2981,12 +3037,50 @@ $(function () {
     api('POST', '/api/sanity/share', { productId: sanity.productId, itemId: $(this).data('sanity-share') })
       .done((r) => { teamsResult(r.teams, 'Shared on Teams'); reloadSanity(); });
   });
-  $doc.on('click', '[data-sanity-summary]', () => {
-    api('POST', '/api/sanity/share', { productId: sanity.productId }).done((r) => teamsResult(r.teams, 'Sanity result posted on Teams'));
+  // Submit: checked here first (rows to fix are outlined), then by the server, which saves the log,
+  // adds the submitter's "done today" and sends the report
+  $doc.on('click', '[data-sanity-submit]', () => {
+    const d = sanity;
+    const version = $('#sanityRun [name=version]').val().trim();
+    const unchecked = d.items.filter((it) => it.state === 'pending');
+    const problems = [
+      !version && 'Enter the version you tested.',
+      unchecked.length && `Mark Done or Failed on ${unchecked.length} heading${unchecked.length === 1 ? '' : 's'}.`,
+    ].filter(Boolean);
+    if (problems.length) {
+      d.missing = new Set(unchecked.map((it) => it.id));
+      renderSanity();
+      const $first = $('#sanityList .missing').first();
+      if ($first.length) $first[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (!version) $('#sanityRun [name=version]').addClass('invalid').trigger('focus');
+      dialog.alert(problems.join(' '), 'Sanity is not complete');
+      return;
+    }
+    const passed = d.items.filter((it) => it.state === 'pass').length;
+    const to = d.recipients.map((id) => (d.people.find((x) => x.id === id) || {}).name).filter(Boolean);
+    dialog.confirm({
+      title: `Submit sanity for version ${version}?`,
+      message: `${fmtDate(d.date)} · ${passed} passed, ${d.items.length - passed} failed of ${d.items.length}. The log is saved, it is added to your Done today${d.teams ? `, and the report goes to Teams${to.length ? ` for ${to.join(', ')}` : ''}` : ''}.`,
+      confirmText: 'Submit',
+      onConfirm: () => api('POST', '/api/sanity/submit', { productId: d.productId, version }, null, QUIET)
+        .done((r) => {
+          d.missing = new Set();
+          toast('Sanity submitted: log saved');
+          teamsResult(r.teams, 'Sanity submitted: report sent on Teams');
+          reloadSanity();
+        })
+        .fail((xhr) => {
+          const missing = xhr.responseJSON && xhr.responseJSON.missing;
+          if (missing) { d.missing = new Set(missing); renderSanity(); }
+        }),
+    });
   });
-  $doc.on('change', '[data-sanity-owner]', function () {
-    api('PATCH', `/api/sanity/items/${$(this).data('sanity-owner')}`, { ownerId: this.value }).done(reloadSanity);
+  $doc.on('input', '#sanityRun [name=version]', function () { $(this).removeClass('invalid'); });
+  $doc.on('change', '[data-sanity-recipient]', () => {
+    const userIds = $('[data-sanity-recipient]:checked').map((i, el) => el.value).get();
+    api('PUT', '/api/sanity/recipients', { productId: sanity.productId, userIds }).done(() => { sanity.recipients = userIds; toast('Saved'); });
   });
+  $doc.on('click', '[data-sanity-log]', function () { openSanityLog($(this).data('sanity-log')); });
   $doc.on('click', '[data-sanity-delete]', function () {
     const it = sanity.items.find((x) => x.id === $(this).data('sanity-delete'));
     dialog.confirm({
@@ -3002,7 +3096,7 @@ $(function () {
     e.preventDefault();
     const v = Object.fromEntries(new FormData(this));
     if (!v.flowId && !v.heading.trim()) { $(this).find('[name=heading]').trigger('focus'); return; }
-    const body = { productId: sanity.productId, flowId: v.flowId, heading: v.flowId ? '' : v.heading, ownerId: v.ownerId };
+    const body = { productId: sanity.productId, flowId: v.flowId, heading: v.flowId ? '' : v.heading };
     if (!v.flowId && v.createFlow) body.newFlowModuleId = v.moduleId;
     api('POST', '/api/sanity/items', body).done(() => {
       if (body.newFlowModuleId) load(); // the new flow shows on the board too
@@ -3453,6 +3547,83 @@ $(function () {
       title: `Delete column “${c.name}”?`, message: 'Its values in every row go with it.', confirmText: 'Delete', danger: true,
       onConfirm: () => api('DELETE', `/api/sheet-columns/${c.id}`, null, null, QUIET).done(reloadSheet),
     });
+  });
+
+  // ---------------------------------------------------------------- a submitted sanity (log): the sheet as it was, Excel, share with anyone
+
+  let sanityLog = null;
+
+  function openSanityLog(id) {
+    api('GET', `/api/sanity/logs/${id}`).done((log) => {
+      sanityLog = log;
+      renderSanityLog();
+      $('#sanityLogModal').removeClass('hidden');
+      $('body').addClass('overflow-hidden');
+    });
+  }
+  function closeSanityLog() {
+    sanityLog = null;
+    $('#sanityLogModal').addClass('hidden');
+    unlockScroll();
+  }
+
+  function renderSanityLog() {
+    const l = sanityLog;
+    const people = sanity ? sanity.people : [];
+    const link = `${location.origin}/#sanity=${encodeURIComponent(l.productId)}&log=${l.id}`;
+    $('#sanityLogBody').html(`
+      <div class="flex flex-wrap items-center gap-3 border-b border-slate-200 px-5 py-3">
+        <div class="min-w-0 flex-1">
+          <h3 class="text-lg font-semibold text-slate-900">Sanity report · ${fmtDate(l.date)} <span class="font-mono text-sm font-normal text-slate-500">v${esc(l.version)}</span></h3>
+          <p class="text-xs text-slate-500">Done by ${esc(l.testers.join(', ') || l.submittedBy)} · submitted by ${esc(l.submittedBy)}, ${new Date(l.submittedAt).toLocaleString([], { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+        </div>
+        <span class="chip pass">${l.passed} / ${l.total} passed</span>
+        ${l.failed ? `<span class="chip fail">${l.failed} failed</span>` : ''}
+        <a class="btn-secondary text-sm" href="/api/sanity/logs/${l.id}/export">${icon('download', 14)} Excel</a>
+        <button class="icon-btn" data-close-sanity-log title="Close">${icon('close', 18)}</button>
+      </div>
+      <div class="sanity-sheet-wrap">
+        <table class="sanity-sheet">
+          <thead><tr><th>#</th><th>Heading</th><th>Status</th><th>Remarks</th>${l.columns.map((c) => `<th>${esc(c)}</th>`).join('')}<th>Checked by</th></tr></thead>
+          <tbody>${l.rows.map((r, i) => `
+            <tr class="sanity-row ${r.state}">
+              <td><span class="sanity-no">${i + 1}</span></td>
+              <td><span class="sanity-heading">${esc(r.heading)}</span>${r.module ? `<div class="sanity-meta"><span>${esc(r.module)}</span></div>` : ''}</td>
+              <td>${r.state === 'pass' ? `<span class="chip pass">${icon('check', 12)} Done</span>` : `<span class="chip fail">${icon('close', 12)} Failed</span>`}</td>
+              <td class="whitespace-pre-wrap text-sm">${esc(r.review)}</td>
+              ${l.columns.map((c) => `<td class="text-sm">${esc(r.cells[c] || '')}</td>`).join('')}
+              <td class="whitespace-nowrap text-sm text-slate-600">${esc(r.checkedBy)}</td>
+            </tr>`).join('')}</tbody>
+        </table>
+      </div>
+      ${can('edit') ? `
+      <form id="sanityLogShare" class="border-t border-slate-200 px-5 py-4">
+        <p class="text-sm font-semibold text-slate-900">Share this report</p>
+        <p class="mb-2 text-xs text-slate-500">Posts it on the app's Teams channel and @mentions the people you pick. Or copy the link and send it anywhere.</p>
+        <div class="flex max-h-36 flex-wrap gap-x-4 gap-y-1 overflow-y-auto">${people.map((x) => `
+          <label class="flex items-center gap-2 text-sm"><input type="checkbox" class="h-4 w-4 accent-indigo-600" name="userIds" value="${x.id}"> ${esc(x.name)}</label>`).join('')}</div>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <button class="btn-primary" ${sanity && sanity.teams ? '' : 'disabled title="This app has no Teams channel yet"'}>${icon('share', 14)} Send on Teams</button>
+          <button type="button" class="btn-secondary" data-copy-link="${esc(link)}">${icon('link', 14)} Copy link</button>
+        </div>
+      </form>` : ''}`);
+  }
+
+  $doc.on('click', '[data-close-sanity-log]', closeSanityLog);
+  $('#sanityLogModal').on('mousedown', function (e) { if (e.target === this) closeSanityLog(); });
+  $doc.on('submit', '#sanityLogShare', function (e) {
+    e.preventDefault();
+    const userIds = $(this).find('[name=userIds]:checked').map((i, el) => el.value).get();
+    api('POST', `/api/sanity/logs/${sanityLog.id}/share`, { userIds }).done(() => {
+      toast('Report sent on Teams');
+      if (sanity) reloadSanity();
+    });
+  });
+  $doc.on('click', '[data-copy-link]', function () {
+    const url = $(this).data('copy-link');
+    const done = () => toast('Link copied');
+    if (navigator.clipboard) navigator.clipboard.writeText(url).then(done, () => dialog.alert(url, 'Copy this link'));
+    else dialog.alert(url, 'Copy this link');
   });
 
   load();

@@ -269,6 +269,28 @@ CREATE TABLE IF NOT EXISTS sheet_rows (
 );
 CREATE INDEX IF NOT EXISTS sheet_rows_sheet_idx ON sheet_rows(sheet_id);
 
+-- A submitted sanity: kept for good (the checklist itself resets every day). rows is a copy of the sheet as it was
+-- submitted: [{ heading, module, state, review, cells: { columnName: value }, checkedBy }]; testers = who ticked rows.
+CREATE TABLE IF NOT EXISTS sanity_logs (
+  id           text PRIMARY KEY,
+  product_id   text NOT NULL REFERENCES products(id),
+  run_id       text NOT NULL REFERENCES sanity_runs(id),
+  run_date     date NOT NULL,
+  version      text NOT NULL,
+  run_time     text NOT NULL DEFAULT '',
+  passed       int NOT NULL DEFAULT 0,
+  failed       int NOT NULL DEFAULT 0,
+  total        int NOT NULL DEFAULT 0,
+  columns      jsonb NOT NULL DEFAULT '[]'::jsonb,
+  rows         jsonb NOT NULL DEFAULT '[]'::jsonb,
+  testers      text[] NOT NULL DEFAULT '{}',
+  shared_at    timestamptz,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS sanity_logs_product_idx ON sanity_logs(product_id, run_date DESC);
+-- who the sanity report is sent to (@mentioned on Teams) when a sanity is submitted
+ALTER TABLE products ADD COLUMN IF NOT EXISTS sanity_recipients text[] NOT NULL DEFAULT '{}';
+
 -- "Done today": what someone finished on a day in an app, with the screens they changed.
 CREATE TABLE IF NOT EXISTS done_items (
   id          text PRIMARY KEY,
@@ -282,6 +304,8 @@ CREATE TABLE IF NOT EXISTS done_items (
   created_at  timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS done_items_day_idx ON done_items(product_id, work_date);
+-- an entry made by resolving an issue (taken back off if the issue is reopened the same day)
+ALTER TABLE done_items ADD COLUMN IF NOT EXISTS comment_id text REFERENCES comments(id);
 
 -- Audit columns on every table: who created / last changed a row and when. created_by / updated_by are the
 -- signed-in user (NULL for rows made by the server itself, e.g. the seeded statuses or the first super admin).
@@ -296,7 +320,7 @@ DO $$
 DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['products', 'modules', 'flows', 'screens', 'comments', 'statuses', 'users', 'sessions',
-                          'sanity_items', 'sanity_runs', 'sanity_results', 'sanity_columns', 'done_items',
+                          'sanity_items', 'sanity_runs', 'sanity_results', 'sanity_columns', 'sanity_logs', 'done_items',
                           'sheets', 'sheet_columns', 'sheet_rows'] LOOP
     EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS created_by text REFERENCES users(id)', t);
     EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS updated_by text REFERENCES users(id)', t);
