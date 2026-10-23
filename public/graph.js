@@ -4,7 +4,8 @@
  * application": MS_CLIENT_ID / MS_TENANT_ID in .env) and sends Adaptive Cards made by the server through Microsoft
  * Graph, as you:
  *   - a direct (1:1) chat message to each person, found by their Teams email   (Chat.Create, ChatMessage.Send)
- *   - a post in a channel of a team you are in                                   (Team.ReadBasic.All, Channel.ReadBasic.All, ChannelMessage.Send)
+ *   - a post in a channel of a team you are in                                   (Team.ReadBasic.All, Channel.ReadBasic.All, ChannelMessage.Send,
+ *                                                                                 User.ReadBasic.All to @mention people)
  * The sign-in is kept in this browser (localStorage) until you disconnect, so later messages need no popup.
  *
  * window.flowGraph: setup(config), ready(), account(), connect(), disconnect(), autoDm(on?),
@@ -16,7 +17,7 @@ window.flowGraph = (() => {
   const GRAPH = 'https://graph.microsoft.com/v1.0';
   const SCOPES = {
     direct: ['User.Read', 'Chat.Create', 'ChatMessage.Send'],
-    channel: ['User.Read', 'Team.ReadBasic.All', 'Channel.ReadBasic.All', 'ChannelMessage.Send'],
+    channel: ['User.Read', 'User.ReadBasic.All', 'Team.ReadBasic.All', 'Channel.ReadBasic.All', 'ChannelMessage.Send'], // ReadBasic: @mentions
   };
   const PREF = 'taskSheet.teamsAutoDm';
 
@@ -143,11 +144,24 @@ window.flowGraph = (() => {
     return setup(config);
   }
 
-  // A chat message holding one Adaptive Card
-  const cardMessage = (card) => ({
-    body: { contentType: 'html', content: '<attachment id="flowtrace"></attachment>' },
-    attachments: [{ id: 'flowtrace', contentType: 'application/vnd.microsoft.card.adaptive', contentUrl: null, content: JSON.stringify(card) }],
-  });
+  // A chat message: one Adaptive Card, or HTML from the server ({ html, mentions }: tables show like ones pasted from Excel).
+  // @mentions in HTML need each person's Microsoft id, looked up by their Teams email; one not found stays a plain name.
+  async function cardMessage(card, tok) {
+    if (!card || typeof card.html !== 'string') {
+      return {
+        body: { contentType: 'html', content: '<attachment id="flowtrace"></attachment>' },
+        attachments: [{ id: 'flowtrace', contentType: 'application/vnd.microsoft.card.adaptive', contentUrl: null, content: JSON.stringify(card) }],
+      };
+    }
+    let content = card.html;
+    const mentions = [];
+    for (const [i, m] of (card.mentions || []).entries()) {
+      const user = await call(tok, 'GET', `/users/${encodeURIComponent(m.email)}?$select=id,displayName`).catch(() => null);
+      if (user) mentions.push({ id: i, mentionText: m.name, mentioned: { user: { id: user.id, displayName: user.displayName || m.name, userIdentityType: 'aadUser' } } });
+      else content = content.replace(new RegExp(`<at id="${i}">([\\s\\S]*?)</at>`), '@$1');
+    }
+    return { body: { contentType: 'html', content }, ...(mentions.length ? { mentions } : {}) };
+  }
   const member = (who) => ({
     '@odata.type': '#microsoft.graph.aadUserConversationMember',
     roles: ['owner'],
@@ -164,7 +178,7 @@ window.flowGraph = (() => {
       try {
         // a 1:1 chat is found again if it already exists, so this does not make a new chat each time
         const chat = await call(tok, 'POST', '/chats', { chatType: 'oneOnOne', members: [member(self.id), member(p.email)] });
-        await call(tok, 'POST', `/chats/${encodeURIComponent(chat.id)}/messages`, cardMessage(card));
+        await call(tok, 'POST', `/chats/${encodeURIComponent(chat.id)}/messages`, await cardMessage(card, tok));
         results.push({ name: p.name, ok: true });
       } catch (err) {
         results.push({ name: p.name, ok: false, error: err.status === 404 ? `${p.email} is not a Teams user` : err.message });
@@ -201,7 +215,7 @@ window.flowGraph = (() => {
   }
   async function sendChannel(teamId, channelId, card) {
     const tok = await token('channel', true);
-    return call(tok, 'POST', `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages`, cardMessage(card));
+    return call(tok, 'POST', `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages`, await cardMessage(card, tok));
   }
 
   return { setup, configured, ready, account, autoDm, connect, disconnect, sendDirect, notify, teamsList, channelsOf, sendChannel };

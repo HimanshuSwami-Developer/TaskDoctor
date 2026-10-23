@@ -2130,10 +2130,10 @@ const teamsTable = (rows) => ({
   more: Math.max(0, rows.length - TEAMS_ROWS),
 });
 
-// mode 'channel' posts to the app's channel (webhook). mode 'card' sends nothing: it answers the card for the browser
-// to send from the person's own Teams (Microsoft Graph): `card` @mentions the people picked (for a channel),
+// mode 'channel' posts to the app's channel (webhook, as a card). mode 'card' sends nothing: it answers the message for
+// the browser to send from the person's own Teams (Microsoft Graph), as an HTML table: `card` @mentions the people picked (for a channel),
 // `direct` does not (a chat with each of them), and `people` are who to message.
-async function sendList(req, product, { title, rows, userIds, note, link, sheetName, mode }) {
+async function sendList(req, product, { title, rows, userIds, note, link, mode }) {
   if (mode !== 'card' && !product.teams_webhook) throw new HttpError(400, 'This app has no Teams channel yet. A super admin can add it in Sanity → Teams channel.');
   if (!rows.length) throw new HttpError(400, 'Pick at least one row to send');
   const { rows: people } = await peopleOf(product.id);
@@ -2143,14 +2143,13 @@ async function sendList(req, product, { title, rows, userIds, note, link, sheetN
   if (mode !== 'card' && to.some((u) => !u.teams_email)) lines.push(`For: ${to.filter((u) => !u.teams_email).map(personName).join(', ')}`);
   const message = {
     title, lines,
-    facts: [['App', product.name], sheetName ? ['Sheet', sheetName] : null, ['Sent by', personName(req.user)], ['Rows', rows.length]].filter(Boolean),
     table: teamsTable(rows),
     actions: [['Open in FlowTrace', link]],
     mentions: to.flatMap(mention),
   };
   if (mode === 'card') {
     return {
-      card: teams.card(message), direct: teams.card({ ...message, mentions: [] }), rows: rows.length,
+      card: teams.html(message), direct: teams.html({ ...message, mentions: [] }), rows: rows.length,
       people: to.map((u) => ({ name: personName(u), email: u.teams_email })),
     };
   }
@@ -2179,7 +2178,7 @@ app.post('/api/sheets/:id/teams', route(async (req, res) => {
   const list = rows.filter((r) => wantedRows.has(r.id)).map((r) => picked.map((c) => [c.name, show(c, r.cells[c.id]), look(c, r)]));
   res.json(await sendList(req, product, {
     title: `📋 ${sheet.name}`, rows: list, userIds: req.body.userIds, note: req.body.note,
-    link: deeplink(req, `sheet=${sheet.id}`), sheetName: sheet.name, mode: req.body.mode,
+    link: deeplink(req, `sheet=${sheet.id}`), mode: req.body.mode,
   }));
 }));
 

@@ -31,35 +31,65 @@ function tone(hex) {
   if (h < 170) return 'green';
   return 'blue';
 }
-const CELL_STYLE = { red: 'attention', amber: 'warning', green: 'good', blue: 'accent', grey: 'emphasis' };
 const TEXT_COLOR = { red: 'Attention', amber: 'Warning', green: 'Good', blue: 'Accent' };
 
-const tableCell = (c, header) => {
+// A cell's text: { text, bg, fg, b } with the sheet's colour on the text (its font colour, else its fill)
+const cellBlock = (c, header) => {
   const x = c && typeof c === 'object' ? c : { text: c };
-  const bg = CELL_STYLE[tone(x.bg)];
-  const fg = TEXT_COLOR[tone(x.fg)];
+  const color = header ? null : TEXT_COLOR[tone(x.fg)] || TEXT_COLOR[tone(x.bg)];
   return {
-    type: 'TableCell',
-    ...(header ? { style: 'emphasis' } : bg ? { style: bg } : {}),
-    items: [{ type: 'TextBlock', text: x.text === undefined || x.text === null || x.text === '' ? '—' : String(x.text), wrap: true,
-      ...(header || x.b ? { weight: 'Bolder' } : {}), ...(!header && !bg && fg ? { color: fg } : {}) }],
+    type: 'TextBlock', text: x.text === undefined || x.text === null || x.text === '' ? '—' : String(x.text), wrap: true, size: 'Small',
+    ...(header || x.b || color ? { weight: 'Bolder' } : {}), ...(color ? { color } : {}),
   };
 };
 
-// A few columns: one table, a row per row. Many columns: each row as its own two-column table (field | value),
-// which stays readable in a chat instead of squeezing a dozen columns side by side.
-const WIDE = 4;
+// The rows as a table: short columns side by side (column names across the top, a line per row), and what doesn't
+// fit across (long text, or more columns than the card is wide) as "name: value" lines under each row, full width.
+// A Teams card can't scroll sideways, so nothing is squeezed letter by letter. Columns empty in every row are left out.
+const cellText = (c) => String((c && typeof c === 'object' ? c.text : c) || '');
+const CARD_PX = 760; // about what a Teams card has across (chat or channel, desktop)
+const CHAR_PX = 6.5; // small text
+const COL_PX = 14; // a column's padding and gap
+const LONG = 24; // longer text than this is "long"
+const LONG_MIN = 22; // a long-text column goes in the row only with at least this many characters across, else under it
 function tables({ columns, rows }) {
-  const grid = (list, widths, firstRowAsHeaders) => ({
-    type: 'Table', gridStyle: 'default', showGridLines: true, firstRowAsHeaders, spacing: 'Medium',
-    columns: widths.map((width) => ({ width })),
-    rows: list.map((cells, k) => ({ type: 'TableRow', cells: cells.map((c) => tableCell(c, firstRowAsHeaders && !k)) })),
+  const keep = columns.map((_, k) => k).filter((k) => rows.some((cells) => cellText(cells[k]).trim()));
+  const texts = (k) => [columns[k], ...rows.map((cells) => cellText(cells[k]))];
+  // wide enough for the longest word (+1: the names are bold), and for short values whole
+  const weight = (k) => 1 + Math.max(3, ...texts(k).flatMap((t) => t.split(/\s+/)).map((w) => w.length), Math.min(14, Math.max(...texts(k).map((t) => t.length))));
+  const across = [];
+  const below = [];
+  let used = 0;
+  const fits = (px) => used + px <= CARD_PX;
+  // short columns first, in order; then long text across too while each still gets a readable width
+  const long = (k) => rows.some((cells) => cellText(cells[k]).length > LONG);
+  keep.forEach((k) => {
+    const w = weight(k);
+    if (!long(k) && fits(w * CHAR_PX + COL_PX)) { across.push(k); used += w * CHAR_PX + COL_PX; }
   });
-  if (columns.length <= WIDE) return [grid([columns, ...rows], columns.map(() => 1), true)];
-  return rows.flatMap((cells, i) => [
-    ...(rows.length > 1 ? [{ type: 'TextBlock', text: `Row ${i + 1}`, weight: 'Bolder', spacing: 'Large' }] : []),
-    { ...grid(columns.map((name, k) => [{ text: name, b: true }, cells[k]]), [1, 3], false), spacing: rows.length > 1 ? 'Small' : 'Medium' },
-  ]);
+  keep.filter(long).forEach((k) => {
+    const w = Math.max(LONG_MIN, weight(k));
+    if (fits(w * CHAR_PX + COL_PX)) { across.push(k); used += w * CHAR_PX + COL_PX; }
+  });
+  keep.forEach((k) => { if (!across.includes(k)) below.push(k); });
+  across.sort((x, y) => x - y); // back in the sheet's order
+  const widths = new Map(across.map((k) => [k, long(k) ? Math.max(LONG_MIN, weight(k)) : weight(k)]));
+  // no per-cell styles (fills): a styled column gets its own padding, which squeezes it and puts the header out of line
+  const line = (cells, header) => ({
+    type: 'ColumnSet', spacing: 'None',
+    columns: across.map((k) => ({ type: 'Column', width: widths.get(k), items: [cellBlock(cells[k], header)], verticalContentAlignment: 'Top' })),
+  });
+  const head = across.length ? [{ type: 'Container', spacing: 'Medium', items: [line(columns, true)] }] : [];
+  return [...head, ...rows.map((cells) => ({
+    type: 'Container', separator: true, spacing: across.length ? 'Small' : 'Medium',
+    items: [
+      ...(across.length ? [line(cells, false)] : []),
+      ...(below.some((k) => cellText(cells[k]).trim()) ? [{
+        type: 'FactSet', spacing: across.length ? 'Small' : 'None',
+        facts: below.filter((k) => cellText(cells[k]).trim()).map((k) => ({ title: String(columns[k]), value: cellText(cells[k]) })),
+      }] : []),
+    ],
+  }))];
 }
 
 // Teams refuses cards over ~28 KB: rows are left out from the end until it fits
@@ -87,7 +117,7 @@ function card({ title, lines = [], facts = [], table = null, actions = [], menti
   return {
     $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
     type: 'AdaptiveCard',
-    version: table ? '1.5' : '1.4', // tables need 1.5
+    version: '1.4',
     body,
     actions: actions.filter(([, url]) => url).map(([t, url]) => ({ type: 'Action.OpenUrl', title: t, url })),
     msteams: {
@@ -119,4 +149,51 @@ async function post(webhook, message) {
 // MS_CLIENT_ID and MS_TENANT_ID in .env. Both are public ids, not secrets.
 const graph = () => (process.env.MS_CLIENT_ID ? { clientId: process.env.MS_CLIENT_ID, tenantId: process.env.MS_TENANT_ID || 'organizations' } : null);
 
-module.exports = { card, post, valid, graph };
+// ---------------------------------------------------------------- the same message as a plain Teams message (HTML)
+// Sent from your own Teams (Microsoft Graph), a message can hold an HTML table, like one pasted from Excel: Teams
+// sizes its columns to their content, so nothing is squeezed. (The app's channel webhook takes cards only.)
+
+const esc = (v) => String(v).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+// a sheet colour → one that reads on both Teams themes, by hue
+const HTML_COLOR = { red: '#e5484d', amber: '#d97706', green: '#16a34a', blue: '#3b82f6' };
+const MAX_HTML = 24000; // Teams refuses messages over ~28 KB
+
+function htmlTable({ columns, rows }) {
+  const keep = columns.map((_, k) => k).filter((k) => rows.some((cells) => cellText(cells[k]).trim()));
+  const td = (c) => {
+    const x = c && typeof c === 'object' ? c : { text: c };
+    const color = HTML_COLOR[tone(x.fg)] || HTML_COLOR[tone(x.bg)];
+    const text = cellText(x).trim() ? esc(cellText(x)) : '';
+    return `<td>${color ? `<span style="color:${color}"><b>${text}</b></span>` : x.b ? `<b>${text}</b>` : text}</td>`;
+  };
+  return `<table><thead><tr>${keep.map((k) => `<th><b>${esc(columns[k])}</b></th>`).join('')}</tr></thead>`
+    + `<tbody>${rows.map((cells) => `<tr>${keep.map((k) => td(cells[k])).join('')}</tr>`).join('')}</tbody></table>`;
+}
+
+/**
+ * html({ title, lines, table, actions, mentions }) → { html, mentions: [{ name, email }] }
+ * The @mentions are written <at id="0">Name</at>, … in order; the browser fills in who they are.
+ */
+function html({ title, lines = [], table = null, actions = [], mentions = [] }) {
+  const people = mentions.filter((m) => m && m.email);
+  const build = (shown) => {
+    const more = table ? table.rows.length - shown + (table.more || 0) : 0;
+    return [
+      `<p><b>${esc(title)}</b></p>`,
+      ...lines.filter(Boolean).map((t) => `<p>${esc(t)}</p>`),
+      table && shown ? htmlTable({ ...table, rows: table.rows.slice(0, shown) }) : '',
+      more ? `<p><i>… and ${more} more in FlowTrace</i></p>` : '',
+      people.length ? `<p>${people.map((m, i) => `<at id="${i}">${esc(m.name)}</at>`).join(' ')}</p>` : '',
+      ...actions.filter(([, url]) => url).map(([t, url]) => `<p><a href="${esc(url)}">${esc(t)}</a></p>`),
+    ].join('');
+  };
+  let shown = table ? table.rows.length : 0;
+  let out = build(shown);
+  while (shown > 1 && out.length > MAX_HTML) {
+    shown = Math.max(1, Math.floor(shown * 0.75));
+    out = build(shown);
+  }
+  return { html: out, mentions: people.map(({ name, email }) => ({ name, email })) };
+}
+
+module.exports = { card, html, post, valid, graph };
