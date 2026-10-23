@@ -21,7 +21,8 @@ const ACCESS = Object.keys(auth.LEVELS);
 
 const app = express();
 app.use(express.json({ limit: '8mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+// no-cache: the browser asks every time (a quick 304 when unchanged), so a new app.js / styles.css shows on the next load
+app.use(express.static(path.join(__dirname, 'public'), { setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache') }));
 
 // Every API call except signing in needs a valid session; the signed-in user is req.user.
 app.use('/api', (req, res, next) => {
@@ -1990,6 +1991,16 @@ app.patch('/api/sheets/:id', route(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// Several sheets at once (ticked in the side list): only the owner can delete a sheet, so all must be yours
+app.post('/api/sheets/delete', route(async (req, res) => {
+  const ids = [...new Set((Array.isArray(req.body.ids) ? req.body.ids : []).filter((x) => typeof x === 'string'))].slice(0, 200);
+  if (!ids.length) throw new HttpError(400, 'Tick at least one sheet to delete');
+  const sheets = [];
+  for (const id of ids) sheets.push((await sheetFor(req, id, 'manage')).sheet);
+  await db.query('UPDATE sheets SET is_deleted = true, updated_by = $2 WHERE id = ANY($1)', [sheets.map((x) => x.id), req.user.id]);
+  res.json({ deleted: sheets.length });
+}));
+
 app.delete('/api/sheets/:id', route(async (req, res) => {
   const { sheet } = await sheetFor(req, req.params.id, 'manage');
   await softDelete('sheets', sheet.id, req.user.id);
@@ -2074,6 +2085,16 @@ app.delete('/api/sheet-rows/:id', route(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// Several rows at once (the ticked ones); only rows of this sheet are touched
+app.post('/api/sheets/:id/rows/delete', route(async (req, res) => {
+  const { sheet } = await sheetFor(req, req.params.id, 'edit');
+  const ids = (Array.isArray(req.body.ids) ? req.body.ids : []).filter((x) => typeof x === 'string').slice(0, 5000);
+  if (!ids.length) throw new HttpError(400, 'Tick at least one row to delete');
+  const { rowCount } = await db.query('UPDATE sheet_rows SET is_deleted = true, updated_by = $3 WHERE sheet_id = $1 AND id = ANY($2) AND NOT is_deleted',
+    [sheet.id, ids, req.user.id]);
+  res.json({ deleted: rowCount });
+}));
+
 // A sheet's columns and rows, and show(col, value): what a cell reads as (people / flows / screens by name,
 // dates as dates, checkboxes as Yes / No; null when empty)
 async function sheetContent(sheet) {
@@ -2101,10 +2122,13 @@ async function sheetContent(sheet) {
 // ---- send to Teams: any rows of a sheet, or any issues, with the columns picked, @mentioning the people picked
 
 const TEAMS_ROWS = 40; // a Teams card has a size limit
-const teamsValue = (v) => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v).replace(/\s*\n\s*/g, ' / '));
-// "**1.** Task: Fix OTP · Status: Done" per row; rows are [[column name, value], …]
-const teamsRows = (rows) => rows.slice(0, TEAMS_ROWS).map((cells, i) =>
-  `**${i + 1}.** ${cells.filter(([, v]) => v !== null && v !== '').map(([name, v]) => `${name}: ${teamsValue(v)}`).join(' · ') || '—'}`);
+const teamsValue = (v) => (v === null || v === undefined || v === '' ? '' : v instanceof Date ? v.toISOString().slice(0, 10) : String(v).replace(/\s*\n\s*/g, ' / '));
+// rows are [[column name, value, look?], …] (look: { bg, fg, b }, the cell's colours in the sheet) → a table for the card
+const teamsTable = (rows) => ({
+  columns: (rows[0] || []).map(([name]) => name),
+  rows: rows.slice(0, TEAMS_ROWS).map((cells) => cells.map(([, v, look]) => ({ text: teamsValue(v), ...(look || {}) }))),
+  more: Math.max(0, rows.length - TEAMS_ROWS),
+});
 
 // mode 'channel' posts to the app's channel (webhook). mode 'card' sends nothing: it answers the card for the browser
 // to send from the person's own Teams (Microsoft Graph): `card` @mentions the people picked (for a channel),
@@ -2115,12 +2139,12 @@ async function sendList(req, product, { title, rows, userIds, note, link, sheetN
   const { rows: people } = await peopleOf(product.id);
   const wanted = Array.isArray(userIds) ? userIds : [];
   const to = people.filter((u) => wanted.includes(u.id));
-  const lines = [text(note, 1000), ...teamsRows(rows)];
-  if (rows.length > TEAMS_ROWS) lines.push(`… and ${rows.length - TEAMS_ROWS} more in FlowTrace`);
+  const lines = [text(note, 1000)];
   if (mode !== 'card' && to.some((u) => !u.teams_email)) lines.push(`For: ${to.filter((u) => !u.teams_email).map(personName).join(', ')}`);
   const message = {
     title, lines,
     facts: [['App', product.name], sheetName ? ['Sheet', sheetName] : null, ['Sent by', personName(req.user)], ['Rows', rows.length]].filter(Boolean),
+    table: teamsTable(rows),
     actions: [['Open in FlowTrace', link]],
     mentions: to.flatMap(mention),
   };
@@ -2144,7 +2168,15 @@ app.post('/api/sheets/:id/teams', route(async (req, res) => {
   const picked = cols.filter((c) => wantedCols.includes(c.id));
   if (!picked.length) throw new HttpError(400, 'Pick at least one column to send');
   const wantedRows = new Set(Array.isArray(req.body.rowIds) ? req.body.rowIds : []);
-  const list = rows.filter((r) => wantedRows.has(r.id)).map((r) => picked.map((c) => [c.name, show(c, r.cells[c.id])]));
+  // a dropdown value keeps its option's colours, any other cell its own (both read from Excel on import, or set here)
+  const look = (c, r) => {
+    const v = r.cells[c.id];
+    const own = (r.styles || {})[c.id] || {};
+    const opt = c.type === 'select' && v ? { bg: (c.colors || {})[v], fg: (c.fonts || {})[v] } : {};
+    const x = { bg: opt.bg || own.bg, fg: opt.fg || own.fg, b: own.b };
+    return x.bg || x.fg || x.b ? x : null;
+  };
+  const list = rows.filter((r) => wantedRows.has(r.id)).map((r) => picked.map((c) => [c.name, show(c, r.cells[c.id]), look(c, r)]));
   res.json(await sendList(req, product, {
     title: `📋 ${sheet.name}`, rows: list, userIds: req.body.userIds, note: req.body.note,
     link: deeplink(req, `sheet=${sheet.id}`), sheetName: sheet.name, mode: req.body.mode,

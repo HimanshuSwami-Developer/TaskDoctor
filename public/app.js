@@ -4655,7 +4655,7 @@ $(function () {
       const keep = sheetsView && sheetsView.productId === pid ? sheetsView : {};
       sheetsView = {
         productId: pid, list: d.sheets, people: d.people, canCreate: d.canCreate, teams: d.teams, doc: null,
-        search: keep.search || '', sort: keep.sort || null, picked: new Set(), filters: keep.filters || {},
+        search: keep.search || '', sort: keep.sort || null, picked: new Set(), filters: keep.filters || {}, sheetPicks: keep.sheetPicks || new Set(),
       };
       const id = sheetId || (keep.doc && d.sheets.some((x) => x.id === keep.doc.id) ? keep.doc.id : d.sheets[0] && d.sheets[0].id);
       $('#board, #tabs').addClass('hidden');
@@ -4998,6 +4998,11 @@ $(function () {
     const allPicked = rows.length && picked.length === rows.length;
     const sideOpen = storage('get', 'sheetsSide') !== 'closed';
     const canTeams = canSendTeams(v.teams);
+    // sheets ticked in the side list to delete (only the ones you own can be)
+    const mine = v.list.filter((x) => x.manage);
+    v.sheetPicks = new Set([...(v.sheetPicks || [])].filter((id) => mine.some((x) => x.id === id)));
+    const sheetPicks = [...v.sheetPicks];
+    const allSheets = mine.length && sheetPicks.length === mine.length;
     closeFilter();
     $('#sheetsPage').html(`<div class="sheets-page">
       <div class="sheets-top">
@@ -5015,11 +5020,20 @@ $(function () {
             <button class="btn-primary w-full justify-center" data-sheet-new>${icon('plus', 14)} New sheet</button>
             <label class="btn-secondary w-full cursor-pointer justify-center">${icon('upload', 14)} Import Excel
               <input type="file" class="hidden" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" data-sheet-import></label>` : ''}
-          <div class="mt-2 space-y-0.5">
+          ${mine.length ? `
+            <div class="sheets-picks">
+              <label class="flex items-center gap-2"><input type="checkbox" class="h-4 w-4 accent-indigo-600" data-sheets-pick-all ${allSheets ? 'checked' : ''}> Select all</label>
+              ${sheetPicks.length ? `<button class="ml-auto inline-flex items-center gap-1 font-medium text-red-600 hover:underline" data-sheets-delete>${icon('trash', 12)} Delete ${sheetPicks.length}</button>` : ''}
+            </div>` : ''}
+          <div class="mt-1 space-y-0.5">
             ${v.list.map((x) => `
-              <button class="sheets-item ${doc && doc.id === x.id ? 'on' : ''}" data-sheet-open="${x.id}" title="${esc(x.name)}">
-                ${icon(x.share === 'private' ? 'lock' : 'grid', 13)}<span class="min-w-0 flex-1 truncate text-left">${esc(x.name)}</span><span class="text-xs text-slate-400">${x.rows}</span>
-              </button>`).join('') || '<p class="px-2 py-6 text-center text-xs text-slate-400">No sheets yet</p>'}
+              <div class="sheets-row">
+                ${x.manage ? `<input type="checkbox" class="h-4 w-4 shrink-0 accent-indigo-600" data-sheets-pick="${x.id}" ${v.sheetPicks.has(x.id) ? 'checked' : ''} title="Select to delete">`
+                  : mine.length ? '<span class="w-4 shrink-0"></span>' : ''}
+                <button class="sheets-item ${doc && doc.id === x.id ? 'on' : ''}" data-sheet-open="${x.id}" title="${esc(x.name)}">
+                  ${icon(x.share === 'private' ? 'lock' : 'grid', 13)}<span class="min-w-0 flex-1 truncate text-left">${esc(x.name)}</span><span class="text-xs text-slate-400">${x.rows}</span>
+                </button>
+              </div>`).join('') || '<p class="px-2 py-6 text-center text-xs text-slate-400">No sheets yet</p>'}
           </div>
         </aside>
         <section class="sheets-main">
@@ -5046,6 +5060,8 @@ $(function () {
               ${can('edit') ? `<button class="btn-secondary text-sm" data-sheet-teams ${canTeams && rows.length ? '' : 'disabled'}
                 title="${canTeams ? (picked.length ? 'Send the ticked rows on Teams' : 'Send the rows shown on Teams (tick rows to send only those)') : 'This app has no Teams channel yet'}">
                 ${icon('share', 14)} ${picked.length ? `Send ${picked.length} on Teams` : 'Send on Teams'}</button>` : ''}
+              ${edit && picked.length ? `<button class="btn-secondary text-sm text-red-600" data-sheet-rows-delete title="Delete the ticked rows">
+                ${icon('trash', 14)} Delete ${picked.length}</button>` : ''}
               <a class="btn-secondary text-sm" href="/api/sheets/${doc.id}/export" title="Download as Excel">${icon('download', 14)} Excel</a>
               ${doc.manage ? `<button class="icon-btn danger" data-sheet-delete title="Delete sheet">${icon('trash', 14)}</button>` : ''}
             </div>
@@ -5178,6 +5194,20 @@ $(function () {
     renderSheets();
   });
   $doc.on('click', '[data-sheet-unpick]', () => { sheetsView.picked = new Set(); renderSheets(); });
+  // the ticked rows that are shown (search and filters can hide ticked ones: those stay)
+  $doc.on('click', '[data-sheet-rows-delete]', () => {
+    const { doc, picked } = sheetsView;
+    const ids = sheetRows().filter((r) => picked.has(r.id)).map((r) => r.id);
+    if (!ids.length) return;
+    dialog.confirm({
+      title: `Delete ${ids.length} row${ids.length === 1 ? '' : 's'}?`, message: `From “${doc.name}”. This cannot be undone here.`, confirmText: 'Delete', danger: true,
+      onConfirm: () => api('POST', `/api/sheets/${doc.id}/rows/delete`, { ids }, null, QUIET).done((x) => {
+        ids.forEach((id) => picked.delete(id));
+        toast(`${x.deleted} row${x.deleted === 1 ? '' : 's'} deleted`);
+        reloadSheet();
+      }),
+    });
+  });
   // the ticked rows (or, with none ticked, the rows shown: after search and filters), with the columns picked
   $doc.on('click', '[data-sheet-teams]', () => {
     const { doc, picked } = sheetsView;
@@ -5193,6 +5223,31 @@ $(function () {
       send: (val) => api('POST', `/api/sheets/${doc.id}/teams`, {
         rowIds: send.map((r) => r.id), columnIds: val.columns, userIds: val.userIds, note: val.note, mode: val.mode,
       }, val.button, QUIET),
+    });
+  });
+  $doc.on('change', '[data-sheets-pick]', function () {
+    const id = $(this).data('sheets-pick');
+    if (this.checked) sheetsView.sheetPicks.add(id); else sheetsView.sheetPicks.delete(id);
+    renderSheets();
+  });
+  $doc.on('change', '[data-sheets-pick-all]', function () {
+    sheetsView.sheetPicks = new Set(this.checked ? sheetsView.list.filter((x) => x.manage).map((x) => x.id) : []);
+    renderSheets();
+  });
+  $doc.on('click', '[data-sheets-delete]', () => {
+    const list = sheetsView.list.filter((x) => sheetsView.sheetPicks.has(x.id));
+    if (!list.length) return;
+    const rows = list.reduce((t, x) => t + (x.rows || 0), 0);
+    dialog.confirm({
+      title: `Delete ${list.length} sheet${list.length === 1 ? '' : 's'}?`,
+      message: `${list.slice(0, 5).map((x) => `“${x.name}”`).join(', ')}${list.length > 5 ? ` and ${list.length - 5} more` : ''}. Their ${rows} rows go with them.`,
+      confirmText: 'Delete', danger: true,
+      onConfirm: () => api('POST', '/api/sheets/delete', { ids: list.map((x) => x.id) }, null, QUIET).done((x) => {
+        sheetsView.sheetPicks = new Set();
+        if (sheetsView.doc && list.some((s) => s.id === sheetsView.doc.id)) sheetsView.doc = null;
+        toast(`${x.deleted} sheet${x.deleted === 1 ? '' : 's'} deleted`);
+        reloadSheets(sheetsView.doc && sheetsView.doc.id);
+      }),
     });
   });
   $doc.on('click', '[data-sheet-open]', function () { openSheetDoc($(this).data('sheet-open')); });
