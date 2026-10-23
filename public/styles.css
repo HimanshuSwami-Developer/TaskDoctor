@@ -726,6 +726,53 @@ select.is-busy, input.is-busy, textarea.is-busy { opacity: .55; cursor: progress
   .sheets-layout { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
   .sheets-side { max-height: 180px; border-right: 0; border-bottom: 1px solid #e2e8f0; }
 }
+/* the Sheets page takes the whole window under the header (no footer, no page scroll: the grid scrolls) */
+.sheets-full { flex: 1; min-height: 0; width: 100%; padding: 8px 10px 10px; }
+.sheets-full .sheets-page { height: 100%; min-height: 0; }
+body.sheets-open .site-footer { display: none; }
+@media (min-width: 761px) {
+  body.sheets-open { height: 100vh; height: 100dvh; overflow: hidden; }
+}
+@media (max-width: 760px) {
+  .sheets-full .sheets-page { height: calc(100dvh - 24px); }
+}
+.sheets-top { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid #e2e8f0; }
+.sheets-layout.side-closed { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.sheets-layout.side-closed .sheets-side { display: none; }
+.icon-btn.on { background: #eef2ff; color: #4338ca; }
+/* a dropdown value with its own fill (from Excel) is drawn in that colour, with its text colour */
+.sc-select.st.solid { background: var(--c); color: var(--cf); box-shadow: inset 0 0 0 1px rgba(15, 23, 42, .08); font-weight: 600; }
+.sc-select option { background: #fff; color: #0f172a; font-weight: 400; }
+/* a cell with its own look from Excel (fill on the cell, text colour and bold on what is in it) */
+.sc-styled .sc-input, .sc-styled .sc-input:disabled { color: var(--sc-fg, #0f172a); font-weight: var(--sc-w, 400); }
+.sc-styled .sc-input:focus { background: transparent; }
+/* filters: the funnel on each column header, and its popover */
+.sc-head .sc-filter { opacity: .45; }
+.sheet-table th:hover .sc-head .sc-filter { opacity: 1; }
+.sc-head .sc-filter.on { opacity: 1; background: #e0e7ff; color: #4338ca; }
+.sf-pop { position: fixed; z-index: 60; display: flex; flex-direction: column; gap: 4px; width: 270px; padding: 10px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; box-shadow: 0 12px 32px rgba(15, 23, 42, .22); font-size: 13px; }
+.sf-head { display: flex; align-items: center; gap: 6px; padding: 0 2px 6px; border-bottom: 1px solid #f1f5f9; color: #0f172a; }
+.sf-item { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 6px; color: #334155; text-align: left; }
+.sf-item:hover { background: #f1f5f9; }
+.sf-sec { margin-top: 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: #64748b; }
+.sf-colors { display: flex; flex-wrap: wrap; gap: 6px; }
+.sf-swatch { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; border: 1px solid #cbd5e1; background: #fff; color: #94a3b8; font-size: 12px; }
+.sf-swatch.on { box-shadow: 0 0 0 2px #fff, 0 0 0 4px #4f46e5; }
+.sf-args { display: flex; gap: 6px; margin-top: 4px; }
+.sf-list { max-height: 220px; overflow-y: auto; margin-top: 4px; padding: 4px; border: 1px solid #e2e8f0; border-radius: 6px; }
+.sf-val { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 4px; cursor: pointer; color: #334155; }
+.sf-val:hover { background: #f8fafc; }
+.sf-val.hidden { display: none; }
+.sf-all { border-bottom: 1px solid #f1f5f9; margin-bottom: 2px; font-weight: 500; }
+.sf-count { color: #94a3b8; font-size: 11px; font-variant-numeric: tabular-nums; }
+.sf-dot { flex-shrink: 0; width: 10px; height: 10px; border-radius: 3px; }
+.sf-actions { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+/* what an Excel import read */
+.import-sheet { padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px; }
+.import-col { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px 2px 3px; border-radius: 99px; background: #f8fafc; border: 1px solid #e2e8f0; font-size: 12px; color: #334155; }
+/* Teams in the header: connected dot */
+.teams-account .sheet-share-pop { width: 300px; }
+.teams-dot { display: inline-block; width: 7px; height: 7px; margin-left: 2px; border-radius: 50%; background: #16a34a; }
 
 /* Sanity page (in place of the board) */
 .sanity-page { border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; box-shadow: 0 1px 2px rgba(15, 23, 42, .05); }

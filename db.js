@@ -270,6 +270,10 @@ CREATE TABLE IF NOT EXISTS sheet_rows (
   created_at  timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS sheet_rows_sheet_idx ON sheet_rows(sheet_id);
+-- Colours kept from an imported Excel: a dropdown option's text colour (fonts: option → '#rrggbb', next to its fill in
+-- colors) and each cell's own look (styles: { columnId: { bg, fg, b } } = fill, text colour, bold)
+ALTER TABLE sheet_columns ADD COLUMN IF NOT EXISTS fonts jsonb NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE sheet_rows ADD COLUMN IF NOT EXISTS styles jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 -- A submitted sanity: kept for good (the checklist itself resets every day). rows is a copy of the sheet as it was
 -- submitted: [{ heading, module, state, review, cells: { columnName: value }, checkedBy }]; testers = who ticked rows.

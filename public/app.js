@@ -1,5 +1,7 @@
 /* FlowTrace — jQuery front-end. © 2026 FinDevelopers · Prompting by Himanshu Swami · Idea & prompts by Vishal Yadav */
 $(function () {
+  // inside the Microsoft sign-in popup (public/graph.js): the window that opened it reads the answer and closes it
+  if (window.msalPopup) { $('body').html('<p style="padding:48px 16px;text-align:center;font:14px system-ui;color:#64748b">Signing in to Microsoft…</p>'); return; }
   const COLORS = ['slate', 'amber', 'sky', 'indigo', 'violet', 'pink', 'red', 'teal', 'green'];
   const WIREFRAMES = { form: 'Form', list: 'List', dashboard: 'Dashboard', detail: 'Detail' };
   const PRIORITY = {
@@ -55,6 +57,9 @@ $(function () {
     sticky: 'M4 4h16v10l-6 6H4zM14 20v-6h6',
     moon: 'M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z',
     sun: 'M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4',
+    filter: 'M3 4h18l-7 8.5V19l-4 2v-8.5z',
+    panel: 'M3 3h18v18H3zM9 3v18',
+    chat: 'M21 11.5a8.4 8.4 0 0 1-9 8.4 8.6 8.6 0 0 1-3.8-.9L3 21l1.9-5.2A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z',
   };
   const icon = (name, size = 16) =>
     `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${PATHS[name]}"/></svg>`;
@@ -238,6 +243,7 @@ $(function () {
     startLoading();
     return $.ajax({ method, url, contentType: 'application/json', data: data && JSON.stringify(data) })
       .always(() => { setBusy(el, false); stopLoading(); })
+      .done((r) => { if (r && r.notify) teamsNotify(r.notify); }) // an issue change: message the people on Teams
       .fail((xhr) => {
         if (xhr.status === 401 && url !== '/api/login') { showLogin(); return; }
         if (opts.silent) return;
@@ -608,9 +614,14 @@ $(function () {
   // ---------------------------------------------------------------- board
 
   let loaded = false;
-  let routed = false; // the #flow= / #screen= / #sanity= / #done= link was opened
+  let routed = false;
+  let graphAsked = false; // Microsoft sign-in (public/graph.js) set up once // the #flow= / #screen= / #sanity= / #done= link was opened
 
   function load() {
+    if (!graphAsked) {
+      graphAsked = true;
+      api('GET', '/api/teams/graph', null, null, QUIET).done((cfg) => window.flowGraph.setup(cfg).then(() => { if (me) renderAccount(); }));
+    }
     return $.when(api('GET', '/api/me'), api('GET', '/api/board'), api('GET', '/api/statuses'))
       .done(([user], [data], [tags]) => {
         loaded = true;
@@ -2511,24 +2522,51 @@ $(function () {
 
   // ---------------------------------------------------------------- send on Teams: rows of a sheet or issues, with the columns picked
   //
-  // openTeamsSend({ title, count, columns: [{ id, label, on }], people: [{ id, name, teams }], send })
-  //   send({ columns, userIds, note, button }) → jqXHR answering { teams, rows }
+  // openTeamsSend({ title, count, columns: [{ id, label, on }], people: [{ id, name, teams }], webhook, send })
+  //   webhook: the app has a Teams channel (Workflows webhook, Sanity → Teams channel)
+  //   send({ columns, userIds, note, mode, button }) → jqXHR. mode 'channel': the server posts to the app's channel
+  //   and answers { teams, rows }; mode 'card': it answers { card, direct, people, rows } and this browser sends it
+  //   from your own Teams (public/graph.js).
+  // Where it goes: 'direct' = a chat with each person picked, 'mine' = a channel of a team you are in,
+  // 'app' = the app's channel. The last choice (and team / channel) is remembered in this browser.
 
   let teamsSend = null;
+  const TEAMS_TARGETS = [['direct', 'Direct message'], ['mine', 'My Teams channel'], ['app', 'App channel']];
+  const teamsTargets = (webhook) => TEAMS_TARGETS.filter(([k]) => (k === 'app' ? webhook : window.flowGraph.configured()));
+  const canSendTeams = (webhook) => teamsTargets(webhook).length > 0;
 
-  function openTeamsSend({ title, count, columns, people, send }) {
-    teamsSend = { send };
+  function openTeamsSend({ title, count, columns, people, webhook, send }) {
+    const targets = teamsTargets(webhook);
+    if (!targets.length) { dialog.alert('This app has no Teams channel yet. A super admin can add it in Sanity → Teams channel.', 'Teams'); return; }
+    const last = storage('get', 'teamsTarget');
+    teamsSend = {
+      send, count,
+      target: targets.some(([k]) => k === last) ? last : targets[0][0],
+      team: storage('get', 'teamsTeam') || '', channel: storage('get', 'teamsChannel') || '', teams: null,
+    };
     const pick = (name, value, label, on) => `<label class="teams-pick"><input type="checkbox" class="h-4 w-4 accent-indigo-600" name="${name}" value="${esc(value)}" ${on ? 'checked' : ''}> ${label}</label>`;
     $('#teamsForm').html(`
       <div class="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
         <span class="text-indigo-600">${icon('share', 18)}</span>
         <div class="min-w-0 flex-1">
           <h3 class="truncate text-base font-semibold text-slate-900">${esc(title)}</h3>
-          <p class="text-xs text-slate-500">${count} row${count === 1 ? '' : 's'} go to the app's Teams channel${count > 40 ? ' (the first 40 are listed, with a link to the rest)' : ''}.</p>
+          <p class="text-xs text-slate-500">${count} row${count === 1 ? '' : 's'}${count > 40 ? ' (the first 40 are listed, with a link to the rest)' : ''}</p>
         </div>
         <button type="button" class="icon-btn" data-close-teams title="Close">${icon('close', 18)}</button>
       </div>
       <div class="space-y-4 px-5 py-4">
+        <div>
+          <span class="field-label">Send to</span>
+          ${targets.length > 1 ? `<div class="seg">${targets.map(([k, label]) => `<button type="button" data-teams-target="${k}">${label}</button>`).join('')}</div>` : ''}
+          <p class="mt-1.5 text-xs text-slate-500" data-teams-hint></p>
+          <div class="mt-2 hidden" data-teams-mine>
+            <div class="grid grid-cols-2 gap-2">
+              <select class="input w-full text-sm" data-teams-team><option value="">Team…</option></select>
+              <select class="input w-full text-sm" data-teams-channel><option value="">Channel…</option></select>
+            </div>
+            <button type="button" class="mt-1.5 text-xs text-indigo-600 hover:underline" data-teams-load>Load my teams</button>
+          </div>
+        </div>
         <div>
           <div class="flex items-center gap-2"><span class="field-label flex-1">Columns to send</span>
             <button type="button" class="text-xs text-indigo-600 hover:underline" data-teams-all="col">All</button>
@@ -2536,7 +2574,7 @@ $(function () {
           <div class="teams-picks">${columns.map((c) => pick('col', c.id, esc(c.label), c.on !== false)).join('')}</div>
         </div>
         <div>
-          <span class="field-label">@mention <span class="font-normal text-slate-400">(optional)</span></span>
+          <span class="field-label" data-teams-people-label>@mention</span>
           <div class="teams-picks max-h-40 overflow-y-auto">${people.map((u) => pick('user', u.id, `${esc(u.name)}${u.teams ? '' : ' <span class="text-xs text-slate-400">· no Teams email</span>'}`, false)).join('')
             || '<span class="text-sm text-slate-400">Nobody else can open this app.</span>'}</div>
         </div>
@@ -2546,11 +2584,55 @@ $(function () {
       </div>
       <div class="flex justify-end gap-2 border-t border-slate-200 px-5 py-3">
         <button type="button" class="btn-secondary" data-close-teams>Cancel</button>
-        <button class="btn-primary">${icon('share', 14)} Send on Teams</button>
+        <button class="btn-primary" data-teams-submit>${icon('share', 14)} Send</button>
       </div>`);
+    teamsSend.people = people;
+    showTeamsTarget();
     $('#teamsModal').removeClass('hidden');
     $('body').addClass('overflow-hidden');
   }
+
+  function showTeamsTarget() {
+    const t = teamsSend.target;
+    const connected = Boolean(window.flowGraph.account());
+    $('[data-teams-target]').each((i, el) => $(el).toggleClass('on', $(el).data('teams-target') === t));
+    $('[data-teams-hint]').text({
+      direct: `Each person you tick gets it in a chat with you, sent from your Teams${connected ? '' : ' (you sign in to Microsoft once)'}.`,
+      mine: `Posted as you in a channel of a team you are in, @mentioning the people you tick${connected ? '' : ' (you sign in to Microsoft once)'}.`,
+      app: 'Posted in this app\'s Teams channel, @mentioning the people you tick.',
+    }[t]);
+    $('[data-teams-people-label]').html(t === 'direct' ? 'Send to' : '@mention <span class="font-normal text-slate-400">(optional)</span>');
+    $('[data-teams-submit]').html(`${icon('share', 14)} ${t === 'direct' ? 'Send messages' : 'Post on Teams'}`);
+    $('[data-teams-mine]').toggleClass('hidden', t !== 'mine');
+    $('[data-teams-load]').toggleClass('hidden', Boolean(teamsSend.teams));
+    // with Teams connected the list loads by itself; else after a click (it may need the sign-in popup)
+    if (t === 'mine' && !teamsSend.teams && connected) loadMyTeams(true);
+  }
+
+  function loadMyTeams(quiet) {
+    const $err = $('#teamsForm .dialog-error');
+    return window.flowGraph.teamsList().then((list) => {
+      if (!teamsSend) return;
+      teamsSend.teams = list;
+      if (!list.some((x) => x.id === teamsSend.team)) teamsSend.team = list[0] ? list[0].id : '';
+      $('[data-teams-team]').html(`<option value="">Team…</option>${list.map((x) => `<option value="${esc(x.id)}" ${x.id === teamsSend.team ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}`);
+      $('[data-teams-load]').addClass('hidden');
+      if (!list.length) $err.text('You are not in any team on Teams.').removeClass('hidden');
+      renderAccount();
+      return loadMyChannels();
+    }).catch((err) => { if (!quiet) $err.text(err.message).removeClass('hidden'); });
+  }
+  function loadMyChannels() {
+    const { team } = teamsSend;
+    $('[data-teams-channel]').html('<option value="">Channel…</option>');
+    if (!team) return Promise.resolve();
+    return window.flowGraph.channelsOf(team).then((list) => {
+      if (!teamsSend || teamsSend.team !== team) return;
+      if (!list.some((x) => x.id === teamsSend.channel)) teamsSend.channel = (list.find((x) => /general/i.test(x.name)) || list[0] || {}).id || '';
+      $('[data-teams-channel]').html(`<option value="">Channel…</option>${list.map((x) => `<option value="${esc(x.id)}" ${x.id === teamsSend.channel ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}`);
+    }).catch((err) => $('#teamsForm .dialog-error').text(err.message).removeClass('hidden'));
+  }
+
   function closeTeamsSend() {
     teamsSend = null;
     $('#teamsModal').addClass('hidden');
@@ -2562,16 +2644,59 @@ $(function () {
     const all = $(this).is('[data-teams-all]');
     $(`#teamsForm [name="${$(this).data(all ? 'teams-all' : 'teams-none')}"]`).prop('checked', all);
   });
+  $doc.on('click', '[data-teams-target]', function () {
+    teamsSend.target = $(this).data('teams-target');
+    $('#teamsForm .dialog-error').addClass('hidden');
+    showTeamsTarget();
+  });
+  $doc.on('click', '[data-teams-load]', () => loadMyTeams(false));
+  $doc.on('change', '[data-teams-team]', function () { teamsSend.team = this.value; teamsSend.channel = ''; loadMyChannels(); });
+  $doc.on('change', '[data-teams-channel]', function () { teamsSend.channel = this.value; });
+
+  // "Sent to A, B" (+ who could not be reached, and why)
+  function teamsDirectResult(results) {
+    const sent = results.filter((x) => x.ok).map((x) => x.name);
+    const failed = results.filter((x) => !x.ok);
+    if (!failed.length) { toast(`Sent on Teams to ${sent.join(', ')}`); return; }
+    dialog.alert(`${sent.length ? `Sent to ${sent.join(', ')}. ` : ''}Not sent to ${failed.map((x) => `${x.name} (${x.error})`).join(', ')}.`, sent.length ? 'Partly sent' : 'Not sent');
+  }
+
   $('#teamsForm').on('submit', function (e) {
     e.preventDefault();
     const $f = $(this);
     const $err = $f.find('.dialog-error').addClass('hidden');
+    const fail = (msg) => $err.text(msg).removeClass('hidden');
     const picked = (name) => $f.find(`[name="${name}"]:checked`).map((i, el) => el.value).get();
     const columns = picked('col');
-    if (!columns.length) { $err.text('Pick at least one column.').removeClass('hidden'); return; }
-    teamsSend.send({ columns, userIds: picked('user'), note: $f.find('[name=note]').val().trim(), button: $f.find('[type=submit]')[0] })
-      .done((r) => { closeTeamsSend(); toast(`Sent ${r.rows} row${r.rows === 1 ? '' : 's'} on Teams`); })
-      .fail((xhr) => $err.text(errorText(xhr)).removeClass('hidden'));
+    const userIds = picked('user');
+    const { target, team, channel } = teamsSend;
+    if (!columns.length) { fail('Pick at least one column.'); return; }
+    if (target === 'direct' && !userIds.length) { fail('Tick who to send it to.'); return; }
+    if (target === 'direct' && !teamsSend.people.some((u) => userIds.includes(u.id) && u.teams)) {
+      fail('None of them has a Teams email yet. A super admin adds it to their login in Admin (or they connect Teams themselves).');
+      return;
+    }
+    if (target === 'mine' && (!team || !channel)) { fail('Pick a team and a channel.'); return; }
+    storage('set', 'teamsTarget', target);
+    const button = $f.find('[data-teams-submit]')[0];
+    const val = { columns, userIds, note: $f.find('[name=note]').val().trim(), button };
+    if (target === 'app') {
+      teamsSend.send({ ...val, mode: 'channel' })
+        .done((r) => { closeTeamsSend(); toast(`Sent ${r.rows} row${r.rows === 1 ? '' : 's'} on Teams`); })
+        .fail((xhr) => fail(errorText(xhr)));
+      return;
+    }
+    if (target === 'mine') { storage('set', 'teamsTeam', team); storage('set', 'teamsChannel', channel); }
+    setBusy(button, true);
+    // sign in first, while this is still the click (browsers allow the popup then)
+    const signIn = window.flowGraph.account() ? Promise.resolve() : window.flowGraph.connect();
+    signIn
+      .then(() => teamsSend.send({ ...val, mode: 'card' }))
+      .then((r) => (target === 'direct'
+        ? window.flowGraph.sendDirect(r.people, r.direct).then((results) => { closeTeamsSend(); teamsDirectResult(results); })
+        : window.flowGraph.sendChannel(team, channel, r.card).then(() => { closeTeamsSend(); toast(`Posted ${r.rows} row${r.rows === 1 ? '' : 's'} on Teams`); })))
+      .catch((err) => fail(err && err.readyState !== undefined ? errorText(err) : (err && err.message) || 'Could not send on Teams'))
+      .finally(() => { setBusy(button, false); renderAccount(); });
   });
 
   // Issues on Teams (from the issues list or the issue writer): issues of one app
@@ -2580,13 +2705,13 @@ $(function () {
   function sendIssuesOnTeams(pid, ids) {
     if (!ids.length) { toast('Tick the issues to send'); return; }
     api('GET', `/api/products/${encodeURIComponent(pid)}/people`).done((d) => {
-      if (!d.teams) { dialog.alert('This app has no Teams channel yet. A super admin can add it in Sanity → Teams channel.', 'Teams'); return; }
       openTeamsSend({
         title: `Send ${ids.length === 1 ? 'an issue' : `${ids.length} issues`} on Teams`,
         count: ids.length,
         columns: ISSUE_TEAMS_COLUMNS.map(([id, label, on]) => ({ id, label, on })),
         people: d.people.filter((u) => u.id !== me.id),
-        send: (val) => api('POST', '/api/issues/teams', { productId: pid, ids, columns: val.columns, userIds: val.userIds, note: val.note }, val.button, QUIET),
+        webhook: d.teams,
+        send: (val) => api('POST', '/api/issues/teams', { productId: pid, ids, columns: val.columns, userIds: val.userIds, note: val.note, mode: val.mode }, val.button, QUIET),
       });
     });
   }
@@ -2733,9 +2858,58 @@ $(function () {
       <button class="btn-primary px-3 py-1 text-xs" data-action="writer" title="Write an issue on any screen">${icon('plus', 12)} Write issue</button>
       <a class="btn-secondary px-3 py-1 text-xs" href="/api/export" title="Download every task as an Excel sheet">${icon('download', 12)} Excel</a>
       <button class="btn-secondary px-3 py-1 text-xs" data-action="admin">Admin</button>
+      ${teamsAccount()}
       ${themeButton()}
       <button class="tab-add" data-action="logout">Sign out</button>`);
   }
+  // Your own Teams (public/graph.js): connect your Microsoft account once, then FlowTrace sends as you: direct
+  // messages, posts in your channels, and a message to people when you give them an issue or change its status.
+  function teamsAccount() {
+    const g = window.flowGraph;
+    if (!g.configured()) return '';
+    const acc = g.account();
+    return `<details class="sheet-share teams-account">
+      <summary class="btn-secondary px-3 py-1 text-xs ${acc ? 'on' : ''}" title="${acc ? `Teams: connected as ${esc(acc.username)}` : 'Connect your Microsoft Teams'}">
+        ${icon('chat', 12)} Teams${acc ? '<span class="teams-dot"></span>' : ''}</summary>
+      <div class="sheet-share-pop">
+        ${acc ? `
+          <p class="text-sm font-semibold text-slate-900">Teams connected</p>
+          <p class="truncate text-xs text-slate-500">${esc(acc.name || '')} · ${esc(acc.username)}</p>
+          <label class="mt-3 flex items-start gap-2 text-sm text-slate-700"><input type="checkbox" class="mt-0.5 h-4 w-4 shrink-0 accent-indigo-600" data-teams-auto ${g.autoDm() ? 'checked' : ''}>
+            Message people on Teams when I give them an issue or change its status</label>
+          <p class="mt-1 text-xs text-slate-400">Messages go from your account, to the Teams email of their login (Admin).</p>
+          <button class="btn-secondary mt-3 w-full justify-center text-sm" data-teams-disconnect>Disconnect</button>` : `
+          <p class="text-sm font-semibold text-slate-900">Send from your own Teams</p>
+          <p class="mt-1 text-xs leading-relaxed text-slate-500">Connect your Microsoft work account once. Then you can send rows and issues to people directly or to your channels, and people get a Teams message when you give them an issue.</p>
+          <button class="btn-primary mt-3 w-full justify-center text-sm" data-teams-connect>${icon('chat', 14)} Connect Teams</button>`}
+      </div></details>`;
+  }
+  $doc.on('click', '[data-teams-connect]', function () {
+    setBusy(this, true);
+    window.flowGraph.connect()
+      .then((who) => {
+        toast(`Teams connected: ${who.email}`);
+        // your login's Teams email is filled in from it when it is empty, so others can message you too
+        if (!me.teamsEmail && who.email) api('PUT', '/api/me/teams-email', { email: who.email }, null, QUIET).done((r) => { me.teamsEmail = r.teamsEmail; });
+      })
+      .catch((err) => dialog.alert(err.message, 'Teams'))
+      .finally(() => { setBusy(this, false); renderAccount(); });
+  });
+  $doc.on('click', '[data-teams-disconnect]', () => window.flowGraph.disconnect().then(() => { toast('Teams disconnected'); renderAccount(); }));
+  $doc.on('change', '[data-teams-auto]', function () { window.flowGraph.autoDm(this.checked); });
+
+  // An issue was given to people or changed status: the server says who (with Teams emails); they get a direct
+  // message from you when you connected Teams (quietly: never a sign-in popup here)
+  function teamsNotify(n) {
+    window.flowGraph.notify(n).then((res) => {
+      if (!res) return;
+      const told = res.filter((x) => x.ok).map((x) => x.name);
+      const failed = res.filter((x) => !x.ok && x.error !== 'that is you');
+      if (told.length) toast(`Told ${told.join(', ')} on Teams`);
+      if (failed.length) console.warn('Teams message not sent:', failed);
+    }).catch((err) => console.warn('Teams message:', err.message));
+  }
+
   // light / dark (public/theme.js)
   const themeButton = () => {
     const dark = window.flowTheme && window.flowTheme.isDark();
@@ -3772,6 +3946,8 @@ $(function () {
     if (e.key !== 'Escape') return;
     if (dialog.isOpen()) dialog.cancel();
     else if (teamsSend) closeTeamsSend();
+    else if ($('#sheetFilterPop').length) closeFilter();
+    else if (!$('#importModal').hasClass('hidden')) closeImport();
     else if (sketch.open) skEscape();
     else if (!$('#copyModal').hasClass('hidden')) closeCopy();
     else if (sanityLog) closeSanityLog();
@@ -4034,7 +4210,7 @@ $(function () {
       ${me.access === 'super' ? `
       <details class="sanity-teams" ${d.teams ? '' : 'open'}>
         <summary>Teams channel for ${esc(p ? p.name : '')} ${d.teams ? '<span class="chip pass">connected</span>' : '<span class="chip">not set</span>'}</summary>
-        <form id="teamsForm" class="mt-3 space-y-2">
+        <form id="sanityTeamsForm" class="mt-3 space-y-2">
           <p class="text-xs text-slate-500">In Teams, open the channel → <b>Workflows</b> → <b>Post to a channel when a webhook request is received</b>, finish the steps and paste the URL it gives you here. Logins are @mentioned by the <b>Teams email</b> set in Admin.</p>
           <div class="flex flex-wrap gap-2">
             <input class="input min-w-0 flex-1 font-mono text-xs" name="webhook" value="${esc(d.webhook || '')}" placeholder="https://…logic.azure.com/workflows/…" autocomplete="off">
@@ -4244,7 +4420,7 @@ $(function () {
     });
   });
   $doc.on('click', '[data-sanity-go]', function () { const id = $(this).data('sanity-go'); closeSanity(); showFlow(id); });
-  $doc.on('submit', '#teamsForm', function (e) {
+  $doc.on('submit', '#sanityTeamsForm', function (e) {
     e.preventDefault();
     api('PUT', `/api/products/${sanity.productId}/teams`, { webhook: $(this).find('[name=webhook]').val().trim() })
       .done(() => { toast('Teams channel saved'); reloadSanity(); load(); });
@@ -4456,8 +4632,8 @@ $(function () {
   });
 
   // ---------------------------------------------------------------- sheets: spreadsheets made inside an app
-  // Typed columns (text, number, date, dropdown, checkbox, person, flow, screen), search, sort, totals, drag to
-  // reorder rows, sharing (private / app can view / app can edit + editors), Excel download and import.
+  // Typed columns (text, number, date, dropdown, checkbox, person, flow, screen), search, Excel-like filters, sort,
+  // totals, drag to reorder rows, sharing (private / app can view / app can edit + editors), Excel download and import.
   // A cell saves on its own (only that cell is sent), so the grid is not redrawn while you type.
 
   const SHEET_TYPES = {
@@ -4466,10 +4642,12 @@ $(function () {
   const SHEET_SHARES = [['private', 'Private: only me and editors'], ['view', 'Everyone in the app can view'], ['edit', 'Everyone in the app can edit']];
   const TONE_TAG = { success: 'green', pending: 'amber', fail: 'red', other: 'slate' }; // dropdown value → status tag colour
 
-  // { productId, list, people, canCreate, teams, doc, search, sort: { col, dir }, picked: Set of row ids (to send on Teams) }
+  // { productId, list, people, canCreate, teams, doc, search, sort: { col, dir }, picked: Set of row ids (to send on Teams),
+  //   filters: { columnId: { values, op, a, b, color } } (kept per sheet in this browser) }
   let sheetsView = null;
 
-  // Sheets is a page of its own, in the board's place (like Sanity); the address (#sheets=<app>&sheet=<id>) keeps it
+  // Sheets is a page of its own, in the board's place (like Sanity), using the whole window;
+  // the address (#sheets=<app>&sheet=<id>) keeps it
   function openSheets(pid, sheetId) {
     if (!pid) { dialog.alert('Add an app first.', 'No app'); return; }
     api('GET', `/api/sheets?product=${encodeURIComponent(pid)}`).done((d) => {
@@ -4477,21 +4655,27 @@ $(function () {
       const keep = sheetsView && sheetsView.productId === pid ? sheetsView : {};
       sheetsView = {
         productId: pid, list: d.sheets, people: d.people, canCreate: d.canCreate, teams: d.teams, doc: null,
-        search: keep.search || '', sort: keep.sort || null, picked: new Set(),
+        search: keep.search || '', sort: keep.sort || null, picked: new Set(), filters: keep.filters || {},
       };
       const id = sheetId || (keep.doc && d.sheets.some((x) => x.id === keep.doc.id) ? keep.doc.id : d.sheets[0] && d.sheets[0].id);
       $('#board, #tabs').addClass('hidden');
       $('#sheetsPage').removeClass('hidden');
+      $('body').addClass('sheets-open');
       $('[data-action="sheets"]').addClass('on');
       if (!keep.productId) window.scrollTo(0, 0);
       if (id) openSheetDoc(id); else renderSheets();
     });
   }
+  const savedFilters = (id) => { try { return JSON.parse(storage('get', `sheetFilters.${id}`) || '{}') || {}; } catch (e) { return {}; } };
+  const saveFilters = () => sheetsView.doc && storage('set', `sheetFilters.${sheetsView.doc.id}`, JSON.stringify(sheetsView.filters));
   function openSheetDoc(id) {
     return api('GET', `/api/sheets/${id}`).done((doc) => {
-      if (!sheetsView.doc || sheetsView.doc.id !== id) { sheetsView.sort = null; sheetsView.search = ''; sheetsView.picked = new Set(); }
+      if (!sheetsView.doc || sheetsView.doc.id !== id) {
+        sheetsView.sort = null; sheetsView.search = ''; sheetsView.picked = new Set(); sheetsView.filters = savedFilters(id);
+      }
       sheetsView.doc = doc;
       sheetsView.picked = new Set([...sheetsView.picked].filter((r) => doc.rowList.some((x) => x.id === r)));
+      Object.keys(sheetsView.filters).forEach((c) => { if (!doc.columns.some((x) => x.id === c)) delete sheetsView.filters[c]; });
       renderSheets();
     });
   }
@@ -4499,18 +4683,38 @@ $(function () {
   const reloadSheets = (id) => sheetsView && openSheets(sheetsView.productId, id);
 
   function closeSheets() {
+    closeFilter();
     sheetsView = null;
     $('#sheetsPage').addClass('hidden').empty();
     $('#board, #tabs').removeClass('hidden');
+    $('body').removeClass('sheets-open');
     $('[data-action="sheets"]').removeClass('on');
     history.replaceState(null, '', location.pathname + location.search);
   }
 
-  // a dropdown value's colour: its own (e.g. from Excel), else the usual one from its word
-  const optionStyle = (col, v) => {
-    const hex = (col.colors || {})[v];
-    return hex ? { cls: 'st custom', style: `style="--c:${hex}"` } : { cls: `st st-${TONE_TAG[tone(v)]}`, style: '' };
+  // black or white text, whichever reads better on a fill
+  const readable = (hex) => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+    return (r * 299 + g * 587 + b * 114) / 1000 > 150 ? '#111827' : '#ffffff';
   };
+  // a dropdown value's look: its own fill (e.g. from Excel, drawn in full) with its text colour, or only a text
+  // colour (a tint of it), else the usual one from its word
+  const optionStyle = (col, v) => {
+    const bg = (col.colors || {})[v];
+    const fg = (col.fonts || {})[v];
+    if (bg) return { cls: 'st solid', style: `style="--c:${bg};--cf:${fg || readable(bg)}"` };
+    if (fg) return { cls: 'st custom', style: `style="--c:${fg}"` };
+    return { cls: `st st-${TONE_TAG[tone(v)]}`, style: '' };
+  };
+  // a cell's own look from an imported Excel (fill, text colour, bold); dropdowns show their option's colour instead
+  function cellLook(col, row) {
+    const s = (row.styles || {})[col.id];
+    if (!s) return '';
+    const bg = col.type === 'select' ? null : s.bg;
+    const fg = col.type === 'select' ? null : s.fg || (bg ? readable(bg) : null);
+    if (!bg && !fg && !s.b) return '';
+    return `class="sc-styled" style="${bg ? `background:${bg};` : ''}${fg ? `--sc-fg:${fg};` : ''}${s.b ? '--sc-w:600;' : ''}"`;
+  }
 
   const sheetPerson = (id) => (sheetsView.people.find((x) => x.id === id) || {}).name || '';
   function sheetFlows() {
@@ -4556,23 +4760,217 @@ $(function () {
     }
   }
 
-  // rows after search and sort (sorting is only a view; drag order is what is saved)
-  function sheetRows() {
-    const { doc, search, sort } = sheetsView;
+  // ---- filters, like Excel's: per column a tick list of its values, a condition (contains, >, between, before …)
+  // and a colour (fill or text colour); a row is shown when it passes every column's filter
+
+  const FILTER_OPS = {
+    text: [['contains', 'Contains'], ['notContains', 'Does not contain'], ['equals', 'Equals'], ['notEquals', 'Does not equal'],
+      ['begins', 'Begins with'], ['ends', 'Ends with'], ['empty', 'Is empty'], ['notEmpty', 'Is not empty']],
+    number: [['eq', 'Equals'], ['ne', 'Does not equal'], ['gt', 'Greater than'], ['gte', 'Greater than or equal'], ['lt', 'Less than'],
+      ['lte', 'Less than or equal'], ['between', 'Between'], ['empty', 'Is empty'], ['notEmpty', 'Is not empty']],
+    date: [['on', 'On'], ['before', 'Before'], ['after', 'After'], ['between', 'Between'], ['empty', 'Is empty'], ['notEmpty', 'Is not empty']],
+  };
+  const NO_ARGS = ['empty', 'notEmpty'];
+  const kindOf = (col) => (col.type === 'number' ? 'number' : col.type === 'date' ? 'date' : 'text');
+  const blank = (v) => v === '' || v === undefined || v === null;
+  // a cell as its filter lists it ('' = blank)
+  const filterKey = (col, v) => (col.type === 'checkbox' ? (v === true ? 'Yes' : 'No') : blank(v) ? '' : cellText(col, v));
+  // the colour a cell shows ('' = none)
+  function cellColour(col, row) {
+    const v = row.cells[col.id];
+    if (col.type === 'select') return blank(v) ? '' : (col.colors || {})[v] || (col.fonts || {})[v] || '';
+    const s = (row.styles || {})[col.id];
+    return (s && (s.bg || s.fg)) || '';
+  }
+
+  function passes(col, row, f) {
+    const v = row.cells[col.id];
+    if (f.values && !f.values.includes(filterKey(col, v))) return false;
+    if (f.color !== undefined && cellColour(col, row) !== f.color) return false;
+    if (!f.op) return true;
+    const { op, a = '', b = '' } = f;
+    if (op === 'empty') return blank(v);
+    if (op === 'notEmpty') return !blank(v);
+    if (blank(v)) return op === 'notContains' || op === 'notEquals' || op === 'ne';
+    if (col.type === 'number') {
+      const n = Number(v);
+      const x = Number(a);
+      const y = Number(b);
+      return { eq: n === x, ne: n !== x, gt: n > x, gte: n >= x, lt: n < x, lte: n <= x, between: n >= Math.min(x, y) && n <= Math.max(x, y) }[op];
+    }
+    if (col.type === 'date') {
+      const [lo, hi] = a <= b ? [a, b] : [b, a];
+      return { on: v === a, before: v < a, after: v > a, between: v >= lo && v <= hi }[op];
+    }
+    const s = filterKey(col, v).toLowerCase();
+    const q = String(a).toLowerCase();
+    return { contains: s.includes(q), notContains: !s.includes(q), equals: s === q, notEquals: s !== q, begins: s.startsWith(q), ends: s.endsWith(q) }[op];
+  }
+
+  // rows after search, filters and sort (sorting is only a view; drag order is what is saved).
+  // except: leave that column's own filter out, unsorted (the values its filter lists, like Excel)
+  function sheetRows(except) {
+    const { doc, search, sort, filters } = sheetsView;
     let rows = doc.rowList;
     const q = search.trim().toLowerCase();
     if (q) rows = rows.filter((r) => doc.columns.some((c) => cellText(c, r.cells[c.id]).toLowerCase().includes(q)));
+    doc.columns.forEach((c) => {
+      const f = filters[c.id];
+      if (f && c.id !== except) rows = rows.filter((r) => passes(c, r, f));
+    });
+    if (except) return rows;
     const col = sort && doc.columns.find((c) => c.id === sort.col);
     if (col) {
-      const key = (r) => (col.type === 'number' ? (r.cells[col.id] === '' || r.cells[col.id] === undefined ? null : Number(r.cells[col.id])) : cellText(col, r.cells[col.id]).toLowerCase());
+      const key = (r) => (col.type === 'number' ? (blank(r.cells[col.id]) ? null : Number(r.cells[col.id])) : cellText(col, r.cells[col.id]).toLowerCase());
       rows = rows.slice().sort((a, b) => {
         const x = key(a); const y = key(b);
         if (x === null || x === '') return 1; if (y === null || y === '') return -1; // empty last
-        return (x < y ? -1 : x > y ? 1 : 0) * sort.dir;
+        return (typeof x === 'number' ? x - y : x.localeCompare(y, undefined, { numeric: true })) * sort.dir;
       });
     }
     return rows;
   }
+  const filtered = () => sheetsView.doc.columns.filter((c) => sheetsView.filters[c.id]);
+
+  function closeFilter() { $('#sheetFilterPop').remove(); }
+  // scrolling the grid closes it, but not the scroll that brought its button into view
+  let filterOpenedAt = 0;
+  const closeFilterOnScroll = () => { if (Date.now() - filterOpenedAt > 300) closeFilter(); };
+
+  function openFilter(colId, anchor) {
+    const { doc } = sheetsView;
+    const col = doc.columns.find((c) => c.id === colId);
+    if (!col) return;
+    const f = sheetsView.filters[colId] || {};
+    const base = sheetRows(colId);
+    const counts = new Map();
+    const colours = new Map();
+    base.forEach((r) => {
+      const k = filterKey(col, r.cells[col.id]);
+      counts.set(k, (counts.get(k) || 0) + 1);
+      const c = cellColour(col, r);
+      colours.set(c, (colours.get(c) || 0) + 1);
+    });
+    // values the filter hides stay in the list (unticked) when no other column hides them
+    (f.values || []).forEach((k) => { if (!counts.has(k)) counts.set(k, 0); });
+    const order = col.type === 'select' ? (k) => (k === '' ? 1e6 : col.options.indexOf(k)) : null;
+    const keys = [...counts.keys()].sort((a, b) => {
+      if (a === '') return 1; if (b === '') return -1;
+      if (order) return order(a) - order(b);
+      if (col.type === 'number') return Number(a) - Number(b);
+      return a.localeCompare(b, undefined, { numeric: true });
+    });
+    const label = (k) => (k === '' ? '(Blanks)' : col.type === 'date' ? fmtDate(k) : k);
+    const dot = (k) => {
+      const hex = col.type === 'select' && k ? (col.colors || {})[k] || (col.fonts || {})[k] : null;
+      return hex ? `<i class="sf-dot" style="background:${hex}"></i>` : '';
+    };
+    const kind = kindOf(col);
+    const sorts = { number: ['Smallest to largest', 'Largest to smallest'], date: ['Oldest to newest', 'Newest to oldest'], text: ['Sort A to Z', 'Sort Z to A'] }[kind];
+    const input = kind === 'number' ? 'number' : kind === 'date' ? 'date' : 'text';
+    const showColours = colours.size > 1 || f.color !== undefined;
+    closeFilter();
+    filterOpenedAt = Date.now();
+    const $pop = $(`<div id="sheetFilterPop" class="sf-pop" data-col="${col.id}">
+      <div class="sf-head"><span class="sc-type">${SHEET_TYPES[col.type]}</span><b class="truncate">${esc(col.name)}</b></div>
+      <button type="button" class="sf-item" data-sf-sort="1">${icon('up', 13)} ${sorts[0]}</button>
+      <button type="button" class="sf-item" data-sf-sort="-1">${icon('down', 13)} ${sorts[1]}</button>
+      ${showColours ? `<div class="sf-sec">Filter by colour</div>
+        <div class="sf-colors">${[...colours.keys()].sort().map((c) => `<button type="button" class="sf-swatch ${f.color === c ? 'on' : ''}" data-sf-color="${c}"
+          title="${c || 'No colour'} · ${colours.get(c) || 0}" ${c ? `style="background:${c}"` : ''}>${c ? '' : '∅'}</button>`).join('')}</div>` : ''}
+      <div class="sf-sec">Condition</div>
+      <select class="input w-full py-1 text-xs" data-sf-op><option value="">None</option>
+        ${FILTER_OPS[kind].map(([k, l]) => `<option value="${k}" ${f.op === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <div class="sf-args"><input class="input w-full py-1 text-xs" type="${input}" step="any" data-sf-a value="${esc(f.a || '')}" placeholder="Value">
+        <input class="input w-full py-1 text-xs" type="${input}" step="any" data-sf-b value="${esc(f.b || '')}" placeholder="and"></div>
+      <div class="sf-sec">Values</div>
+      <input class="input w-full py-1 text-xs" type="search" placeholder="Search values" data-sf-q>
+      <div class="sf-list">
+        <label class="sf-val sf-all"><input type="checkbox" class="h-3.5 w-3.5 accent-indigo-600" data-sf-all> <span>(Select all)</span></label>
+        ${keys.slice(0, 1000).map((k) => `
+          <label class="sf-val" data-sf-key="${esc(label(k).toLowerCase())}"><input type="checkbox" class="h-3.5 w-3.5 accent-indigo-600" data-sf-val value="${esc(k)}" ${!f.values || f.values.includes(k) ? 'checked' : ''}>
+            ${dot(k)}<span class="min-w-0 flex-1 truncate">${esc(label(k))}</span><span class="sf-count">${counts.get(k)}</span></label>`).join('')}
+        ${keys.length > 1000 ? `<p class="px-1 py-1 text-xs text-slate-400">${keys.length - 1000} more: search to find them</p>` : ''}
+      </div>
+      <div class="sf-actions">
+        <button type="button" class="mr-auto text-xs text-indigo-600 hover:underline" data-sf-clear>Clear filter</button>
+        <button type="button" class="btn-secondary py-1 text-xs" data-sf-cancel>Cancel</button>
+        <button type="button" class="btn-primary py-1 text-xs" data-sf-ok>OK</button>
+      </div></div>`).appendTo('body');
+    const box = anchor.getBoundingClientRect();
+    const w = $pop.outerWidth();
+    $pop.css({ left: Math.max(8, Math.min(box.left, window.innerWidth - w - 8)), top: box.bottom + 4, maxHeight: window.innerHeight - box.bottom - 16 });
+    filterArgs();
+    filterAll();
+  }
+  // the condition's inputs: none for "is empty", two for "between"
+  function filterArgs() {
+    const op = $('#sheetFilterPop [data-sf-op]').val();
+    $('#sheetFilterPop .sf-args').toggleClass('hidden', !op || NO_ARGS.includes(op));
+    $('#sheetFilterPop [data-sf-b]').toggleClass('hidden', op !== 'between');
+  }
+  // "(Select all)" ticked / half ticked by the values shown
+  function filterAll() {
+    const $vals = $('#sheetFilterPop .sf-val:not(.sf-all):not(.hidden) [data-sf-val]');
+    const on = $vals.filter(':checked').length;
+    $('#sheetFilterPop [data-sf-all]').prop({ checked: on > 0 && on === $vals.length, indeterminate: on > 0 && on < $vals.length });
+  }
+
+  $doc.on('click', '[data-sf-open]', function (e) {
+    e.stopPropagation();
+    const id = $(this).data('sf-open');
+    if ($('#sheetFilterPop').data('col') === id) closeFilter(); else openFilter(id, this);
+  });
+  $doc.on('mousedown', (e) => { if (!$(e.target).closest('#sheetFilterPop, [data-sf-open]').length) closeFilter(); });
+  $(window).on('resize', closeFilterOnScroll);
+  $doc.on('click', '[data-sf-cancel]', closeFilter);
+  $doc.on('change', '[data-sf-op]', filterArgs);
+  $doc.on('click', '[data-sf-color]', function () {
+    $(this).toggleClass('on');
+    $(this).siblings().removeClass('on');
+  });
+  $doc.on('input', '[data-sf-q]', function () {
+    const q = this.value.trim().toLowerCase();
+    $('#sheetFilterPop .sf-val:not(.sf-all)').each((i, el) => $(el).toggleClass('hidden', Boolean(q) && !String($(el).attr('data-sf-key')).includes(q)));
+    filterAll();
+  });
+  $doc.on('change', '[data-sf-all]', function () {
+    $('#sheetFilterPop .sf-val:not(.sf-all):not(.hidden) [data-sf-val]').prop('checked', this.checked);
+    filterAll();
+  });
+  $doc.on('change', '[data-sf-val]', filterAll);
+  $doc.on('click', '[data-sf-sort]', function () {
+    sheetsView.sort = { col: $('#sheetFilterPop').data('col'), dir: Number($(this).data('sf-sort')) };
+    closeFilter();
+    renderSheets();
+  });
+  $doc.on('click', '[data-sf-clear]', () => {
+    delete sheetsView.filters[$('#sheetFilterPop').data('col')];
+    saveFilters();
+    closeFilter();
+    renderSheets();
+  });
+  $doc.on('click', '[data-sf-ok]', () => {
+    const $pop = $('#sheetFilterPop');
+    const colId = $pop.data('col');
+    const searching = Boolean($pop.find('[data-sf-q]').val().trim());
+    const $vals = $pop.find('[data-sf-val]');
+    // while searching, only the ticked values shown count (like Excel)
+    const ticked = $pop.find(`.sf-val${searching ? ':not(.hidden)' : ''} [data-sf-val]:checked`).map((i, el) => el.value).get();
+    const f = {};
+    if (searching || ticked.length < $vals.length) f.values = ticked;
+    const op = $pop.find('[data-sf-op]').val();
+    const a = $pop.find('[data-sf-a]').val().trim();
+    const b = $pop.find('[data-sf-b]').val().trim();
+    if (op && (NO_ARGS.includes(op) || (a !== '' && (op !== 'between' || b !== '')))) Object.assign(f, { op, a, b });
+    const $colour = $pop.find('.sf-swatch.on');
+    if ($colour.length) f.color = $colour.attr('data-sf-color');
+    if (Object.keys(f).length) sheetsView.filters[colId] = f; else delete sheetsView.filters[colId];
+    saveFilters();
+    closeFilter();
+    renderSheets();
+  });
+  $doc.on('click', '[data-sheet-unfilter]', () => { sheetsView.filters = {}; saveFilters(); renderSheets(); });
 
   function sheetTotals() {
     const { doc } = sheetsView;
@@ -4594,18 +4992,24 @@ $(function () {
     const doc = v.doc;
     const edit = doc && doc.edit;
     const rows = doc ? sheetRows() : [];
-    const dragOk = edit && !v.search.trim() && !v.sort;
+    const by = doc ? filtered() : [];
+    const dragOk = edit && !v.search.trim() && !v.sort && !by.length;
     const picked = doc ? rows.filter((r) => v.picked.has(r.id)) : [];
     const allPicked = rows.length && picked.length === rows.length;
+    const sideOpen = storage('get', 'sheetsSide') !== 'closed';
+    const canTeams = canSendTeams(v.teams);
+    closeFilter();
     $('#sheetsPage').html(`<div class="sheets-page">
-      <div class="flex flex-wrap items-center gap-3 border-b border-slate-200 px-5 py-3">
+      <div class="sheets-top">
         <button class="btn-secondary text-sm" data-close-sheets title="Back to the board">${icon('left', 14)} Board</button>
+        <button class="icon-btn ${sideOpen ? 'on' : ''}" data-sheet-side title="${sideOpen ? 'Hide' : 'Show'} the list of sheets">${icon('panel', 16)}</button>
         <div class="min-w-0 flex-1">
-          <h3 class="truncate text-lg font-semibold text-slate-900">Sheets <span class="font-normal text-slate-400">· ${esc(p ? p.name : '')}</span></h3>
-          <p class="truncate text-xs text-slate-500">Your own sheets and imported Excel files. Tick rows to send them on Teams.</p>
+          <h3 class="truncate text-base font-semibold text-slate-900">Sheets <span class="font-normal text-slate-400">· ${esc(p ? p.name : '')}</span>${doc ? ` <span class="font-normal text-slate-400">›</span> ${esc(doc.name)}` : ''}</h3>
         </div>
+        ${!sideOpen && v.canCreate ? `<label class="btn-secondary cursor-pointer text-sm">${icon('upload', 14)} Import Excel
+          <input type="file" class="hidden" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" data-sheet-import></label>` : ''}
       </div>
-      <div class="sheets-layout">
+      <div class="sheets-layout ${sideOpen ? '' : 'side-closed'}">
         <aside class="sheets-side">
           ${v.canCreate ? `
             <button class="btn-primary w-full justify-center" data-sheet-new>${icon('plus', 14)} New sheet</button>
@@ -4613,7 +5017,7 @@ $(function () {
               <input type="file" class="hidden" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" data-sheet-import></label>` : ''}
           <div class="mt-2 space-y-0.5">
             ${v.list.map((x) => `
-              <button class="sheets-item ${doc && doc.id === x.id ? 'on' : ''}" data-sheet-open="${x.id}">
+              <button class="sheets-item ${doc && doc.id === x.id ? 'on' : ''}" data-sheet-open="${x.id}" title="${esc(x.name)}">
                 ${icon(x.share === 'private' ? 'lock' : 'grid', 13)}<span class="min-w-0 flex-1 truncate text-left">${esc(x.name)}</span><span class="text-xs text-slate-400">${x.rows}</span>
               </button>`).join('') || '<p class="px-2 py-6 text-center text-xs text-slate-400">No sheets yet</p>'}
           </div>
@@ -4639,8 +5043,8 @@ $(function () {
                   <p class="mt-2 text-xs text-slate-400">View-only logins can never edit.</p>
                 </div>
               </details>` : ''}
-              ${can('edit') ? `<button class="btn-secondary text-sm" data-sheet-teams ${v.teams && rows.length ? '' : 'disabled'}
-                title="${v.teams ? (picked.length ? 'Send the ticked rows on Teams' : 'Send the rows shown on Teams (tick rows to send only those)') : 'This app has no Teams channel yet'}">
+              ${can('edit') ? `<button class="btn-secondary text-sm" data-sheet-teams ${canTeams && rows.length ? '' : 'disabled'}
+                title="${canTeams ? (picked.length ? 'Send the ticked rows on Teams' : 'Send the rows shown on Teams (tick rows to send only those)') : 'This app has no Teams channel yet'}">
                 ${icon('share', 14)} ${picked.length ? `Send ${picked.length} on Teams` : 'Send on Teams'}</button>` : ''}
               <a class="btn-secondary text-sm" href="/api/sheets/${doc.id}/export" title="Download as Excel">${icon('download', 14)} Excel</a>
               ${doc.manage ? `<button class="icon-btn danger" data-sheet-delete title="Delete sheet">${icon('trash', 14)}</button>` : ''}
@@ -4660,6 +5064,7 @@ $(function () {
                       </button>
                       ${edit ? `<button class="icon-btn sm" data-sheet-col-edit="${c.id}" title="Edit column">${icon('edit', 12)}</button>
                         <button class="icon-btn sm danger" data-sheet-col-delete="${c.id}" title="Delete column">${icon('close', 12)}</button>` : ''}
+                      <button class="icon-btn sm sc-filter ${v.filters[c.id] ? 'on' : ''}" data-sf-open="${c.id}" title="Filter and sort ${esc(c.name)}">${icon('filter', 12)}</button>
                     </div>
                   </th>`).join('')}
                 <th class="sc-add">${edit ? `<button class="sanity-addcol" data-sheet-col-add>${icon('plus', 12)} Column</button>` : ''}</th>
@@ -4669,18 +5074,20 @@ $(function () {
                   <tr data-row-id="${r.id}">
                     <td class="sc-num"><span class="${dragOk ? 'drag' : ''}" title="${dragOk ? 'Drag to reorder' : ''}">${doc.rowList.indexOf(r) + 1}</span></td>
                     <td class="sc-pick"><input type="checkbox" class="h-4 w-4 accent-indigo-600" data-sheet-pick="${r.id}" ${v.picked.has(r.id) ? 'checked' : ''}></td>
-                    ${doc.columns.map((c) => `<td>${sheetCell(c, r, edit)}</td>`).join('')}
+                    ${doc.columns.map((c) => `<td ${cellLook(c, r)}>${sheetCell(c, r, edit)}</td>`).join('')}
                     <td class="sc-tools">${edit ? `<button class="icon-btn sm danger" data-sheet-row-delete="${r.id}" title="Delete row">${icon('trash', 12)}</button>` : ''}</td>
-                  </tr>`).join('') || `<tr><td colspan="${doc.columns.length + 3}" class="py-10 text-center text-sm text-slate-400">${v.search ? 'No rows match' : 'No rows yet'}</td></tr>`}
+                  </tr>`).join('') || `<tr><td colspan="${doc.columns.length + 3}" class="py-10 text-center text-sm text-slate-400">${v.search || by.length ? 'No rows match' : 'No rows yet'}</td></tr>`}
               </tbody>
               <tfoot id="sheetTotals">${sheetTotals()}</tfoot>
             </table>
           </div>
-          <div class="flex items-center gap-3 px-4 py-2 text-xs text-slate-500">
+          <div class="flex flex-wrap items-center gap-3 px-4 py-2 text-xs text-slate-500">
             ${edit ? `<button class="btn-secondary text-sm" data-sheet-row-add>${icon('plus', 14)} Add row</button>` : ''}
             <span>${rows.length}${rows.length !== doc.rowList.length ? ` of ${doc.rowList.length}` : ''} row${doc.rowList.length === 1 ? '' : 's'} · ${doc.columns.length} column${doc.columns.length === 1 ? '' : 's'}</span>
+            ${by.length ? `<span class="inline-flex items-center gap-1 text-indigo-600">${icon('filter', 11)} Filtered by ${esc(by.map((c) => c.name).join(', '))}</span>
+              <button class="text-indigo-600 hover:underline" data-sheet-unfilter>Clear filters</button>` : ''}
             ${v.sort ? '<button class="text-indigo-600 hover:underline" data-sheet-unsort>Clear sort</button>' : ''}
-            ${edit && !dragOk ? '<span>Clear search and sort to drag rows.</span>' : ''}
+            ${edit && !dragOk ? '<span>Clear search, filters and sort to drag rows.</span>' : ''}
             ${picked.length ? `<span class="text-indigo-600">${picked.length} ticked</span><button class="text-indigo-600 hover:underline" data-sheet-unpick>Untick all</button>` : ''}
           </div>` : `
           <div class="flex h-full flex-col items-center justify-center gap-3 p-10 text-center">
@@ -4691,6 +5098,7 @@ $(function () {
       </div></div>`);
     history.replaceState(null, '', `${location.pathname}${location.search}#sheets=${encodeURIComponent(v.productId)}${doc ? `&sheet=${encodeURIComponent(doc.id)}` : ''}`);
     $('#sheetRowsBody .sc-text').each((i, el) => autoGrow(el));
+    $('.sheets-grid').on('scroll', closeFilterOnScroll);
     if (dragOk) {
       Sortable.create($('#sheetRowsBody')[0], {
         handle: '.drag', animation: 150, draggable: 'tr[data-row-id]',
@@ -4714,8 +5122,52 @@ $(function () {
     { name: 'options', label: 'Dropdown options, comma separated (Dropdown only)', value: c.options.join(', '), placeholder: 'e.g. To do, In progress, Done', max: 600 },
   ];
 
+  // What an Excel import read: per worksheet its rows, columns with their types and colours, and the empty
+  // columns it left out
+  function showImport(x, file) {
+    $('#importBody').html(`
+      <div class="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
+        <span class="text-indigo-600">${icon('upload', 18)}</span>
+        <div class="min-w-0 flex-1">
+          <h3 class="truncate text-base font-semibold text-slate-900">Imported “${esc(file)}”</h3>
+          <p class="text-xs text-slate-500">${x.sheets > 1 ? `${x.sheets} sheets, ` : ''}${x.rows} rows, ${x.columns} columns</p>
+        </div>
+        <button class="icon-btn" data-close-import title="Close">${icon('close', 18)}</button>
+      </div>
+      <div class="max-h-[70vh] space-y-4 overflow-y-auto px-5 py-4">
+        ${x.report.map((ws) => `
+          <div class="import-sheet">
+            <div class="flex flex-wrap items-center gap-2">
+              <b class="text-sm text-slate-900">${esc(ws.name)}</b>
+              <span class="chip">${ws.rows} rows</span><span class="chip">${ws.columns.length} columns</span>
+              <span class="text-xs text-slate-400">header on row ${ws.header}</span>
+              <button class="ml-auto text-xs text-indigo-600 hover:underline" data-import-open="${ws.id}">Open</button>
+            </div>
+            <div class="mt-2 flex flex-wrap gap-1.5">${ws.columns.map((c) => `
+              <span class="import-col"><span class="sc-type">${SHEET_TYPES[c.type]}</span>${esc(c.name)}${c.colors ? `<span class="text-slate-400">· ${c.colors} colour${c.colors === 1 ? '' : 's'}</span>` : ''}</span>`).join('')}</div>
+            ${ws.styled ? `<p class="mt-2 text-xs text-slate-500">${ws.styled} cell${ws.styled === 1 ? '' : 's'} keep their colours from Excel (fills, text colours, conditional formatting).</p>` : ''}
+            ${ws.skipped.length ? `<p class="mt-1 text-xs text-slate-500">Left out, no values: ${esc(ws.skipped.join(', '))}</p>` : ''}
+            ${ws.more ? '<p class="mt-1 text-xs text-amber-700">Only the first 5,000 rows were imported.</p>' : ''}
+          </div>`).join('')}
+      </div>
+      <div class="flex justify-end border-t border-slate-200 px-5 py-3"><button class="btn-primary" data-close-import>Done</button></div>`);
+    $('#importModal').removeClass('hidden');
+    $('body').addClass('overflow-hidden');
+  }
+  function closeImport() {
+    $('#importModal').addClass('hidden');
+    unlockScroll();
+  }
+  $doc.on('click', '[data-close-import]', closeImport);
+  $('#importModal').on('mousedown', function (e) { if (e.target === this) closeImport(); });
+  $doc.on('click', '[data-import-open]', function () { const id = $(this).data('import-open'); closeImport(); reloadSheets(id); });
+
   $doc.on('click', '[data-action="sheets"]', () => (sheetsView ? closeSheets() : openSheets(productId)));
   $doc.on('click', '[data-close-sheets]', closeSheets);
+  $doc.on('click', '[data-sheet-side]', () => {
+    storage('set', 'sheetsSide', storage('get', 'sheetsSide') === 'closed' ? 'open' : 'closed');
+    renderSheets();
+  });
   $doc.on('change', '[data-sheet-pick]', function () {
     const id = $(this).data('sheet-pick');
     if (this.checked) sheetsView.picked.add(id); else sheetsView.picked.delete(id);
@@ -4726,7 +5178,7 @@ $(function () {
     renderSheets();
   });
   $doc.on('click', '[data-sheet-unpick]', () => { sheetsView.picked = new Set(); renderSheets(); });
-  // the ticked rows (or, with none ticked, the rows shown), with the columns picked
+  // the ticked rows (or, with none ticked, the rows shown: after search and filters), with the columns picked
   $doc.on('click', '[data-sheet-teams]', () => {
     const { doc, picked } = sheetsView;
     const shown = sheetRows();
@@ -4737,7 +5189,10 @@ $(function () {
       count: send.length,
       columns: doc.columns.map((c) => ({ id: c.id, label: c.name })),
       people: sheetsView.people,
-      send: (val) => api('POST', `/api/sheets/${doc.id}/teams`, { rowIds: send.map((r) => r.id), columnIds: val.columns, userIds: val.userIds, note: val.note }, val.button, QUIET),
+      webhook: sheetsView.teams,
+      send: (val) => api('POST', `/api/sheets/${doc.id}/teams`, {
+        rowIds: send.map((r) => r.id), columnIds: val.columns, userIds: val.userIds, note: val.note, mode: val.mode,
+      }, val.button, QUIET),
     });
   });
   $doc.on('click', '[data-sheet-open]', function () { openSheetDoc($(this).data('sheet-open')); });
@@ -4751,9 +5206,10 @@ $(function () {
     this.value = '';
     if (!file) return;
     if (file.size > 5 * 1024 * 1024) { dialog.alert('Please choose an Excel file under 5 MB.', 'File too large'); return; }
+    const name = file.name.replace(/\.xlsx$/i, '');
     const reader = new FileReader();
-    reader.onload = () => api('POST', '/api/sheets/import', { productId: sheetsView.productId, name: file.name.replace(/\.xlsx$/i, ''), dataUrl: reader.result })
-      .done((x) => { toast(`Imported ${x.sheets > 1 ? `${x.sheets} sheets, ` : ''}${x.rows} rows, ${x.columns} columns`); reloadSheets(x.id); });
+    reader.onload = () => api('POST', '/api/sheets/import', { productId: sheetsView.productId, name, dataUrl: reader.result })
+      .done((x) => { reloadSheets(x.id); showImport(x, name); });
     reader.readAsDataURL(file);
   });
   $doc.on('click', '[data-sheet-rename]', () => ask({
@@ -4783,7 +5239,7 @@ $(function () {
   });
   $doc.on('click', '[data-sheet-unsort]', () => { sheetsView.sort = null; renderSheets(); });
 
-  // a cell saves itself; the grid only redraws its totals (and the row when a link button needs to appear)
+  // a cell saves itself; the grid only redraws its totals (and the cell when its look or link button changes)
   $doc.on('change', '[data-sc]', function () {
     const { doc } = sheetsView;
     const row = doc.rowList.find((r) => r.id === $(this).data('row'));
@@ -4793,6 +5249,7 @@ $(function () {
     api('PATCH', `/api/sheet-rows/${row.id}`, { cells: { [col.id]: value } }, el)
       .done((saved) => {
         row.cells = saved.cells;
+        row.styles = saved.styles;
         $('#sheetTotals').html(sheetTotals());
         if (['select', 'flow', 'screen'].includes(col.type)) $(el).closest('td').html(sheetCell(col, row, true));
       })

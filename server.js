@@ -6,6 +6,7 @@ const db = require('./db');
 const cloud = require('./cloud');
 const auth = require('./auth');
 const teams = require('./teams');
+const excel = require('./excel');
 const ExcelJS = require('exceljs');
 
 const PORT = Number(process.env.PORT) || 4000;
@@ -221,6 +222,18 @@ app.post('/api/logout', route(async (req, res) => {
 }));
 
 app.get('/api/me', (req, res) => res.json(toUser(req.user)));
+
+// Microsoft sign-in for sending from your own Teams (direct messages, your channels); null when not set up
+app.get('/api/teams/graph', (req, res) => res.json(teams.graph()));
+
+// Your own Teams email (how people @mention and message you), filled in when you connect your Microsoft account.
+// Only an empty one is filled: a super admin's choice in Admin stays.
+app.put('/api/me/teams-email', route(async (req, res) => {
+  const email = teamsEmail(req.body.email);
+  if (!email) throw new HttpError(400, 'Teams email is required');
+  if (!req.user.teams_email) await update('users', req.user.id, { teams_email: email.toLowerCase() }, req.user.id);
+  res.json({ teamsEmail: req.user.teams_email || email.toLowerCase() });
+}));
 
 // ---------------------------------------------------------------- logins (admin dashboard, super admins only)
 
@@ -985,8 +998,8 @@ app.post('/api/screens/:id/comments', route(async (req, res) => {
       AREAS.includes(req.body.area) ? req.body.area : 'frontend',
       req.body.box ? JSON.stringify(markBox(req.body.box)) : null, // area marked on the screen image
     ]);
-  if (rows[0].assignees.length) notifyLater(req, productId, rows[0].id, { added: rows[0].assignees });
-  res.status(201).json(toComment(rows[0]));
+  const notify = rows[0].assignees.length ? await notifyOf(req, productId, rows[0].id, { added: rows[0].assignees }) : undefined;
+  res.status(201).json({ ...toComment(rows[0]), notify });
 }));
 
 app.patch('/api/comments/:id', route(async (req, res) => {
@@ -1011,8 +1024,8 @@ app.patch('/api/comments/:id', route(async (req, res) => {
   }
   const lower = (list) => list.map((n) => n.toLowerCase());
   const added = (fields.assignees || []).filter((n) => !lower(issue.assignees).includes(n.toLowerCase()));
-  if (added.length || fields.status) notifyLater(req, productId, req.params.id, { added, statusFrom: fields.status ? issue.status : null });
-  res.json(toComment(await one('SELECT * FROM comments WHERE id = $1', [req.params.id])));
+  const notify = added.length || fields.status ? await notifyOf(req, productId, req.params.id, { added, statusFrom: fields.status ? issue.status : null }) : undefined;
+  res.json({ ...toComment(await one('SELECT * FROM comments WHERE id = $1', [req.params.id])), notify });
 }));
 
 // An issue set to Complete goes on the resolver's "done today" (with its screen); reopened the same day, it comes off again.
@@ -1798,8 +1811,10 @@ const toSheet = (r, user) => ({
   id: r.id, productId: r.product_id, name: r.name, ownerId: r.owner_id, share: r.share, editors: r.editors,
   rows: r.row_count, ...sheetRights(user, r), ...audit(r),
 });
-const toSheetColumn = (r) => ({ id: r.id, name: r.name, type: r.type, options: r.options, colors: r.colors || {}, width: r.width, order: r.sort_order });
-const toSheetRow = (r) => ({ id: r.id, cells: r.cells, order: r.sort_order, updatedAt: r.updated_at, updatedBy: r.updated_by });
+const toSheetColumn = (r) => ({
+  id: r.id, name: r.name, type: r.type, options: r.options, colors: r.colors || {}, fonts: r.fonts || {}, width: r.width, order: r.sort_order,
+});
+const toSheetRow = (r) => ({ id: r.id, cells: r.cells, styles: r.styles || {}, order: r.sort_order, updatedAt: r.updated_at, updatedBy: r.updated_by });
 
 function columnFields(b, current = {}) {
   const fields = {};
@@ -1810,11 +1825,15 @@ function columnFields(b, current = {}) {
     fields.options = [...new Set(list.map((x) => text(x, 40)).filter(Boolean))].slice(0, 30);
   }
   if ((fields.type || current.type) === 'select' && !(fields.options || current.options || []).length) throw new HttpError(400, 'A dropdown needs at least one option');
-  // colours stay with the options that are still there
-  if (fields.options || b.colors !== undefined) {
-    const wanted = b.colors && typeof b.colors === 'object' ? b.colors : current.colors || {};
+  // fill and text colours stay with the options that are still there
+  if (fields.options || b.colors !== undefined || b.fonts !== undefined) {
     const options = fields.options || current.options || [];
-    fields.colors = JSON.stringify(Object.fromEntries(options.filter((o) => /^#[0-9a-f]{6}$/i.test(wanted[o] || '')).map((o) => [o, wanted[o].toLowerCase()])));
+    const keep = (sent, had) => {
+      const wanted = sent && typeof sent === 'object' ? sent : had || {};
+      return JSON.stringify(Object.fromEntries(options.filter((o) => /^#[0-9a-f]{6}$/i.test(wanted[o] || '')).map((o) => [o, wanted[o].toLowerCase()])));
+    };
+    fields.colors = keep(b.colors, current.colors);
+    fields.fonts = keep(b.fonts, current.fonts);
   }
   if (b.width !== undefined) fields.width = Math.max(80, Math.min(600, Math.round(Number(b.width)) || 180));
   return fields;
@@ -1894,182 +1913,27 @@ app.post('/api/sheets', route(async (req, res) => {
   res.status(201).json({ id });
 }));
 
-// ---- Excel import
-//
-// Every visible worksheet with data becomes a sheet ("<file> › <worksheet>" when there are several):
-// - the header row is the first row with two or more filled cells (title rows above it are skipped)
-// - columns without a single value are left out, and so are empty rows
-// - each column gets a type from its values: Yes / No → checkbox, numbers, dates, logins of the app → person,
-//   a few repeated values (or a Status / Priority … column) → dropdown, else text
-// - a dropdown keeps the colour each value had in Excel (cell fill, else font colour), else the colour of the
-//   app's status tag with that name, else the usual one from its word (green Done, red Failed …)
+// ---- Excel import: excel.js reads the workbook in detail (types, dropdown lists, colours, conditional formats …)
 
-const IMPORT_ROWS = 2000;
-const TAG_HEX = { slate: '#64748b', amber: '#d97706', sky: '#0284c7', indigo: '#4f46e5', violet: '#7c3aed', pink: '#db2777', red: '#dc2626', teal: '#0d9488', green: '#16a34a' };
-// Office's default theme colours, for cells coloured with "theme" colours instead of a fixed one
-const THEME = ['FFFFFF', '000000', 'E7E6E6', '44546A', '4472C4', 'ED7D31', 'A5A5A5', 'FFC000', '5B9BD5', '70AD47'];
-
-// '#rrggbb' of an Excel colour ({ argb } or { theme, tint }); null for none / white / black
-function excelColor(c) {
-  if (!c) return null;
-  let hex = c.argb ? c.argb.slice(-6) : c.theme !== undefined ? THEME[c.theme] : null;
-  if (!hex || !/^[0-9a-f]{6}$/i.test(hex)) return null;
-  if (c.tint) {
-    const t = c.tint;
-    hex = [0, 2, 4].map((i) => {
-      const v = parseInt(hex.slice(i, i + 2), 16);
-      return Math.round(t < 0 ? v * (1 + t) : v + (255 - v) * t).toString(16).padStart(2, '0');
-    }).join('');
-  }
-  hex = hex.toLowerCase();
-  const [r, g, b] = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16));
-  if (Math.min(r, g, b) > 242 || Math.max(r, g, b) < 24) return null; // white or black: no colour
-  return `#${hex}`;
-}
-function cellColor(cell) {
-  const f = cell.fill;
-  return (f && f.type === 'pattern' && f.pattern === 'solid' && excelColor(f.fgColor)) || excelColor(cell.font && cell.font.color);
-}
-
-// A cell's value: string, number, boolean or Date ('' when empty). Formulas give their result, links their text.
-function cellPlain(cell) {
-  let v = cell.value;
-  if (v && typeof v === 'object' && !(v instanceof Date)) {
-    if (v.error) return '';
-    if ('result' in v || 'formula' in v || 'sharedFormula' in v) v = v.result;
-    else if (v.richText) v = v.richText.map((t) => t.text).join('');
-    else if (v.text !== undefined) v = typeof v.text === 'object' && v.text ? (v.text.richText || []).map((t) => t.text).join('') : v.text;
-    else if (v.hyperlink) v = v.hyperlink;
-    if (v && typeof v === 'object' && !(v instanceof Date)) return v.error ? '' : '';
-  }
-  if (v === null || v === undefined) return '';
-  if (v instanceof Date) return Number.isNaN(v.getTime()) ? '' : v;
-  if (typeof v === 'number' || typeof v === 'boolean') return v;
-  return String(v).replace(/\r\n?/g, '\n').replace(/[ \t]+\n/g, '\n').trim();
-}
-
-const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-const iso = (y, m, d) => {
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d ? dt.toISOString().slice(0, 10) : null;
-};
-// 'YYYY-MM-DD' of a date value or a date written as text (2026-10-23, 23/10/2026, 23-10-26, 23 Oct 2026); else null
-function asDate(v) {
-  if (v instanceof Date) return v.toISOString().slice(0, 10);
-  if (typeof v !== 'string') return null;
-  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T].*)?$/.exec(v);
-  if (m) return iso(+m[1], +m[2], +m[3]);
-  m = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2}|\d{4})$/.exec(v); // day first (India)
-  if (m) return iso(m[3].length === 2 ? 2000 + +m[3] : +m[3], +m[2], +m[1]);
-  m = /^(\d{1,2})[ -]([a-z]{3})[a-z]*[ -,]*(\d{4})$/i.exec(v);
-  if (m && MONTHS.includes(m[2].toLowerCase())) return iso(+m[3], MONTHS.indexOf(m[2].toLowerCase()) + 1, +m[1]);
-  return null;
-}
-const YES = /^(yes|y|true|✓|✔|☑)$/i;
-const NO = /^(no|n|false|✗|✘|☐)$/i;
-// numbers, not codes: no leading zero (phone numbers, ids), at most 15 digits
-const asNumber = (v) => {
-  if (typeof v === 'number') return v;
-  if (typeof v !== 'string' || !/^-?(\d{1,3}(,\d{3})+|\d+)(\.\d+)?$/.test(v) || /^-?0\d/.test(v) || v.replace(/\D/g, '').length > 15) return null;
-  return Number(v.replace(/,/g, ''));
-};
-const LISTY = /status|state|priority|severity|result|stage|type|category|env|platform|module|outcome|pass|fail/i;
-const WORDY = /name|title|desc|summary|issue|remark|comment|note|step|detail|expected|actual|url|link|email|id$/i;
-
-// The column type and the stored value of each cell
-function columnFrom(name, values, colors, people) {
-  const filled = values.filter((v) => v !== '');
-  const strings = filled.map((v) => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v)));
-  const distinct = [...new Set(strings)];
-  if (filled.every((v) => typeof v === 'boolean' || YES.test(String(v)) || NO.test(String(v)))) {
-    return { type: 'checkbox', cell: (v) => (v === '' ? '' : v === true || YES.test(String(v))) };
-  }
-  if (filled.every((v) => asNumber(v) !== null)) return { type: 'number', cell: (v) => (v === '' ? '' : asNumber(v)) };
-  if (filled.every((v) => asDate(v))) return { type: 'date', cell: (v) => (v === '' ? '' : asDate(v)) };
-  const who = (s) => people.find((u) => [u.name, u.username].some((n) => n && n.toLowerCase() === s.toLowerCase()));
-  if (distinct.every(who)) return { type: 'person', cell: (v) => (v === '' ? '' : who(String(v)).id) };
-  const short = distinct.every((s) => s.length <= 40 && !s.includes('\n'));
-  const repeats = distinct.length <= Math.max(2, filled.length / 2);
-  const coloured = strings.some((s, i) => colors[i]);
-  if (short && distinct.length <= 15 && !WORDY.test(name) && (LISTY.test(name) || (repeats && filled.length >= 4) || coloured)) {
-    return { type: 'select', options: distinct, cell: (v) => (v === '' ? '' : v instanceof Date ? v.toISOString().slice(0, 10) : String(v)) };
-  }
-  return { type: 'text', cell: (v) => (v === '' ? '' : (v instanceof Date ? v.toISOString().slice(0, 10) : String(v)).slice(0, 2000)) };
-}
-
-// One worksheet → { name, columns: [{ name, type, options, colors, width }], rows: [[value per column]] }; null when empty
-function readWorksheet(ws, people, tags) {
-  const width = Math.min(ws.columnCount, 60);
-  if (!width) return null;
-  const rowValues = (r) => Array.from({ length: width }, (_, i) => cellPlain(ws.getRow(r).getCell(i + 1)));
-  let head = 0;
-  for (let r = 1; r <= Math.min(ws.rowCount, 20) && !head; r += 1) {
-    const n = rowValues(r).filter((v) => v !== '').length;
-    if (n >= 2 || (n === 1 && width === 1)) head = r;
-  }
-  if (!head) return null;
-  const headers = rowValues(head);
-  const body = [];
-  const colours = [];
-  for (let r = head + 1; r <= ws.rowCount && body.length < IMPORT_ROWS; r += 1) {
-    const row = ws.getRow(r);
-    const values = rowValues(r);
-    if (values.every((v) => v === '')) continue;
-    body.push(values);
-    colours.push(Array.from({ length: width }, (_, i) => (values[i] === '' ? null : cellColor(row.getCell(i + 1)))));
-  }
-  const used = new Map();
-  const columns = [];
-  for (let i = 0; i < width; i += 1) {
-    const values = body.map((r) => r[i]);
-    if (values.every((v) => v === '')) continue; // an empty column is left out
-    let name = text(String(headers[i] instanceof Date ? headers[i].toISOString().slice(0, 10) : headers[i]), 60) || `Column ${i + 1}`;
-    const seen = used.get(name.toLowerCase()) || 0;
-    used.set(name.toLowerCase(), seen + 1);
-    if (seen) name = `${name.slice(0, 56)} ${seen + 1}`;
-    const cellColors = body.map((r, k) => colours[k][i]);
-    const col = columnFrom(name, values, cellColors.filter((c, k) => values[k] !== ''), people);
-    const colors = {};
-    if (col.type === 'select') {
-      col.options.forEach((o) => {
-        const counts = {};
-        values.forEach((v, k) => { if (cellColors[k] && col.cell(v) === o) counts[cellColors[k]] = (counts[cellColors[k]] || 0) + 1; });
-        const best = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
-        const tag = tags.find((t) => t.label.toLowerCase() === o.toLowerCase());
-        if (best) colors[o] = best[0];
-        else if (tag && TAG_HEX[tag.color]) colors[o] = TAG_HEX[tag.color];
-      });
-    }
-    const longest = Math.max(name.length, ...values.map((v) => String(v instanceof Date ? 'dd mmm yyyy' : v).split('\n')[0].length));
-    const xlWidth = ws.getColumn(i + 1).width;
-    columns.push({
-      name, type: col.type, options: (col.options || []).map((o) => o.slice(0, 40)).slice(0, 30), colors,
-      width: Math.max(90, Math.min(420, Math.round(xlWidth ? xlWidth * 7.5 + 12 : longest * 7.5 + 28))),
-      values: values.map(col.cell),
-    });
-  }
-  if (!columns.length) return null;
-  return { name: ws.name, columns, rows: body.map((_, k) => columns.map((c) => c.values[k])) };
-}
-
-// Excel → new sheets (one per worksheet with data)
+// Excel → new sheets (one per worksheet with data). Rows go in a few at a time, not one query per row.
 app.post('/api/sheets/import', route(async (req, res) => {
   const product = await productFor(req, req.body.productId, 'edit');
   const m = /^data:[\w/.+-]*;base64,([A-Za-z0-9+/=]+)$/.exec(req.body.dataUrl || '');
   if (!m) throw new HttpError(400, 'Please choose an .xlsx file');
-  const book = new ExcelJS.Workbook();
-  try { await book.xlsx.load(Buffer.from(m[1], 'base64')); } catch (err) { throw new HttpError(400, 'That file could not be read as an Excel (.xlsx) sheet'); }
   const [{ rows: people }, { rows: tags }] = await Promise.all([
     peopleOf(product.id),
     db.query('SELECT label, color FROM statuses WHERE NOT is_deleted'),
   ]);
-  const read = book.worksheets.filter((ws) => ws.state === 'visible' || !ws.state).slice(0, 10)
-    .map((ws) => readWorksheet(ws, people, tags)).filter(Boolean);
+  let read;
+  try {
+    read = await excel.readWorkbook(Buffer.from(m[1], 'base64'), { people, tags });
+  } catch (err) {
+    console.error('Excel import:', err.message);
+    throw new HttpError(400, 'That file could not be read as an Excel (.xlsx) sheet');
+  }
   if (!read.length) throw new HttpError(400, 'The Excel file has no data: it needs a header row and at least one filled row');
   const file = text(req.body.name, 80) || 'Imported sheet';
   const ids = [];
-  let rowCount = 0;
-  let colCount = 0;
   await db.tx(async (client) => {
     for (const ws of read) {
       const id = randomUUID();
@@ -2080,21 +1944,36 @@ app.post('/api/sheets/import', route(async (req, res) => {
       const colIds = ws.columns.map(() => randomUUID());
       for (const [i, c] of ws.columns.entries()) {
         await client.query(
-          `INSERT INTO sheet_columns (id, sheet_id, name, type, options, colors, width, sort_order, created_by, updated_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)`,
-          [colIds[i], id, c.name, c.type, c.options, JSON.stringify(c.colors), c.width, i, req.user.id]);
+          `INSERT INTO sheet_columns (id, sheet_id, name, type, options, colors, fonts, width, sort_order, created_by, updated_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)`,
+          [colIds[i], id, c.name, c.type, c.options, JSON.stringify(c.colors), JSON.stringify(c.fonts), c.width, i, req.user.id]);
       }
-      for (const [k, row] of ws.rows.entries()) {
+      // cells: { columnId: value }, styles: { columnId: { bg, fg, b } } (a cell's own colours from Excel)
+      const rows = ws.rows.map((row, k) => {
         const cells = {};
+        const styles = {};
         row.forEach((v, i) => { if (v !== '') cells[colIds[i]] = v; });
-        await client.query('INSERT INTO sheet_rows (id, sheet_id, cells, sort_order, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $5)',
-          [randomUUID(), id, JSON.stringify(cells), k, req.user.id]);
+        ws.styles[k].forEach((s, i) => { if (s) styles[colIds[i]] = s; });
+        return [randomUUID(), JSON.stringify(cells), JSON.stringify(styles), k];
+      });
+      for (let at = 0; at < rows.length; at += 500) {
+        const part = rows.slice(at, at + 500);
+        await client.query(
+          `INSERT INTO sheet_rows (id, sheet_id, cells, styles, sort_order, created_by, updated_by)
+           SELECT x.id, $1, x.cells, x.styles, x.ord, $2, $2 FROM unnest($3::text[], $4::jsonb[], $5::jsonb[], $6::bigint[]) AS x(id, cells, styles, ord)`,
+          [id, req.user.id, part.map((r) => r[0]), part.map((r) => r[1]), part.map((r) => r[2]), part.map((r) => r[3])]);
       }
-      rowCount += ws.rows.length;
-      colCount += ws.columns.length;
     }
   });
-  res.status(201).json({ id: ids[0], sheets: ids.length, rows: rowCount, columns: colCount });
+  // what was read, shown to the person who imported it
+  const report = read.map((ws, k) => ({
+    id: ids[k], name: ws.name, header: ws.header, rows: ws.rows.length, skipped: ws.skipped, more: ws.rows.length >= excel.MAX_ROWS,
+    columns: ws.columns.map((c) => ({ name: c.name, type: c.type, colors: Object.keys(c.colors).length + Object.keys(c.fonts).length })),
+    styled: ws.styles.reduce((t, r) => t + r.filter(Boolean).length, 0),
+  }));
+  res.status(201).json({
+    id: ids[0], sheets: ids.length, rows: report.reduce((t, x) => t + x.rows, 0), columns: report.reduce((t, x) => t + x.columns.length, 0), report,
+  });
 }));
 
 app.patch('/api/sheets/:id', route(async (req, res) => {
@@ -2227,21 +2106,31 @@ const teamsValue = (v) => (v instanceof Date ? v.toISOString().slice(0, 10) : St
 const teamsRows = (rows) => rows.slice(0, TEAMS_ROWS).map((cells, i) =>
   `**${i + 1}.** ${cells.filter(([, v]) => v !== null && v !== '').map(([name, v]) => `${name}: ${teamsValue(v)}`).join(' · ') || '—'}`);
 
-async function sendList(req, product, { title, rows, userIds, note, link, sheetName }) {
-  if (!product.teams_webhook) throw new HttpError(400, 'This app has no Teams channel yet. A super admin can add it in Sanity → Teams channel.');
+// mode 'channel' posts to the app's channel (webhook). mode 'card' sends nothing: it answers the card for the browser
+// to send from the person's own Teams (Microsoft Graph): `card` @mentions the people picked (for a channel),
+// `direct` does not (a chat with each of them), and `people` are who to message.
+async function sendList(req, product, { title, rows, userIds, note, link, sheetName, mode }) {
+  if (mode !== 'card' && !product.teams_webhook) throw new HttpError(400, 'This app has no Teams channel yet. A super admin can add it in Sanity → Teams channel.');
   if (!rows.length) throw new HttpError(400, 'Pick at least one row to send');
   const { rows: people } = await peopleOf(product.id);
   const wanted = Array.isArray(userIds) ? userIds : [];
   const to = people.filter((u) => wanted.includes(u.id));
   const lines = [text(note, 1000), ...teamsRows(rows)];
   if (rows.length > TEAMS_ROWS) lines.push(`… and ${rows.length - TEAMS_ROWS} more in FlowTrace`);
-  if (to.some((u) => !u.teams_email)) lines.push(`For: ${to.filter((u) => !u.teams_email).map(personName).join(', ')}`);
-  const sent = await toTeams(product, {
+  if (mode !== 'card' && to.some((u) => !u.teams_email)) lines.push(`For: ${to.filter((u) => !u.teams_email).map(personName).join(', ')}`);
+  const message = {
     title, lines,
     facts: [['App', product.name], sheetName ? ['Sheet', sheetName] : null, ['Sent by', personName(req.user)], ['Rows', rows.length]].filter(Boolean),
     actions: [['Open in FlowTrace', link]],
     mentions: to.flatMap(mention),
-  });
+  };
+  if (mode === 'card') {
+    return {
+      card: teams.card(message), direct: teams.card({ ...message, mentions: [] }), rows: rows.length,
+      people: to.map((u) => ({ name: personName(u), email: u.teams_email })),
+    };
+  }
+  const sent = await toTeams(product, message);
   if (sent !== 'sent') throw new HttpError(502, sent);
   return { teams: sent, rows: rows.length };
 }
@@ -2258,7 +2147,7 @@ app.post('/api/sheets/:id/teams', route(async (req, res) => {
   const list = rows.filter((r) => wantedRows.has(r.id)).map((r) => picked.map((c) => [c.name, show(c, r.cells[c.id])]));
   res.json(await sendList(req, product, {
     title: `📋 ${sheet.name}`, rows: list, userIds: req.body.userIds, note: req.body.note,
-    link: deeplink(req, `sheet=${sheet.id}`), sheetName: sheet.name,
+    link: deeplink(req, `sheet=${sheet.id}`), sheetName: sheet.name, mode: req.body.mode,
   }));
 }));
 
@@ -2295,39 +2184,47 @@ app.post('/api/issues/teams', route(async (req, res) => {
   const list = rows.map((r) => keys.map((k) => [ISSUE_COLUMNS[k][0], ISSUE_COLUMNS[k][1](r) || null]));
   res.json(await sendList(req, product, {
     title: `🐞 ${rows.length} issue${rows.length === 1 ? '' : 's'}`, rows: list, userIds: req.body.userIds, note: req.body.note,
-    link: rows.length === 1 ? deeplink(req, `screen=${rows[0].screen_id}`) : deeplink(req, ''),
+    link: rows.length === 1 ? deeplink(req, `screen=${rows[0].screen_id}`) : deeplink(req, ''), mode: req.body.mode,
   }));
 }));
 
-// ---- issue notifications: assignees are @mentioned when an issue is given to them, and assignees and the one who
+// ---- issue notifications: assignees are told when an issue is given to them, and assignees and the one who
 // wrote it when its status changes (never the person who made the change). Assignees are names: they are matched
 // to logins of the app by name or username.
+// They are @mentioned on the app's channel (webhook, in the background), and the answer carries `notify`:
+// { card, people: [{ name, email }] } for the browser to message each of them directly from the signed-in
+// person's own Teams (Microsoft Graph), when they connected it.
 
 async function notifyIssue(req, productId, issueId, { added = [], statusFrom = null }) {
   const product = await live('products', productId, '*');
-  if (!product.teams_webhook) return;
   const { rows: [r] } = await db.query(`${ISSUE_SELECT} WHERE c.id = $1`, [issueId]);
-  if (!r) return;
+  if (!r) return undefined;
   const { rows: people } = await peopleOf(productId);
   const login = (name) => people.find((u) => [u.name, u.username].some((n) => n && n.toLowerCase() === String(name).toLowerCase()));
   const newly = added.map(login).filter(Boolean);
   const changed = statusFrom !== null && statusFrom !== r.status;
   const watchers = changed ? [...(r.assignees || []).map(login), people.find((u) => u.id === r.created_by)].filter(Boolean) : [];
   const to = [...new Map([...newly, ...watchers].filter((u) => u.id !== req.user.id).map((u) => [u.id, u])).values()];
-  if (!to.length) return;
+  if (!to.length) return undefined;
   const { rows: [from] } = changed ? await db.query('SELECT label FROM statuses WHERE id = $1', [statusFrom]) : { rows: [] };
   const status = r.status_label || r.status;
-  const sent = await toTeams(product, {
+  const message = {
     title: changed ? `🔄 ${from ? from.label : statusFrom} → ${status}: ${r.screen_name}` : `🐞 New issue for you: ${r.screen_name}`,
-    lines: [r.text, r.remarks ? `_${r.remarks}_` : '', to.some((u) => !u.teams_email) ? `For: ${to.filter((u) => !u.teams_email).map(personName).join(', ')}` : ''],
+    lines: [r.text, r.remarks ? `_${r.remarks}_` : ''],
     facts: [['App', product.name], ['Where', `${r.module_name} › ${r.flow_name} › ${r.screen_name}`],
       ['Priority', r.priority[0].toUpperCase() + r.priority.slice(1)], ['Status', status], ['By', personName(req.user)]],
     actions: [['Open the screen', deeplink(req, `screen=${r.screen_id}`)]],
-    mentions: to.flatMap(mention),
-  });
-  if (sent !== 'sent') console.error('Issue notification:', sent);
+  };
+  if (product.teams_webhook) {
+    const missing = to.filter((u) => !u.teams_email);
+    toTeams(product, { ...message, lines: [...message.lines, missing.length ? `For: ${missing.map(personName).join(', ')}` : ''], mentions: to.flatMap(mention) })
+      .then((sent) => { if (sent !== 'sent') console.error('Issue notification:', sent); });
+  }
+  const direct = to.filter((u) => u.teams_email);
+  return direct.length ? { card: teams.card(message), people: direct.map((u) => ({ name: personName(u), email: u.teams_email })) } : undefined;
 }
-const notifyLater = (...args) => { notifyIssue(...args).catch((err) => console.error('Issue notification:', err.message)); };
+// never fails the request that changed the issue
+const notifyOf = (...args) => notifyIssue(...args).catch((err) => { console.error('Issue notification:', err.message); return undefined; });
 
 // The sheet as Excel: numbers as numbers, dates as dates, people / flows / screens by name, totals under number columns
 app.get('/api/sheets/:id/export', route(async (req, res) => {
@@ -2342,10 +2239,15 @@ app.get('/api/sheets/:id/export', route(async (req, res) => {
   }));
   rows.forEach((r) => {
     const row = ws.addRow(Object.fromEntries(cols.map((c) => [c.id, show(c, r.cells[c.id])])));
-    // dropdown values keep their colour
+    // dropdown values keep their colours, other cells their own (from an imported Excel)
+    const argb = (hex) => ({ argb: `FF${hex.slice(1).toUpperCase()}` });
     cols.forEach((c, i) => {
-      const hex = c.type === 'select' && (c.colors || {})[r.cells[c.id]];
-      if (hex) row.getCell(i + 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${hex.slice(1).toUpperCase()}` } };
+      const own = (r.styles || {})[c.id] || {};
+      const bg = (c.type === 'select' && (c.colors || {})[r.cells[c.id]]) || own.bg;
+      const fg = (c.type === 'select' && (c.fonts || {})[r.cells[c.id]]) || own.fg;
+      const cell = row.getCell(i + 1);
+      if (bg) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: argb(bg) };
+      if (fg || own.b) cell.font = { ...(fg ? { color: argb(fg) } : {}), ...(own.b ? { bold: true } : {}) };
     });
   });
   ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };

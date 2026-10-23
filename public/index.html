@@ -19,6 +19,11 @@
   <link rel="stylesheet" href="/styles.css">
   <!-- after styles.css: sets the theme and makes its dark rules before the page shows -->
   <script src="/theme.js"></script>
+  <!-- The Microsoft sign-in popup comes back to this page with #code=…&state=… (FlowTrace's own links never have
+       those): the window that opened it reads the answer and closes it, so the app does not start in there -->
+  <script>
+    window.msalPopup = /[?#&](code|error)=/.test(location.search + location.hash) && /[?#&]state=/.test(location.search + location.hash);
+  </script>
 </head>
 <body class="flex min-h-screen flex-col bg-slate-50 font-body text-slate-800 antialiased">
   <div id="progress" class="progress" role="progressbar" aria-label="Loading"></div>
@@ -53,8 +58,8 @@
   <!-- Sanity is its own page: shown instead of the board (and the module tabs) -->
   <main id="sanityPage" class="mx-auto hidden w-full max-w-[1400px] px-6 py-6"></main>
 
-  <!-- Sheets (Excel) is its own page too -->
-  <main id="sheetsPage" class="mx-auto hidden w-full max-w-[1400px] px-6 py-6"></main>
+  <!-- Sheets (Excel) is its own page too, using the whole window -->
+  <main id="sheetsPage" class="sheets-full hidden"></main>
 
   <!-- Last thing on the page: the body is a full-height column, so on short pages it still sits at the bottom -->
   <footer class="site-footer">
@@ -142,6 +147,10 @@
     <form id="teamsForm" class="popup-card max-w-lg" novalidate></form>
   </div>
 
+  <div id="importModal" class="overlay hidden">
+    <div id="importBody" class="popup-card max-w-2xl"></div>
+  </div>
+
   <div id="copyModal" class="overlay hidden">
     <form id="copyForm" class="popup-card max-w-md"></form>
   </div>
@@ -159,6 +168,7 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
+  <script src="/graph.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
