@@ -352,6 +352,33 @@ html.dark .dg-tools .icon-btn { color: #475569; }
 .sk-ghost { fill: rgba(13, 153, 255, .06); stroke: #0d99ff; stroke-dasharray: 6 4; }
 .sk-target { fill: none; stroke: #0d99ff; opacity: .7; }
 .sk-marquee { fill: rgba(13, 153, 255, .08); stroke: #0d99ff; }
+/* quick create: dots on a selected box; hovering one shows a button and the next box, fading in */
+.sk-dot { fill: #8ecbff; stroke: #fff; stroke-width: 2; animation: sk-in .16s ease-out both; transform-box: fill-box; transform-origin: center; }
+.sk-dot-btn { animation: sk-pop .18s cubic-bezier(.3, 1.4, .6, 1) both; transform-box: fill-box; transform-origin: center; }
+.sk-dot-btn circle { fill: #0d99ff; filter: drop-shadow(0 2px 4px rgba(13, 153, 255, .35)); }
+.sk-dot-btn path { fill: none; stroke: #fff; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.sk-preview { animation: sk-fade .22s ease-out both; }
+.sk-preview path:first-child { fill: none; stroke: #c4c4c4; stroke-linecap: round; stroke-linejoin: round; }
+.sk-preview .box { fill: rgba(0, 0, 0, .07); stroke: #d4d4d4; animation: sk-grow .22s ease-out both; transform-box: fill-box; transform-origin: center; }
+.sk-born { animation: sk-pop .22s cubic-bezier(.3, 1.4, .6, 1) both; transform-box: fill-box; transform-origin: center; }
+/* a step between two boxes: the + on an arrow, its menu, and the arrow a dragged box drops into */
+.sk-wire-btn { animation: sk-pop .16s ease-out both; transform-box: fill-box; transform-origin: center; }
+.sk-wire-btn circle { fill: #fff; stroke: #0d99ff; stroke-width: 2; }
+.sk-wire-btn path { fill: none; stroke: #0d99ff; stroke-width: 2; stroke-linecap: round; }
+.sk-wire-btn.on circle { fill: #0d99ff; }
+.sk-wire-btn.on path { stroke: #fff; }
+.sk-wire { fill: none; stroke: #0d99ff; stroke-linecap: round; opacity: .35; }
+.sk-insert-menu { flex-direction: column; align-items: stretch; gap: 0; min-width: 160px; padding: 6px; transform: translateX(-50%); animation: sk-fade .14s ease-out both; }
+.sk-insert-h { padding: 2px 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: #8d8d8d; }
+.sk-insert-opt { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; font-size: 13px; font-weight: 500; color: #1e1e1e; text-align: left; }
+.sk-insert-opt:hover { background: #0d99ff; color: #fff; }
+@keyframes sk-in { from { opacity: 0; transform: scale(.4); } }
+@keyframes sk-pop { from { opacity: 0; transform: scale(.6); } }
+@keyframes sk-grow { from { opacity: 0; transform: scale(.85); } }
+@keyframes sk-fade { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .sk-dot, .sk-dot-btn, .sk-preview, .sk-preview .box, .sk-born, .sk-wire-btn, .sk-insert-menu { animation: none; } }
+.sk-guide { stroke: #f24822; }
+.sk-stage[data-tool="select"].over-plus .sk-svg { cursor: pointer; }
 .sk-badge { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px; background: #14ae5c; color: white; font: 600 11px/18px Inter, system-ui, sans-serif; }
 .sk-island { position: absolute; z-index: 2; display: flex; align-items: center; gap: 2px; padding: 5px; border-radius: 12px; background: #fff;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, .06), 0 4px 18px rgba(0, 0, 0, .12); }
@@ -397,6 +424,7 @@ html.dark .dg-tools .icon-btn { color: #475569; }
 .sk-notes.warn li { background: #fffbeb; color: #92400e; }
 .sk-legend { display: flex; flex-direction: column; gap: 6px; margin-top: auto; padding-top: 12px; border-top: 1px solid #f1f5f9; font-size: 12px; color: #475569; }
 .sk-legend p { display: flex; align-items: flex-start; gap: 8px; }
+.sk-legend p > svg { flex-shrink: 0; margin-top: 1px; }
 .sk-legend .sk-ico, .sk-legend .cond-diamond { margin-top: 3px; }
 @media (max-width: 860px) {
   .sk-body { flex-direction: column; }
@@ -412,6 +440,11 @@ html.dark .sk-tool:hover, html.dark .sk-zoom:hover { background: #3d3d3d; }
 html.dark .sk-tool.active { background: #0d99ff; color: white; }
 html.dark .sk-empty-title { color: #f0f0f0; }
 html.dark .sk-empty { color: #a0a0a0; }
+html.dark .sk-insert-opt { color: #f0f0f0; }
+html.dark .sk-preview .box { fill: rgba(255, 255, 255, .06); stroke: #555; }
+html.dark .sk-preview path:first-child { stroke: #666; }
+html.dark .sk-wire-btn circle { fill: #2c2c2c; }
+html.dark .sk-wire-btn.on circle { fill: #0d99ff; }
 html.dark .sk-swatch.on { box-shadow: 0 0 0 2px #2c2c2c, 0 0 0 4px #0d99ff; }
 
 /* screen popup: ← → sit on the dialog's left and right edges, halfway down */

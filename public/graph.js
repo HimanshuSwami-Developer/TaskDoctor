@@ -4,12 +4,12 @@
  * application": MS_CLIENT_ID / MS_TENANT_ID in .env) and sends Adaptive Cards made by the server through Microsoft
  * Graph, as you:
  *   - a direct (1:1) chat message to each person, found by their Teams email   (Chat.Create, ChatMessage.Send)
- *   - a post in a channel of a team you are in                                   (Team.ReadBasic.All, Channel.ReadBasic.All, ChannelMessage.Send,
+ *   - a message in one of your own chats: a person you chat with, or a group chat (Chat.ReadBasic, ChatMessage.Send,
  *                                                                                 User.ReadBasic.All to @mention people)
  * The sign-in is kept in this browser (localStorage) until you disconnect, so later messages need no popup.
  *
  * window.flowGraph: setup(config), ready(), account(), connect(), disconnect(), autoDm(on?),
- *                   sendDirect(people, card), teamsList(), channelsOf(teamId), sendChannel(teamId, channelId, card),
+ *                   sendDirect(people, card), chatsList(), sendChat(chatId, card),
  *                   notify({ card, people })   (quiet: only when connected and auto messages are on; never a popup)
  */
 window.flowGraph = (() => {
@@ -17,7 +17,7 @@ window.flowGraph = (() => {
   const GRAPH = 'https://graph.microsoft.com/v1.0';
   const SCOPES = {
     direct: ['User.Read', 'Chat.Create', 'ChatMessage.Send'],
-    channel: ['User.Read', 'User.ReadBasic.All', 'Team.ReadBasic.All', 'Channel.ReadBasic.All', 'ChannelMessage.Send'], // ReadBasic: @mentions
+    chats: ['User.Read', 'User.ReadBasic.All', 'Chat.ReadBasic', 'ChatMessage.Send'], // User.ReadBasic.All: @mentions
   };
   const PREF = 'taskSheet.teamsAutoDm';
 
@@ -68,7 +68,7 @@ window.flowGraph = (() => {
     return store(PREF) !== '0';
   };
 
-  // An access token for kind ('direct' | 'channel'). interactive: a popup may open (only from a click).
+  // An access token for kind ('direct' | 'chats'). interactive: a popup may open (only from a click).
   async function token(kind, interactive) {
     if (!config) throw new Error('Teams sign-in is not set up on this server.');
     await ready();
@@ -100,7 +100,7 @@ window.flowGraph = (() => {
 
   async function call(tok, method, path, body) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const res = await fetch(`${GRAPH}${path}`, {
+      const res = await fetch(path.startsWith('https://') ? path : `${GRAPH}${path}`, { // a full URL: @odata.nextLink
         method,
         headers: { Authorization: `Bearer ${tok}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
         body: body ? JSON.stringify(body) : undefined,
@@ -119,6 +119,17 @@ window.flowGraph = (() => {
       return data;
     }
     throw new Error('Teams is busy. Try again in a minute.');
+  }
+
+  // Every page of a Graph list (it answers a page at a time, with @odata.nextLink to the next one)
+  async function all(tok, path, max = Infinity) {
+    const out = [];
+    for (let next = path; next && out.length < max;) {
+      const d = await call(tok, 'GET', next);
+      out.push(...((d && d.value) || []));
+      next = d && d['@odata.nextLink'];
+    }
+    return out;
   }
 
   async function whoAmI(tok) {
@@ -202,21 +213,24 @@ window.flowGraph = (() => {
     return directTo(tok, n.people, n.card);
   }
 
-  /** Teams you are in → [{ id, name }] */
-  async function teamsList() {
-    const tok = await token('channel', true);
-    const d = await call(tok, 'GET', '/me/joinedTeams?$select=id,displayName');
-    return (d.value || []).map((t) => ({ id: t.id, name: t.displayName })).sort((a, b) => a.name.localeCompare(b.name));
+  /** Your chats → [{ id, name, kind: 'person' | 'group' }]: people you chat with (1:1) and group chats you are in,
+   *  by name. A 1:1 chat is named after the other person; a group chat by its topic, else by who is in it. */
+  async function chatsList() {
+    const tok = await token('chats', true);
+    const self = await whoAmI(tok);
+    const list = await all(tok, '/me/chats?$expand=members&$top=50', 500); // the most anyone scrolls through
+    const others = (c) => (c.members || []).filter((m) => m.userId !== self.id).map((m) => m.displayName).filter(Boolean);
+    return list.filter((c) => c.chatType === 'oneOnOne' || c.chatType === 'group')
+      .map((c) => (c.chatType === 'oneOnOne'
+        ? { id: c.id, kind: 'person', name: others(c)[0] || self.displayName }
+        : { id: c.id, kind: 'group', name: c.topic || others(c).join(', ') || 'Group chat' }))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
-  async function channelsOf(teamId) {
-    const tok = await token('channel', true);
-    const d = await call(tok, 'GET', `/teams/${encodeURIComponent(teamId)}/channels?$select=id,displayName`);
-    return (d.value || []).map((c) => ({ id: c.id, name: c.displayName }));
-  }
-  async function sendChannel(teamId, channelId, card) {
-    const tok = await token('channel', true);
-    return call(tok, 'POST', `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages`, await cardMessage(card, tok));
+  /** A message in one of your chats → the Teams message ({ id, createdDateTime, … }) */
+  async function sendChat(chatId, card) {
+    const tok = await token('chats', true);
+    return call(tok, 'POST', `/chats/${encodeURIComponent(chatId)}/messages`, await cardMessage(card, tok));
   }
 
-  return { setup, configured, ready, account, autoDm, connect, disconnect, sendDirect, notify, teamsList, channelsOf, sendChannel };
+  return { setup, configured, ready, account, autoDm, connect, disconnect, sendDirect, notify, chatsList, sendChat };
 })();

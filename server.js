@@ -699,7 +699,7 @@ app.post('/api/screens/:id/branches/:branchId/path', route(async (req, res) => {
 
 // Start a new flow from a plain screen, e.g. screens 1–3 are shared and a second journey continues from screen 4.
 app.post('/api/screens/:id/extend', route(async (req, res) => {
-  await allowed(req, 'screens', req.params.id, 'full');
+  await allowed(req, 'screens', req.params.id, 'developer');
   const screen = await live('screens', req.params.id, '*');
   if (screen.type === 'condition') throw new HttpError(400, 'Use Extend path on a branch of the condition');
   const flow = await live('flows', screen.flow_id, '*');
@@ -767,7 +767,6 @@ async function buildSketch(client, req, root, steps) {
           `INSERT INTO screens (id, flow_id, name, kind, sort_order, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $6)`,
           [id, flow.id, name, step.type === 'popup' ? 'popup' : 'screen', (order += 1), req.user.id]);
         for (const ext of Array.isArray(step.extends) ? step.extends : []) {
-          need(req, 'full'); // same as "Extend a flow from a screen" on the board
           const path = await insertFlow(flow, text(ext && ext.name) || `${flow.name} › ${name}`, { screenId: id });
           await lane(path, ext.steps, depth + 1);
         }
@@ -2213,10 +2212,50 @@ app.post('/api/issues/teams', route(async (req, res) => {
   const keys = (Array.isArray(req.body.columns) ? req.body.columns : []).filter((k) => ISSUE_COLUMNS[k]);
   if (!keys.length) throw new HttpError(400, 'Pick at least one column to send');
   const list = rows.map((r) => keys.map((k) => [ISSUE_COLUMNS[k][0], ISSUE_COLUMNS[k][1](r) || null]));
-  res.json(await sendList(req, product, {
+  const send = sendList(req, product, {
     title: `🐞 ${rows.length} issue${rows.length === 1 ? '' : 's'}`, rows: list, userIds: req.body.userIds, note: req.body.note,
     link: rows.length === 1 ? deeplink(req, `screen=${rows[0].screen_id}`) : deeplink(req, ''), mode: req.body.mode,
-  }));
+  });
+  // 'card': the browser sends it from the person's own Teams and reports back (below); the app's channel is sent here
+  if (req.body.mode === 'card') { res.json(await send); return; }
+  const share = { productId: product.id, issueIds: rows.map((r) => r.id), target: 'app', destination: `${product.name} channel`, note: req.body.note };
+  try {
+    const out = await send;
+    await logShare(req, { ...share, ok: true });
+    res.json(out);
+  } catch (err) {
+    await logShare(req, { ...share, ok: false, error: err.message });
+    throw err;
+  }
+}));
+
+// Keep a record of an issue send on Teams (never fails the send itself)
+function logShare(req, s) {
+  return db.query(
+    `INSERT INTO teams_shares (id, product_id, issue_ids, target, chat_id, destination, note, message_id, ok, error, created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)`,
+    [randomUUID(), s.productId, s.issueIds, s.target, text(s.chatId, 200), text(s.destination, 300),
+      text(s.note, 1000), text(s.messageId, 200), Boolean(s.ok), text(s.error, 1000), req.user.id])
+    .catch((err) => console.error('Teams share log:', err.message));
+}
+
+// The browser sent issues from the person's own Teams (Microsoft Graph): how it went, to keep with the issues.
+// Graph itself decided whether they may post there; this only records what the browser says happened.
+app.post('/api/issues/teams/log', route(async (req, res) => {
+  const product = await productFor(req, req.body.productId, 'edit');
+  const target = ['mine', 'direct'].includes(req.body.target) ? req.body.target : null;
+  if (!target) throw new HttpError(400, 'target must be mine or direct');
+  const ids = Array.isArray(req.body.ids) ? req.body.ids.filter((x) => typeof x === 'string').slice(0, 500) : [];
+  const { rows } = await db.query(
+    `SELECT c.id FROM comments c JOIN screens s ON s.id = c.screen_id JOIN flows f ON f.id = s.flow_id JOIN modules m ON m.id = f.module_id
+     WHERE c.id = ANY($1) AND m.product_id = $2`, [ids, product.id]);
+  if (!rows.length) throw new HttpError(400, 'No issues of this app');
+  const b = req.body;
+  await logShare(req, {
+    productId: product.id, issueIds: rows.map((r) => r.id), target, chatId: b.chatId,
+    destination: b.destination, note: b.note, messageId: b.messageId, ok: b.ok, error: b.error,
+  });
+  res.status(201).json({ ok: true });
 }));
 
 // ---- issue notifications: assignees are told when an issue is given to them, and assignees and the one who

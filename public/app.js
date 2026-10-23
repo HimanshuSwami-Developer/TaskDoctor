@@ -161,7 +161,7 @@ $(function () {
     view: { label: 'View only', hint: 'Can see screens and flow videos in their apps. Cannot see issues or change anything.' },
     edit: { label: 'Update tasks', hint: 'Can add and update issues (status, priority, assignees, remarks). Cannot change screens, images or videos.' },
     tester: { label: 'Tester', hint: 'Can add and update issues and move them to any status (Pending, Release for Testing, Complete …). Cannot change screens, images or videos.' },
-    developer: { label: 'Developer', hint: 'Update tasks, plus add, rename and delete modules, flows, screens, popups and conditions (with their branch paths), drag screens into a new order, and upload screen images. Can only move an issue between Pending and Release for Testing.' },
+    developer: { label: 'Developer', hint: 'Update tasks, plus add, rename and delete modules, flows, screens, popups and conditions (with their branch paths), extend a new flow from a screen, drag screens into a new order, and upload screen images. Can only move an issue between Pending and Release for Testing.' },
     full: { label: 'Full', hint: 'Can do everything inside their apps: create, edit and delete modules, flows, screens and issues.' },
     super: { label: 'Super admin', hint: 'Everything in every app, plus this admin dashboard and the status tags.' },
   };
@@ -175,10 +175,10 @@ $(function () {
   // full adds videos, copying, screen paths and flow order. View-only logins don't see issues at all.
   const NEEDS = {
     super: '[data-action="add-product"], [data-rename-product], [data-delete-product], [data-action="manage-statuses"], [data-action="admin"]',
-    full: `[data-move-flow], [data-copy-screen], [data-delete-comment], [data-remove-video], [data-extend-screen], [data-move-path]`,
+    full: `[data-move-flow], [data-copy-screen], [data-delete-comment], [data-remove-video], [data-move-path]`,
     developer: `[data-action="add-module"], [data-rename-module], [data-delete-module], [data-remove-image], [data-action="add-flow"], [data-rename-flow], [data-delete-flow],
       .add-screen, .dg-add-end, .dg-plus, [data-edit-screen], [data-delete-screen],
-      [data-add-condition], [data-insert-condition], [data-rename-condition], [data-cond-tool], [data-add-branch], [data-remove-branch], [data-extend-path],
+      [data-add-condition], [data-insert-condition], [data-rename-condition], [data-cond-tool], [data-add-branch], [data-remove-branch], [data-extend-path], [data-extend-screen],
       [data-dg-new="condition"], [data-dg-branch-add], [data-dg-branch-remove], [data-mark-nav], [data-remove-link], [data-sketch-module], [data-sketch-flow]`,
     edit: '.add-comment, [data-pen], [data-action="writer"], [data-remove-person], [data-bugs], [data-flip], [data-open-sheet], .issues-panel',
   };
@@ -1633,7 +1633,7 @@ $(function () {
   // "Create" reads the drawing (sketchPlan) and makes everything in one call:
   // - the one box no arrow points into is the first screen; following the arrows gives the order of the flow
   // - a screen with more than one arrow out continues along the unlabelled arrow that points most to the right;
-  //   each other arrow starts a new flow from that screen, named after the arrow's text (Full access)
+  //   each other arrow starts a new flow from that screen, named after the arrow's text
   // - every arrow out of a condition is a branch named after its text: to a box not placed yet it becomes the
   //   branch's path (1.1, 1.2 … on the board); to a screen already placed it points back at that screen
   // The drawing is kept in this browser (per module, or per flow when drawing into one) until it is created.
@@ -1728,6 +1728,249 @@ $(function () {
   }
   const skShapeAt = (p, not) => sketch.els.slice().reverse().find((e) => SK_SHAPES.includes(e.type) && e.id !== not && skInside(e, p, 10 / sketch.zoom));
 
+  // ---- quick create, FigJam style: a selected box shows a dot on each side; hovering a dot turns it into an
+  // arrow button and previews the next box (grey, fading in); a click makes it, joined by an arrow, ready to name.
+
+  const SK_SIDES = [[1, 0], [0, 1], [-1, 0], [0, -1]]; // right, below, left, above
+  const SK_GAP = 80;
+  // the box the dots show on: the one selected (alone)
+  function skPlusTarget() {
+    if (sketch.drag || sketch.editing || sketch.tool !== 'select' || sketch.space || sketch.insertMenu) return null;
+    const one = sketch.sel.size === 1 && skFind([...sketch.sel][0]);
+    return one && SK_SHAPES.includes(one.type) ? one : null;
+  }
+  function skPlusPoints(e) {
+    const off = 28 / sketch.zoom;
+    const [cx, cy] = skCenter(e);
+    return [[e.x + e.w + off, cy], [cx, e.y + e.h + off], [e.x - off, cy], [cx, e.y - off]];
+  }
+  function skPlusAt(p) {
+    const e = skPlusTarget();
+    if (!e) return null;
+    const side = skPlusPoints(e).findIndex((q) => Math.hypot(p[0] - q[0], p[1] - q[1]) <= 14 / sketch.zoom);
+    return side >= 0 ? { id: e.id, side } : null;
+  }
+  // after a condition comes a screen; otherwise the same kind (and size) as the box it grows from
+  const skQuickType = (from) => (from.type === 'condition' ? 'screen' : from.type);
+  const skSizeOf = (type) => (type === 'condition' ? { w: SK.condW, h: SK.condH } : { w: SK.w, h: SK.h });
+  function skQuickSize(from) {
+    const type = skQuickType(from);
+    return type === from.type ? { w: from.w, h: from.h } : skSizeOf(type);
+  }
+  // where the next box on `side` of `from` goes: SK_GAP away, or beside a box already there
+  function skQuickSpot(from, side) {
+    const type = skQuickType(from);
+    const { w, h } = skQuickSize(from);
+    const [dx, dy] = SK_SIDES[side];
+    const [fx, fy] = skCenter(from);
+    const c = [fx + dx * (from.w / 2 + SK_GAP + w / 2), fy + dy * (from.h / 2 + SK_GAP + h / 2)];
+    const busy = ([x, y]) => sketch.els.some((o) => o.type !== 'arrow'
+      && x - w / 2 < o.x + o.w + 20 && x + w / 2 > o.x - 20 && y - h / 2 < o.y + o.h + 20 && y + h / 2 > o.y - 20);
+    const step = dx ? h + 40 : w + 40;
+    const tries = [0, 1, -1, 2, -2, 3, -3].map((k) => [c[0] + (dx ? 0 : k * step), c[1] + (dx ? k * step : 0)]);
+    return { type, w, h, c: tries.find((q) => !busy(q)) || c };
+  }
+  // a new box next to `from` on `side` (or centred at `at`), joined to it, then its name is written
+  function skQuick(id, side, at) {
+    const from = skFind(id);
+    if (!from) return;
+    const spot = skQuickSpot(from, side);
+    const { type, w, h } = spot;
+    const c = at || spot.c;
+    skRemember();
+    const el = { id: skId(), type, x: c[0] - w / 2, y: c[1] - h / 2, w, h, text: '', ...(from.color && type === from.type ? { color: from.color } : {}) };
+    sketch.els.push(el);
+    const [fx, fy] = skCenter(from);
+    const a = { id: skId(), type: 'arrow', from: from.id, to: el.id, text: '', x1: fx, y1: fy, x2: c[0], y2: c[1] };
+    skAutoBend(a);
+    sketch.els.push(a);
+    skBorn(el.id);
+    sketch.sel = new Set([el.id]);
+    skChanged();
+    // out of a condition the arrow is a branch: name it first (Enter goes on to the new box)
+    if (from.type === 'condition') skEdit(a.id, true, () => skEdit(el.id, true));
+    else skEdit(el.id, true);
+  }
+  // a box just made pops in (only while it is new: the canvas is redrawn on every change)
+  function skBorn(id) { sketch.born = { id, t: Date.now() }; }
+  const skIsBorn = (id) => sketch.born && sketch.born.id === id && Date.now() - sketch.born.t < 350;
+
+  // ---- a step between two boxes: hover an arrow, click its + and pick Screen / Condition / Popup, or drop a box
+  // that is not joined to anything onto an arrow. A → B becomes A → new → B; A's branch name stays on the first arrow.
+
+  const skJoined = (a) => a && a.type === 'arrow' && a.from && a.to && skFind(a.from) && skFind(a.to);
+  function skInsertTarget() {
+    if (sketch.drag || sketch.editing || sketch.tool !== 'select' || sketch.space) return null;
+    if (sketch.insertMenu) return skFind(sketch.insertMenu);
+    const hover = sketch.hoverArrow && skFind(sketch.hoverArrow);
+    if (skJoined(hover)) return hover;
+    const one = sketch.sel.size === 1 && skFind([...sketch.sel][0]);
+    return skJoined(one) ? one : null;
+  }
+  const skInsertPoint = (a) => skCurve(a)[a.text ? 12 : 8]; // beside the branch name, when there is one
+  function skInsertAt(p) {
+    const a = skInsertTarget();
+    if (!a) return null;
+    const [x, y] = skInsertPoint(a);
+    return Math.hypot(p[0] - x, p[1] - y) <= 13 / sketch.zoom ? a : null;
+  }
+  // boxes after `start` (following the arrows), but none that lead back to `stop`: they move to make room
+  function skDownstream(start, stop) {
+    const arrows = sketch.els.filter((x) => x.type === 'arrow' && x.from && x.to);
+    const before = new Set();
+    for (const q = [stop]; q.length;) {
+      const id = q.pop();
+      if (before.has(id)) continue;
+      before.add(id);
+      arrows.forEach((x) => { if (x.to === id) q.push(x.from); });
+    }
+    const after = new Set();
+    for (const q = [start]; q.length;) {
+      const id = q.pop();
+      if (after.has(id) || before.has(id)) continue;
+      after.add(id);
+      arrows.forEach((x) => { if (x.from === id) q.push(x.to); });
+    }
+    return sketch.els.filter((x) => after.has(x.id));
+  }
+  // A → B becomes A → el → B (el is already on the canvas)
+  function skSplit(a, el) {
+    const to = a.to;
+    a.to = el.id;
+    a.bend = 0;
+    skAutoBend(a);
+    const [x1, y1] = skCenter(el);
+    const [x2, y2] = skCenter(skFind(to));
+    const b = { id: skId(), type: 'arrow', from: el.id, to, text: el.type === 'condition' ? 'Success' : '', x1, y1, x2, y2 };
+    skAutoBend(b);
+    sketch.els.push(b);
+  }
+  // room for a w × h box on arrow a, with a gap on both sides (if there is none, its end box and what follows it
+  // move along) → the centre for the box
+  function skMakeRoom(a, w, h) {
+    const A = skFind(a.from);
+    const B = skFind(a.to);
+    const [ax, ay] = skCenter(A);
+    const [bx, by] = skCenter(B);
+    const len = Math.hypot(bx - ax, by - ay) || 1;
+    const d = [(bx - ax) / len, (by - ay) / len];
+    const need = Math.abs(d[0]) * w + Math.abs(d[1]) * h + 2 * 56;
+    const [e1, e2] = [skEdge(A, [bx, by]), skEdge(B, [ax, ay])];
+    const gap = Math.hypot(e2[0] - e1[0], e2[1] - e1[1]);
+    if (gap < need) skDownstream(B.id, A.id).forEach((x) => { x.x += d[0] * (need - gap); x.y += d[1] * (need - gap); });
+    const p1 = skEdge(A, skCenter(B));
+    const p2 = skEdge(B, [ax, ay]);
+    return [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2];
+  }
+  function skInsert(arrowId, type) {
+    const a = skFind(arrowId);
+    if (!skJoined(a)) return;
+    skRemember();
+    const { w, h } = skSizeOf(type);
+    const mid = skMakeRoom(a, w, h);
+    const el = { id: skId(), type, x: mid[0] - w / 2, y: mid[1] - h / 2, w, h, text: '' };
+    sketch.els.push(el);
+    skSplit(a, el);
+    sketch.insertMenu = null;
+    sketch.hoverArrow = null;
+    skBorn(el.id);
+    sketch.sel = new Set([el.id]);
+    skChanged();
+    skEdit(el.id, true);
+  }
+  // the arrow a dragged box would drop into: the box alone, joined to nothing, over a joined arrow
+  function skWireUnder(el) {
+    if (!el || !SK_SHAPES.includes(el.type) || sketch.els.some((x) => x.type === 'arrow' && (x.from === el.id || x.to === el.id))) return null;
+    return sketch.els.find((x) => skJoined(x) && skCurve(x).slice(3, 14).some((q) => skInside(el, q))) || null;
+  }
+
+  // ---- the layer over the drawing: dots, the next-box preview and the + on an arrow. It is only redrawn when it
+  // changes, so its animations play once (the drawing under it is redrawn on every move).
+  function skOverlay() {
+    const z = sketch.zoom;
+    const px = 1 / z;
+    const box = skPlusTarget();
+    const wire = skInsertTarget();
+    const key = JSON.stringify([z, box && [box.id, box.x, box.y, box.w, box.h, box.type], sketch.hoverPlus,
+      wire && [wire.id, skInsertPoint(wire)], sketch.insertMenu, sketch.hoverInsert]);
+    const $g = $('#sketchBody .sk-over').attr('transform', `translate(${sketch.panX} ${sketch.panY}) scale(${z})`);
+    skInsertMenu(wire);
+    if (key === sketch.overlayKey) return;
+    sketch.overlayKey = key;
+    const out = [];
+    if (box) {
+      const hovered = sketch.hoverPlus;
+      if (hovered >= 0) {
+        // the next box, in grey, with its arrow
+        const { type, w, h, c } = skQuickSpot(box, hovered);
+        const ghost = { type, x: c[0] - w / 2, y: c[1] - h / 2, w, h };
+        const p1 = skEdge(box, c);
+        const p2 = skEdge(ghost, skCenter(box));
+        const ang = Math.atan2(p2[1] - p1[1], p2[0] - p1[0]);
+        const head = (sgn) => `${p2[0] - 11 * Math.cos(ang + sgn * 0.5)} ${p2[1] - 11 * Math.sin(ang + sgn * 0.5)}`;
+        out.push(`<g class="sk-preview">
+          <path d="M${p1[0]} ${p1[1]}L${p2[0]} ${p2[1]}M${head(1)}L${p2[0]} ${p2[1]}L${head(-1)}" style="stroke-width:${2.5 * px}"/>
+          ${type === 'condition'
+    ? `<path class="box" d="M${c[0]} ${ghost.y}L${ghost.x + w} ${c[1]}L${c[0]} ${ghost.y + h}L${ghost.x} ${c[1]}Z" style="stroke-width:${1.5 * px}"/>`
+    : `<rect class="box" x="${ghost.x}" y="${ghost.y}" width="${w}" height="${h}" rx="10" style="stroke-width:${1.5 * px}"/>`}
+        </g>`);
+      }
+      skPlusPoints(box).forEach(([x, y], i) => {
+        if (i === hovered) {
+          // the dot grows into a blue button with an arrow pointing where the box goes
+          const deg = [-90, 0, 90, 180][i];
+          out.push(`<g transform="translate(${x} ${y}) scale(${px})"><g class="sk-dot-btn">
+            <circle r="15"/><path d="M0 -6V6M-5 1.5L0 6L5 1.5" transform="rotate(${deg})"/></g></g>`);
+        } else {
+          out.push(`<g transform="translate(${x} ${y}) scale(${px})"><circle class="sk-dot" r="5.5"/></g>`);
+        }
+      });
+    }
+    if (wire) {
+      const [x, y] = skInsertPoint(wire);
+      const on = sketch.hoverInsert || sketch.insertMenu === wire.id;
+      out.push(`<g transform="translate(${x} ${y}) scale(${px})"><g class="sk-wire-btn ${on ? 'on' : ''}">
+        <circle r="${on ? 12 : 10}"/><path d="M-4.5 0H4.5M0 -4.5V4.5"/></g></g>`);
+    }
+    $g.html(out.join(''));
+  }
+  // the little menu under an arrow's +: what to put between its two boxes
+  function skInsertMenu(wire) {
+    const $m = $('#sketchBody .sk-insert-menu');
+    if (!sketch.insertMenu || !wire || wire.id !== sketch.insertMenu) { $m.addClass('hidden'); return; }
+    const [x, y] = skInsertPoint(wire);
+    $m.removeClass('hidden').css({ left: x * sketch.zoom + sketch.panX, top: y * sketch.zoom + sketch.panY + 20 });
+  }
+
+  // ---- smart guides: moving boxes snap to the edges and centres of the others (pink lines show it)
+  function skSnap(boxes, dx, dy) {
+    const tol = 6 / sketch.zoom;
+    const b = {
+      x: Math.min(...boxes.map((o) => o.x)) + dx, y: Math.min(...boxes.map((o) => o.y)) + dy,
+      x2: Math.max(...boxes.map((o) => o.x + o.w)) + dx, y2: Math.max(...boxes.map((o) => o.y + o.h)) + dy,
+    };
+    const others = sketch.els.filter((o) => o.type !== 'arrow' && !sketch.sel.has(o.id));
+    const lines = (o, axis) => (axis === 'x' ? [o.x, o.x + o.w / 2, o.x + o.w] : [o.y, o.y + o.h / 2, o.y + o.h]);
+    const mine = { x: [b.x, (b.x + b.x2) / 2, b.x2], y: [b.y, (b.y + b.y2) / 2, b.y2] };
+    const best = { x: null, y: null };
+    ['x', 'y'].forEach((axis) => others.forEach((o) => lines(o, axis).forEach((at) => mine[axis].forEach((m) => {
+      const d = at - m;
+      if (Math.abs(d) <= tol && (!best[axis] || Math.abs(d) < Math.abs(best[axis].d))) best[axis] = { d, at };
+    }))));
+    const sx = best.x ? best.x.d : 0;
+    const sy = best.y ? best.y.d : 0;
+    const guides = [];
+    const moved = { x: b.x + sx, y: b.y + sy, w: b.x2 - b.x, h: b.y2 - b.y };
+    ['x', 'y'].forEach((axis) => {
+      if (!best[axis]) return;
+      const { at } = best[axis];
+      const hits = [moved, ...others.filter((o) => lines(o, axis).some((v) => Math.abs(v - at) < 0.5))];
+      if (axis === 'x') guides.push([at, Math.min(...hits.map((o) => o.y)), at, Math.max(...hits.map((o) => o.y + o.h))]);
+      else guides.push([Math.min(...hits.map((o) => o.x)), at, Math.max(...hits.map((o) => o.x + o.w)), at]);
+    });
+    return { dx: dx + sx, dy: dy + sy, guides };
+  }
+
 
   // ---- reading the drawing
 
@@ -1818,10 +2061,6 @@ $(function () {
           const name = skName(a) || `${item.laneName} › ${item.step.name}`;
           return { name, steps: walk(to, name).steps };
         }).filter(Boolean);
-        if (item.step.extends.length && !can('full')) {
-          bad.add(item.screen.id);
-          errors.push(`${quote(item.screen)} has more than one arrow out. Starting a new flow from a screen needs Full access: put a condition (diamond) after it instead.`);
-        }
       }
     }
     const lost = shapes.filter((e) => !placed.has(e.id) && !bad.has(e.id));
@@ -1887,8 +2126,9 @@ $(function () {
     const y0 = Math.min(...picked.map((e) => e.y));
     const y1 = Math.max(...picked.map((e) => e.y + e.h));
     const same = new Set(picked.map((e) => e.color || SK_DEFAULT[e.type])).size === 1 && (picked[0].color || SK_DEFAULT[picked[0].type]);
-    const top = y0 * z + sketch.panY - 52;
-    $bar.removeClass('hidden').css({ left: ((x0 + x1) / 2) * z + sketch.panX, top: top < 8 ? y1 * z + sketch.panY + 14 : top })
+    const dots = skPlusTarget() ? 30 : 0; // clear of the dots on a selected box
+    const top = y0 * z + sketch.panY - 52 - dots;
+    $bar.removeClass('hidden').css({ left: ((x0 + x1) / 2) * z + sketch.panX, top: top < 8 ? y1 * z + sketch.panY + 14 + dots : top })
       .html(Object.entries(SK_COLORS).map(([key, [fill, line]]) =>
         `<button class="sk-swatch ${same === key ? 'on' : ''}" data-sk-color="${key}" title="${key[0].toUpperCase()}${key.slice(1)}" style="background:${fill};border-color:${line}"></button>`).join(''));
   }
@@ -1900,7 +2140,7 @@ $(function () {
     const px = 1 / z; // one screen pixel, in canvas units
     const out = [];
     sketch.els.forEach((e) => {
-      const cls = plan.skipped.has(e.id) ? 'sk-skipped' : '';
+      const cls = `${plan.skipped.has(e.id) ? 'sk-skipped' : ''} ${skIsBorn(e.id) ? 'sk-born' : ''}`;
       out.push(`<g class="${cls}">${skElementSvg(e)}${skLabelSvg(e)}</g>`);
       if (plan.bad.has(e.id)) {
         const b = skBox(e);
@@ -1925,6 +2165,10 @@ $(function () {
         skCorners(e).forEach(([x, y]) => out.push(`<rect class="sk-handle" x="${x - 4 * px}" y="${y - 4 * px}" width="${8 * px}" height="${8 * px}" style="stroke-width:${1.5 * px}"/>`));
       }
     });
+    // a box dragged over an arrow: it goes in between
+    const wire = drag && drag.wire && skFind(drag.wire);
+    if (wire) out.push(`<polyline class="sk-wire" points="${skCurve(wire).map((q) => q.join(',')).join(' ')}" style="stroke-width:${6 * px}"/>`);
+    if (drag && drag.guides) drag.guides.forEach(([x1, y1, x2, y2]) => out.push(`<line class="sk-guide" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" style="stroke-width:${px}"/>`));
     // what is being drawn right now
     if (drag && drag.kind === 'create') {
       const b = skDragBox(drag);
@@ -1938,6 +2182,14 @@ $(function () {
       const end = target ? skEdge(target, from ? skCenter(from) : drag.start) : drag.cur;
       const a = from ? skEdge(from, end) : drag.start;
       out.push(`<line class="sk-ghost" x1="${a[0]}" y1="${a[1]}" x2="${end[0]}" y2="${end[1]}" style="stroke-width:${1.5 * px}"/>`);
+      // from a + handle onto empty canvas: the box that will be made there
+      if (from && drag.quick !== undefined && !target) {
+        const { w, h } = skQuickSize(from);
+        const [x, y] = drag.cur;
+        out.push(skQuickType(from) === 'condition'
+          ? `<path class="sk-ghost" d="M${x} ${y - h / 2}L${x + w / 2} ${y}L${x} ${y + h / 2}L${x - w / 2} ${y}Z" style="stroke-width:${1.5 * px}"/>`
+          : `<rect class="sk-ghost" x="${x - w / 2}" y="${y - h / 2}" width="${w}" height="${h}" rx="12" style="stroke-width:${1.5 * px}"/>`);
+      }
     }
     if (drag && drag.over) {
       const t = skFind(drag.over);
@@ -1956,6 +2208,7 @@ $(function () {
     $('#sketchBody .sk-empty').toggleClass('hidden', sketch.els.length > 0);
     $('#sketchBody .sk-stage').attr('data-tool', sketch.space ? 'hand' : sketch.tool);
     skColorBar();
+    skOverlay();
   }
 
   const skArrowHandles = (a) => { const [p1, p2] = skEnds(a); return [p1, p2, skArrowMid(a)]; }; // ends, then the bend
@@ -2015,7 +2268,9 @@ $(function () {
         <p><span class="cond-diamond sm"></span> Diamond = condition</p>
         <p>${icon('arrow', 14)} Arrow = the next step. Out of a condition, its text is the branch (Success, Failed …).</p>
         <p>${icon('sticky', 14)} Sticky note = just a note, not created.</p>
-        <p class="text-slate-400">Double-click a box or an arrow to write on it; pick a colour above what is selected. Your drawing is kept in this browser until it is created.</p>
+        <p>${icon('plus', 14)} Select a box: hover a dot on its side to see the next box, click to add it (drag to point anywhere). While naming a box, Tab does the same (Shift+Tab: below).</p>
+        <p>${icon('diamond', 14)} Hover an arrow and click its + to put a screen, condition or popup in between (the steps after it move along), or drop a loose box onto an arrow.</p>
+        <p class="text-slate-400">Double-click a box or an arrow to write on it; pick a colour above what is selected. Alt-drag copies, Ctrl+C / Ctrl+V copy and paste. Your drawing is kept in this browser until it is created.</p>
       </div>`);
     if (focused) $('#sketchBody [data-sk-name]').trigger('focus');
   }
@@ -2073,7 +2328,8 @@ $(function () {
     const m = allModules.find((x) => x.id === (target.moduleId || (findFlow(target.flowId) || {}).moduleId));
     Object.assign(sketch, {
       open: true, target, key, els: saved && Array.isArray(saved.els) ? saved.els : [], name: (saved && saved.name) || '',
-      sel: new Set(), tool: 'select', past: [], future: [], editing: null, drag: null, space: false,
+      sel: new Set(), tool: 'select', past: [], future: [], editing: null, drag: null, space: false, hoverPlus: -1, hoverArrow: null, hoverInsert: false,
+      insertMenu: null, born: null, overlayKey: null,
     });
     const f = skFlow();
     $('#sketchBody').html(`
@@ -2081,13 +2337,19 @@ $(function () {
         <span class="text-indigo-600">${icon('pen', 18)}</span>
         <div class="min-w-0 flex-1">
           <h3 class="truncate text-base font-semibold text-slate-900">${f ? `Draw into ${esc(f.name)}` : `Draw a new flow${m ? ` · ${esc(m.name)}` : ''}`}</h3>
-          <p class="truncate text-xs text-slate-500">Draw boxes and join them with arrows, like on a whiteboard. When the list on the right reads right, create it: the screens, conditions and paths are made for you.</p>
+          <p class="truncate text-xs text-slate-500">Draw boxes and join them with arrows, like in FigJam: select a box and click a dot on its side for the next step. When the list on the right reads right, create it: the screens, conditions and paths are made for you.</p>
         </div>
         <button class="icon-btn" data-close-sketch title="Close (your drawing is kept)">${icon('close', 18)}</button>
       </div>
       <div class="sk-body">
         <div class="sk-stage">
-          <svg class="sk-svg" aria-label="Drawing canvas"><g class="sk-world"></g></svg>
+          <svg class="sk-svg" aria-label="Drawing canvas"><g class="sk-world"></g><g class="sk-over"></g></svg>
+          <div class="sk-island sk-insert-menu hidden">
+            <span class="sk-insert-h">Add between</span>
+            <button class="sk-insert-opt" data-sk-insert="screen">${icon('box', 16)} Screen</button>
+            <button class="sk-insert-opt" data-sk-insert="condition">${icon('diamond', 16)} Condition</button>
+            <button class="sk-insert-opt" data-sk-insert="popup">${icon('popup', 16)} Popup</button>
+          </div>
           <div class="sk-island sk-toolbar">
             ${SK_TOOLS.map((t) => `<button class="sk-tool" data-sk-tool="${t.id}" title="${t.title} — ${t.key.toUpperCase()}${t.no ? ` or ${t.no}` : ''}">${icon(t.icon, 18)}${t.no ? `<span class="sk-key">${t.no}</span>` : ''}</button>`).join('')}
           </div>
@@ -2105,7 +2367,8 @@ $(function () {
           <div class="sk-island sk-colors hidden"></div>
           <div class="sk-empty">
             <p class="sk-empty-title">Draw your flow</p>
-            <p>Pick <b>Screen</b> (R) and drag on the canvas, then <b>Arrow</b> (A) from one box to the next.<br>
+            <p>Pick <b>Screen</b> (R) and click the canvas, name it, then press <b>Tab</b> for the next screen. Or select a box
+              and click a dot on any side of it. To put a step in between, hover an arrow and click its <b>+</b>.<br>
               A <b>Condition</b> (D) splits the flow: write the branch name on each arrow out of it.</p>
           </div>
         </div>
@@ -2119,6 +2382,11 @@ $(function () {
     svg.addEventListener('pointermove', skMove);
     svg.addEventListener('pointerup', skUp);
     svg.addEventListener('pointercancel', skUp);
+    svg.addEventListener('pointerleave', () => {
+      if (sketch.drag || (sketch.hoverPlus < 0 && !sketch.hoverArrow)) return;
+      Object.assign(sketch, { hoverPlus: -1, hoverArrow: null, hoverInsert: false });
+      skDraw();
+    });
     svg.addEventListener('dblclick', skDouble);
     skFit();
     skDraw();
@@ -2134,6 +2402,7 @@ $(function () {
   }
   function skEscape() {
     if (sketch.drag) return;
+    if (sketch.insertMenu) { sketch.insertMenu = null; skDraw(); return; }
     if (sketch.sel.size) { sketch.sel.clear(); skDraw(); return; }
     if (sketch.tool !== 'select') { sketch.tool = 'select'; skDraw(); return; }
     closeSketch();
@@ -2147,6 +2416,13 @@ $(function () {
     const p = skWorld(e);
     const { tool } = sketch;
     let drag = null;
+    const wire = tool === 'select' && e.button === 0 && skInsertAt(p);
+    if (wire) {
+      sketch.insertMenu = sketch.insertMenu === wire.id ? null : wire.id;
+      skDraw();
+      return;
+    }
+    if (sketch.insertMenu) sketch.insertMenu = null;
     if (e.button === 1 || tool === 'hand' || sketch.space) {
       drag = { kind: 'pan', x: e.clientX, y: e.clientY, panX: sketch.panX, panY: sketch.panY };
     } else if (tool === 'select') {
@@ -2154,7 +2430,11 @@ $(function () {
       const near = (q) => Math.hypot(p[0] - q[0], p[1] - q[1]) <= 8 / sketch.zoom;
       const corner = one && SK_SHAPES.includes(one.type) ? skCorners(one).findIndex(near) : -1;
       const end = one && one.type === 'arrow' ? skArrowHandles(one).findIndex(near) : -1;
-      if (corner >= 0) {
+      const plus = skPlusAt(p);
+      if (plus) {
+        // click: the next box on that side; drag: an arrow to a box, or to empty canvas for a new box there
+        drag = { kind: 'arrow', from: plus.id, quick: plus.side, start: p, cur: p };
+      } else if (corner >= 0) {
         skRemember();
         drag = { kind: 'resize', id: one.id, corner, orig: { x: one.x, y: one.y, w: one.w, h: one.h } };
       } else if (end === 2) {
@@ -2191,7 +2471,19 @@ $(function () {
   function skMove(e) {
     const { drag } = sketch;
     if (!drag) {
-      if (sketch.tool === 'select' && !sketch.space) $('#sketchBody .sk-stage').toggleClass('over-element', Boolean(skHit(skWorld(e))));
+      if (sketch.tool !== 'select' || sketch.space) return;
+      const p = skWorld(e);
+      const plus = skPlusAt(p);
+      const ins = !plus && skInsertAt(p);
+      const hit = !plus && !ins && skHit(p);
+      $('#sketchBody .sk-stage').toggleClass('over-element', Boolean(hit)).toggleClass('over-plus', Boolean(plus || ins));
+      // an arrow under the pointer shows its +; it stays while the pointer is on the + itself
+      const arrow = ins ? ins.id : hit && skJoined(hit) ? hit.id : null;
+      const side = plus ? plus.side : -1;
+      if (side !== sketch.hoverPlus || arrow !== sketch.hoverArrow || Boolean(ins) !== sketch.hoverInsert) {
+        Object.assign(sketch, { hoverPlus: side, hoverArrow: arrow, hoverInsert: Boolean(ins) });
+        skOverlay();
+      }
       return;
     }
     const p = skWorld(e);
@@ -2199,12 +2491,18 @@ $(function () {
       sketch.panX = drag.panX + e.clientX - drag.x;
       sketch.panY = drag.panY + e.clientY - drag.y;
     } else if (drag.kind === 'move') {
-      const dx = p[0] - drag.start[0];
-      const dy = p[1] - drag.start[1];
+      let dx = p[0] - drag.start[0];
+      let dy = p[1] - drag.start[1];
       if (!drag.moved) {
         if (Math.hypot(dx, dy) * sketch.zoom < 3) return;
         skRemember();
         drag.moved = true;
+        // Alt-drag: move copies, the originals stay where they are
+        if (e.altKey) {
+          const copies = skClone(skSnapshot(sketch.els.filter((x) => sketch.sel.has(x.id))), 0);
+          sketch.els.push(...copies);
+          sketch.sel = new Set(copies.map((x) => x.id));
+        }
         // an arrow moved without the box it is joined to lets go of it
         sketch.els.filter((a) => a.type === 'arrow' && sketch.sel.has(a.id)).forEach((a) => {
           const [p1, p2] = skEnds(a);
@@ -2213,12 +2511,18 @@ $(function () {
         });
         drag.orig = new Map(sketch.els.filter((x) => sketch.sel.has(x.id)).map((x) => [x.id, { ...x }]));
       }
+      const boxes = [...drag.orig.values()].filter((o) => o.type !== 'arrow');
+      drag.guides = null;
+      if (boxes.length) ({ dx, dy, guides: drag.guides } = skSnap(boxes, dx, dy));
       drag.orig.forEach((o, id) => {
         const x = skFind(id);
         if (!x) return;
         if (x.type === 'arrow') Object.assign(x, { x1: o.x1 + dx, y1: o.y1 + dy, x2: o.x2 + dx, y2: o.y2 + dy });
         else Object.assign(x, { x: o.x + dx, y: o.y + dy });
       });
+      const alone = drag.orig.size === 1 && skFind([...drag.orig.keys()][0]);
+      const wire = skWireUnder(alone);
+      drag.wire = wire && wire.id;
     } else if (drag.kind === 'resize') {
       const x = skFind(drag.id);
       const o = drag.orig;
@@ -2271,6 +2575,7 @@ $(function () {
     }
     if (drag.kind === 'arrow') {
       const far = Math.hypot(drag.cur[0] - drag.start[0], drag.cur[1] - drag.start[1]) * sketch.zoom > 12;
+      if (drag.quick !== undefined && !drag.over) { skQuick(drag.from, drag.quick, far ? drag.cur : null); return; }
       if (!drag.over && !far) { skDraw(); return; }
       skRemember();
       const a = {
@@ -2298,6 +2603,17 @@ $(function () {
       });
     }
     if (drag.kind === 'move' && !drag.moved) { skDraw(); return; }
+    if (drag.kind === 'move' && drag.wire) {
+      const el = skFind([...drag.orig.keys()][0]);
+      const wire = skFind(drag.wire);
+      if (el && skJoined(wire) && skWireUnder(el) === wire) {
+        // it settles in the middle of the gap (the steps after it move along when the gap is too small)
+        const mid = skMakeRoom(wire, el.w, el.h);
+        Object.assign(el, { x: mid[0] - el.w / 2, y: mid[1] - el.h / 2 });
+        skSplit(wire, el);
+        skBorn(el.id);
+      }
+    }
     skChanged();
   }
 
@@ -2333,7 +2649,8 @@ $(function () {
     skEdit(el.id, true);
   }
 
-  function skEdit(id, fresh) {
+  // next: what to do once the text is finished with Enter (e.g. name the new box after its branch)
+  function skEdit(id, fresh, next) {
     const el = skFind(id);
     if (!el) return;
     sketch.editing = id;
@@ -2365,13 +2682,16 @@ $(function () {
       $t.css({ left: center[0] * z + sketch.panX - (width * z) / 2, top: center[1] * z + sketch.panY - h / 2, height: h });
     };
     fit();
+    let after = null;
     $t.on('input', fit)
       .on('keydown', (ev) => {
         ev.stopPropagation();
+        // Tab while naming a box: the next box to its right (Shift+Tab: below), joined, ready to name
+        if (ev.key === 'Tab' && SK_SHAPES.includes(el.type)) { ev.preventDefault(); after = () => skQuick(id, ev.shiftKey ? 1 : 0); t.blur(); return; }
         const done = ev.key === 'Escape' || (ev.key === 'Enter' && (note ? ev.metaKey || ev.ctrlKey : !ev.shiftKey));
-        if (done) { ev.preventDefault(); t.blur(); }
+        if (done) { ev.preventDefault(); if (ev.key === 'Enter') after = next; t.blur(); }
       })
-      .on('blur', () => skEndEdit(id, t.value, fresh));
+      .on('blur', () => { skEndEdit(id, t.value, fresh); if (after) after(); });
     setTimeout(() => { t.focus(); t.select(); });
   }
 
@@ -2399,22 +2719,43 @@ $(function () {
     sketch.sel = new Set();
     skChanged();
   }
-  function skDuplicate() {
-    const picked = sketch.els.filter((x) => sketch.sel.has(x.id));
-    if (!picked.length) return;
-    skRemember();
-    const ids = new Map(picked.map((x) => [x.id, skId()]));
-    const copies = picked.map((x) => {
+  // copies of elements as they are drawn now (an arrow with where its ends are), safe to keep after they change
+  const skSnapshot = (list) => list.map((x) => {
+    if (x.type !== 'arrow') return { ...x };
+    const [p1, p2] = skEnds(x);
+    return { ...x, x1: p1[0], y1: p1[1], x2: p2[0], y2: p2[1] };
+  });
+  // new elements from a snapshot, `off` further down and right; a copied arrow keeps a join only to a copied box
+  function skClone(snap, off) {
+    const ids = new Map(snap.map((x) => [x.id, skId()]));
+    return snap.map((x) => {
       const c = { ...x, id: ids.get(x.id) };
-      if (c.type !== 'arrow') return Object.assign(c, { x: x.x + 24, y: x.y + 24 });
-      // a copied arrow keeps a join only to a copied box
-      const [p1, p2] = skEnds(x);
-      Object.assign(c, { from: ids.get(x.from) || null, to: ids.get(x.to) || null, x1: p1[0] + 24, y1: p1[1] + 24, x2: p2[0] + 24, y2: p2[1] + 24 });
-      return c;
+      if (c.type !== 'arrow') return Object.assign(c, { x: x.x + off, y: x.y + off });
+      return Object.assign(c, { from: ids.get(x.from) || null, to: ids.get(x.to) || null, x1: x.x1 + off, y1: x.y1 + off, x2: x.x2 + off, y2: x.y2 + off });
     });
+  }
+  function skAdd(copies) {
+    skRemember();
     sketch.els.push(...copies);
     sketch.sel = new Set(copies.map((x) => x.id));
     skChanged();
+  }
+  function skDuplicate() {
+    const picked = sketch.els.filter((x) => sketch.sel.has(x.id));
+    if (picked.length) skAdd(skClone(skSnapshot(picked), 24));
+  }
+  // Ctrl+C / Ctrl+X / Ctrl+V (kept while the page is open, so it also pastes into another flow's drawing)
+  let skClip = null;
+  function skCopy() {
+    const picked = sketch.els.filter((x) => sketch.sel.has(x.id));
+    if (!picked.length) return false;
+    skClip = { els: skSnapshot(picked), pasted: 0 };
+    return true;
+  }
+  function skPaste() {
+    if (!skClip) return;
+    skClip.pasted += 1;
+    skAdd(skClone(skClip.els, 24 * skClip.pasted));
   }
   function skNudge(dx, dy) {
     const picked = sketch.els.filter((x) => sketch.sel.has(x.id));
@@ -2437,10 +2778,18 @@ $(function () {
     if (mod && k === 'y') { e.preventDefault(); skStep(sketch.future, sketch.past); return; }
     if (mod && k === 'a') { e.preventDefault(); sketch.sel = new Set(sketch.els.map((x) => x.id)); skDraw(); return; }
     if (mod && k === 'd') { e.preventDefault(); skDuplicate(); return; }
+    if (mod && k === 'c') { if (skCopy()) e.preventDefault(); return; }
+    if (mod && k === 'x') { if (skCopy()) { e.preventDefault(); skDelete(); } return; }
+    if (mod && k === 'v') { if (skClip) { e.preventDefault(); skPaste(); } return; }
     if (mod && (k === '=' || k === '+' || k === '-')) { e.preventDefault(); skZoomTo(sketch.zoom * (k === '-' ? 0.9 : 1.1)); return; }
     if (mod) return;
     if (k === 'delete' || k === 'backspace') { e.preventDefault(); skDelete(); return; }
     if (k === 'enter' && sketch.sel.size === 1) { e.preventDefault(); skEdit([...sketch.sel][0]); return; }
+    if (k === 'tab' && sketch.sel.size === 1 && SK_SHAPES.includes((skFind([...sketch.sel][0]) || {}).type)) {
+      e.preventDefault();
+      skQuick([...sketch.sel][0], e.shiftKey ? 1 : 0);
+      return;
+    }
     const nudge = { arrowleft: [-1, 0], arrowright: [1, 0], arrowup: [0, -1], arrowdown: [0, 1] }[k];
     if (nudge) { e.preventDefault(); skNudge(nudge[0] * (e.shiftKey ? 10 : 1), nudge[1] * (e.shiftKey ? 10 : 1)); return; }
     const tool = SK_TOOLS.find((t) => t.key === k || (t.no && t.no === k));
@@ -2465,6 +2814,7 @@ $(function () {
     sketch.els.forEach((e) => { if (sketch.sel.has(e.id) && e.type !== 'arrow') e.color = color; });
     skChanged();
   });
+  $doc.on('click', '[data-sk-insert]', function () { if (sketch.insertMenu) skInsert(sketch.insertMenu, $(this).data('sk-insert')); });
   $doc.on('click', '[data-sk-undo]', () => skStep(sketch.past, sketch.future));
   $doc.on('click', '[data-sk-redo]', () => skStep(sketch.future, sketch.past));
   $doc.on('click', '[data-sk-zoom]', function () {
@@ -2489,7 +2839,16 @@ $(function () {
     });
   });
   $doc.on('input', '[data-sk-name]', function () { sketch.name = this.value; skSave(); });
-  $doc.on('change', '[data-sk-name]', () => skPanel()); // path names follow the flow name
+  // path names follow the flow name; not redrawn in the middle of a click (the name loses focus on the press, and
+  // redrawing then would swap the Create button out from under the pointer, losing the click)
+  let skPressed = false;
+  let skPanelLater = false;
+  document.addEventListener('pointerdown', () => { skPressed = true; }, true);
+  document.addEventListener('pointerup', () => {
+    skPressed = false;
+    if (skPanelLater) { skPanelLater = false; setTimeout(skPanel); } // after this press's click
+  }, true);
+  $doc.on('change', '[data-sk-name]', () => { if (skPressed) skPanelLater = true; else skPanel(); });
   // a step in the list: select its box and bring it into view
   $doc.on('click', '[data-sk-focus]', function () {
     const el = skFind($(this).data('sk-focus'));
@@ -2682,22 +3041,24 @@ $(function () {
   //   send({ columns, userIds, note, mode, button }) → jqXHR. mode 'channel': the server posts to the app's channel
   //   and answers { teams, rows }; mode 'card': it answers { card, direct, people, rows } and this browser sends it
   //   from your own Teams (public/graph.js).
-  // Where it goes: 'direct' = a chat with each person picked, 'mine' = a channel of a team you are in,
-  // 'app' = the app's channel. The last choice (and team / channel) is remembered in this browser.
+  //   log({ target, chatId, destination, messageId, ok, error, note }) (optional): told how a send from your own
+  //   Teams went, so the server can keep a record (the server records the app's channel itself).
+  // Where it goes: 'direct' = a chat with each person picked, 'mine' = one of your own Teams chats (a person you
+  // chat with, or a group chat you are in), 'app' = the app's channel. The last choice (and chat) is remembered here.
 
   let teamsSend = null;
-  const TEAMS_TARGETS = [['direct', 'Direct message'], ['mine', 'My Teams channel'], ['app', 'App channel']];
+  const TEAMS_TARGETS = [['direct', 'Direct message'], ['mine', 'My Teams chats'], ['app', 'App channel']];
   const teamsTargets = (webhook) => TEAMS_TARGETS.filter(([k]) => (k === 'app' ? webhook : window.flowGraph.configured()));
   const canSendTeams = (webhook) => teamsTargets(webhook).length > 0;
 
-  function openTeamsSend({ title, count, columns, people, webhook, send }) {
+  function openTeamsSend({ title, count, columns, people, webhook, send, log }) {
     const targets = teamsTargets(webhook);
     if (!targets.length) { dialog.alert('This app has no Teams channel yet. A super admin can add it in Sanity → Teams channel.', 'Teams'); return; }
     const last = storage('get', 'teamsTarget');
     teamsSend = {
-      send, count,
+      send, count, log,
       target: targets.some(([k]) => k === last) ? last : targets[0][0],
-      team: storage('get', 'teamsTeam') || '', channel: storage('get', 'teamsChannel') || '', teams: null,
+      chat: storage('get', 'teamsChat') || '', chats: null,
     };
     const pick = (name, value, label, on) => `<label class="teams-pick"><input type="checkbox" class="h-4 w-4 accent-indigo-600" name="${name}" value="${esc(value)}" ${on ? 'checked' : ''}> ${label}</label>`;
     $('#teamsForm').html(`
@@ -2715,11 +3076,8 @@ $(function () {
           ${targets.length > 1 ? `<div class="seg">${targets.map(([k, label]) => `<button type="button" data-teams-target="${k}">${label}</button>`).join('')}</div>` : ''}
           <p class="mt-1.5 text-xs text-slate-500" data-teams-hint></p>
           <div class="mt-2 hidden" data-teams-mine>
-            <div class="grid grid-cols-2 gap-2">
-              <select class="input w-full text-sm" data-teams-team><option value="">Team…</option></select>
-              <select class="input w-full text-sm" data-teams-channel><option value="">Channel…</option></select>
-            </div>
-            <button type="button" class="mt-1.5 text-xs text-indigo-600 hover:underline" data-teams-load>Load my teams</button>
+            <select class="input w-full text-sm" data-teams-chat><option value="">Person or group…</option></select>
+            <button type="button" class="mt-1.5 text-xs text-indigo-600 hover:underline" data-teams-load>Load my chats</button>
           </div>
         </div>
         <div>
@@ -2753,39 +3111,33 @@ $(function () {
     $('[data-teams-target]').each((i, el) => $(el).toggleClass('on', $(el).data('teams-target') === t));
     $('[data-teams-hint]').text({
       direct: `Each person you tick gets it in a chat with you, sent from your Teams${connected ? '' : ' (you sign in to Microsoft once)'}.`,
-      mine: `Posted as you in a channel of a team you are in, @mentioning the people you tick${connected ? '' : ' (you sign in to Microsoft once)'}.`,
+      mine: `Sent as you to a person you chat with or a group chat you are in, @mentioning the people you tick${connected ? '' : ' (you sign in to Microsoft once)'}.`,
       app: 'Posted in this app\'s Teams channel, @mentioning the people you tick.',
     }[t]);
     $('[data-teams-people-label]').html(t === 'direct' ? 'Send to' : '@mention <span class="font-normal text-slate-400">(optional)</span>');
     $('[data-teams-submit]').html(`${icon('share', 14)} ${t === 'direct' ? 'Send messages' : 'Post on Teams'}`);
     $('[data-teams-mine]').toggleClass('hidden', t !== 'mine');
-    $('[data-teams-load]').toggleClass('hidden', Boolean(teamsSend.teams));
+    $('[data-teams-load]').toggleClass('hidden', Boolean(teamsSend.chats));
     // with Teams connected the list loads by itself; else after a click (it may need the sign-in popup)
-    if (t === 'mine' && !teamsSend.teams && connected) loadMyTeams(true);
+    if (t === 'mine' && !teamsSend.chats && connected) loadMyChats(true);
   }
 
-  function loadMyTeams(quiet) {
+  // Your chats in one list: People (1:1 chats) and Groups (group chats you are in)
+  function loadMyChats(quiet) {
     const $err = $('#teamsForm .dialog-error');
-    return window.flowGraph.teamsList().then((list) => {
+    return window.flowGraph.chatsList().then((list) => {
       if (!teamsSend) return;
-      teamsSend.teams = list;
-      if (!list.some((x) => x.id === teamsSend.team)) teamsSend.team = list[0] ? list[0].id : '';
-      $('[data-teams-team]').html(`<option value="">Team…</option>${list.map((x) => `<option value="${esc(x.id)}" ${x.id === teamsSend.team ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}`);
+      teamsSend.chats = list;
+      if (!list.some((x) => x.id === teamsSend.chat)) teamsSend.chat = '';
+      const group = (kind, label) => {
+        const of = list.filter((x) => x.kind === kind);
+        return of.length ? `<optgroup label="${label}">${of.map((x) => `<option value="${esc(x.id)}" ${x.id === teamsSend.chat ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</optgroup>` : '';
+      };
+      $('[data-teams-chat]').html(`<option value="">Person or group…</option>${group('person', 'People')}${group('group', 'Groups')}`);
       $('[data-teams-load]').addClass('hidden');
-      if (!list.length) $err.text('You are not in any team on Teams.').removeClass('hidden');
+      if (!list.length) $err.text('You have no chats on Teams yet.').removeClass('hidden');
       renderAccount();
-      return loadMyChannels();
     }).catch((err) => { if (!quiet) $err.text(err.message).removeClass('hidden'); });
-  }
-  function loadMyChannels() {
-    const { team } = teamsSend;
-    $('[data-teams-channel]').html('<option value="">Channel…</option>');
-    if (!team) return Promise.resolve();
-    return window.flowGraph.channelsOf(team).then((list) => {
-      if (!teamsSend || teamsSend.team !== team) return;
-      if (!list.some((x) => x.id === teamsSend.channel)) teamsSend.channel = (list.find((x) => /general/i.test(x.name)) || list[0] || {}).id || '';
-      $('[data-teams-channel]').html(`<option value="">Channel…</option>${list.map((x) => `<option value="${esc(x.id)}" ${x.id === teamsSend.channel ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}`);
-    }).catch((err) => $('#teamsForm .dialog-error').text(err.message).removeClass('hidden'));
   }
 
   function closeTeamsSend() {
@@ -2804,9 +3156,8 @@ $(function () {
     $('#teamsForm .dialog-error').addClass('hidden');
     showTeamsTarget();
   });
-  $doc.on('click', '[data-teams-load]', () => loadMyTeams(false));
-  $doc.on('change', '[data-teams-team]', function () { teamsSend.team = this.value; teamsSend.channel = ''; loadMyChannels(); });
-  $doc.on('change', '[data-teams-channel]', function () { teamsSend.channel = this.value; });
+  $doc.on('click', '[data-teams-load]', () => loadMyChats(false));
+  $doc.on('change', '[data-teams-chat]', function () { teamsSend.chat = this.value; });
 
   // "Sent to A, B" (+ who could not be reached, and why)
   function teamsDirectResult(results) {
@@ -2824,14 +3175,14 @@ $(function () {
     const picked = (name) => $f.find(`[name="${name}"]:checked`).map((i, el) => el.value).get();
     const columns = picked('col');
     const userIds = picked('user');
-    const { target, team, channel } = teamsSend;
+    const { target, chat } = teamsSend;
     if (!columns.length) { fail('Pick at least one column.'); return; }
     if (target === 'direct' && !userIds.length) { fail('Tick who to send it to.'); return; }
     if (target === 'direct' && !teamsSend.people.some((u) => userIds.includes(u.id) && u.teams)) {
       fail('None of them has a Teams email yet. A super admin adds it to their login in Admin (or they connect Teams themselves).');
       return;
     }
-    if (target === 'mine' && (!team || !channel)) { fail('Pick a team and a channel.'); return; }
+    if (target === 'mine' && !chat) { fail('Pick a person or a group chat.'); return; }
     storage('set', 'teamsTarget', target);
     const button = $f.find('[data-teams-submit]')[0];
     const val = { columns, userIds, note: $f.find('[name=note]').val().trim(), button };
@@ -2841,15 +3192,28 @@ $(function () {
         .fail((xhr) => fail(errorText(xhr)));
       return;
     }
-    if (target === 'mine') { storage('set', 'teamsTeam', team); storage('set', 'teamsChannel', channel); }
+    if (target === 'mine') storage('set', 'teamsChat', chat);
     setBusy(button, true);
+    // how a send from your own Teams went, for the server's record (the chat by its Graph id, and its name)
+    const { log } = teamsSend;
+    const where = target === 'mine' ? { chatId: chat, destination: ((teamsSend.chats || []).find((x) => x.id === chat) || {}).name || '' } : {};
+    const record = (entry) => { if (log) log({ target, note: val.note, ...where, ...entry }); };
     // sign in first, while this is still the click (browsers allow the popup then)
     const signIn = window.flowGraph.account() ? Promise.resolve() : window.flowGraph.connect();
     signIn
       .then(() => teamsSend.send({ ...val, mode: 'card' }))
       .then((r) => (target === 'direct'
-        ? window.flowGraph.sendDirect(r.people, r.direct).then((results) => { closeTeamsSend(); teamsDirectResult(results); })
-        : window.flowGraph.sendChannel(team, channel, r.card).then(() => { closeTeamsSend(); toast(`Posted ${r.rows} row${r.rows === 1 ? '' : 's'} on Teams`); })))
+        ? window.flowGraph.sendDirect(r.people, r.direct).then((results) => {
+          const failed = results.filter((x) => !x.ok);
+          record({ destination: results.map((x) => x.name).join(', '), ok: failed.length < results.length, error: failed.map((x) => `${x.name}: ${x.error}`).join('; ') });
+          closeTeamsSend();
+          teamsDirectResult(results);
+        })
+        : window.flowGraph.sendChat(chat, r.card).then((msg) => {
+          record({ messageId: msg && msg.id, ok: true });
+          closeTeamsSend();
+          toast(`Posted ${r.rows} row${r.rows === 1 ? '' : 's'} on Teams`);
+        }, (err) => { record({ ok: false, error: err.message }); throw err; })))
       .catch((err) => fail(err && err.readyState !== undefined ? errorText(err) : (err && err.message) || 'Could not send on Teams'))
       .finally(() => { setBusy(button, false); renderAccount(); });
   });
@@ -2867,6 +3231,7 @@ $(function () {
         people: d.people.filter((u) => u.id !== me.id),
         webhook: d.teams,
         send: (val) => api('POST', '/api/issues/teams', { productId: pid, ids, columns: val.columns, userIds: val.userIds, note: val.note, mode: val.mode }, val.button, QUIET),
+        log: (entry) => api('POST', '/api/issues/teams/log', { productId: pid, ids, ...entry }, null, QUIET),
       });
     });
   }
