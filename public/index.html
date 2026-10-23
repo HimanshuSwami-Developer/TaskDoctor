@@ -17,6 +17,8 @@
     tailwind.config = { theme: { extend: { fontFamily: { body: ['Inter', 'system-ui', 'sans-serif'] } } } };
   </script>
   <link rel="stylesheet" href="/styles.css">
+  <!-- after styles.css: sets the theme and makes its dark rules before the page shows -->
+  <script src="/theme.js"></script>
 </head>
 <body class="flex min-h-screen flex-col bg-slate-50 font-body text-slate-800 antialiased">
   <div id="progress" class="progress" role="progressbar" aria-label="Loading"></div>
@@ -51,6 +53,9 @@
   <!-- Sanity is its own page: shown instead of the board (and the module tabs) -->
   <main id="sanityPage" class="mx-auto hidden w-full max-w-[1400px] px-6 py-6"></main>
 
+  <!-- Sheets (Excel) is its own page too -->
+  <main id="sheetsPage" class="mx-auto hidden w-full max-w-[1400px] px-6 py-6"></main>
+
   <!-- Last thing on the page: the body is a full-height column, so on short pages it still sits at the bottom -->
   <footer class="site-footer">
     <div class="site-footer-inner">
@@ -80,6 +85,10 @@
 
   <div id="diagramModal" class="overlay hidden">
     <div id="diagramBody" class="popup-card diagram-card"></div>
+  </div>
+
+  <div id="sketchModal" class="overlay hidden">
+    <div id="sketchBody" class="popup-card diagram-card"></div>
   </div>
 
   <div id="popup" class="overlay hidden">
@@ -121,16 +130,16 @@
     <div id="statusBody" class="popup-card max-w-md"></div>
   </div>
 
-  <div id="sheetsModal" class="overlay hidden">
-    <div id="sheetsBody" class="popup-card sheets-card"></div>
-  </div>
-
   <div id="sanityLogModal" class="overlay hidden">
     <div id="sanityLogBody" class="popup-card max-w-5xl"></div>
   </div>
 
   <div id="doneModal" class="overlay hidden">
     <div id="doneBody" class="popup-card max-w-3xl"></div>
+  </div>
+
+  <div id="teamsModal" class="overlay hidden">
+    <form id="teamsForm" class="popup-card max-w-lg" novalidate></form>
   </div>
 
   <div id="copyModal" class="overlay hidden">

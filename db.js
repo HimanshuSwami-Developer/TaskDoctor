@@ -259,6 +259,8 @@ CREATE TABLE IF NOT EXISTS sheet_columns (
   created_at  timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS sheet_columns_sheet_idx ON sheet_columns(sheet_id);
+-- dropdown option → colour ('#rrggbb'), e.g. kept from the cell colours of an imported Excel
+ALTER TABLE sheet_columns ADD COLUMN IF NOT EXISTS colors jsonb NOT NULL DEFAULT '{}'::jsonb;
 CREATE TABLE IF NOT EXISTS sheet_rows (
   id          text PRIMARY KEY,
   sheet_id    text NOT NULL REFERENCES sheets(id),

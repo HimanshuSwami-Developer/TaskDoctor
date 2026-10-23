@@ -42,6 +42,19 @@ $(function () {
     grip: 'M9 5h.01M9 12h.01M9 19h.01M15 5h.01M15 12h.01M15 19h.01',
     pen: 'M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z',
     link: 'M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7',
+    cursor: 'M5 3l6.5 17 2.4-7.1L21 10.5z',
+    hand: 'M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v6M10 10.5V6a2 2 0 0 0-4 0v8M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.9-6-2.3l-3.6-3.6a2 2 0 0 1 2.8-2.8L7 15',
+    box: 'M3 6h18v12H3z',
+    popup: 'M3 10V6h5M16 6h5v4M21 14v4h-5M8 18H3v-4',
+    diamond: 'M12 2l10 10-10 10L2 12z',
+    arrow: 'M4 12h15M13 6l6 6-6 6',
+    type: 'M4 7V4h16v3M9 20h6M12 4v16',
+    undo: 'M9 14 4 9l5-5M4 9h11a5 5 0 0 1 0 10h-3',
+    redo: 'M15 14l5-5-5-5M20 9H9a5 5 0 0 0 0 10h3',
+    fit: 'M3 8V3h5M16 3h5v5M21 16v5h-5M8 21H3v-5',
+    sticky: 'M4 4h16v10l-6 6H4zM14 20v-6h6',
+    moon: 'M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z',
+    sun: 'M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4',
   };
   const icon = (name, size = 16) =>
     `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${PATHS[name]}"/></svg>`;
@@ -159,7 +172,7 @@ $(function () {
     developer: `[data-action="add-module"], [data-rename-module], [data-delete-module], [data-remove-image], [data-action="add-flow"], [data-rename-flow], [data-delete-flow],
       .add-screen, .dg-add-end, .dg-plus, [data-edit-screen], [data-delete-screen],
       [data-add-condition], [data-insert-condition], [data-rename-condition], [data-cond-tool], [data-add-branch], [data-remove-branch], [data-extend-path],
-      [data-dg-new="condition"], [data-dg-branch-add], [data-dg-branch-remove], [data-mark-nav], [data-remove-link]`,
+      [data-dg-new="condition"], [data-dg-branch-add], [data-dg-branch-remove], [data-mark-nav], [data-remove-link], [data-sketch-module], [data-sketch-flow]`,
     edit: '.add-comment, [data-pen], [data-action="writer"], [data-remove-person], [data-bugs], [data-flip], [data-open-sheet], .issues-panel',
   };
   function applyAccess() {
@@ -703,6 +716,7 @@ $(function () {
         <div class="ml-auto flex gap-2">
           <button class="btn-secondary" data-rename-module="${m.id}">Rename</button>
           <button class="btn-danger" data-delete-module="${m.id}">Delete</button>
+          <button class="btn-secondary" data-sketch-module="${m.id}" title="Draw the flow like on a whiteboard, then create its screens and conditions">${icon('pen', 14)} Draw flow</button>
           <button class="btn-primary" data-action="add-flow" data-module="${m.id}">+ Add flow</button>
         </div>
       </div>
@@ -753,6 +767,7 @@ $(function () {
           ${from && from.condition ? `<span class="cond-tag tone-${tone(from.branch.label)} mt-0"><span class="dot"></span>from ${esc(from.condition.name)} = ${esc(from.branch.label || '—')}</span>` : ''}
           <span class="text-sm text-slate-500">${screens.length} screens · ${done}/${issues.length} issues complete</span>
           <button class="video-btn" data-diagram="${f.id}" title="See this flow and its paths as a diagram">${icon('diagram', 12)} Diagram</button>
+          <button class="video-btn" data-sketch-flow="${f.id}" title="Draw more steps and add them to the end of this flow">${icon('pen', 12)} Draw</button>
           ${f.video
             ? `<button class="video-btn" data-play-video="${f.id}" title="Play this flow's video">${icon('play', 12)} Video</button>`
             : `<label class="video-btn add" title="Upload a screen recording of this flow">${icon('video', 12)} Add video
@@ -1076,7 +1091,7 @@ $(function () {
     const html = [];
     const arrow = (x, y, dir, color) => {
       const d = { right: `M${x - 7} ${y - 5}L${x} ${y}L${x - 7} ${y + 5}`, down: `M${x - 5} ${y - 7}L${x} ${y}L${x + 5} ${y - 7}`, up: `M${x - 5} ${y + 7}L${x} ${y}L${x + 5} ${y + 7}` }[dir];
-      edges.push(`<path class="dg-head" d="${d}" style="stroke:${color}"/>`);
+      edges.push(`<path class="dg-head" d="${d}Z" style="stroke:${color};fill:${color}"/>`); // a solid head, FigJam style
     };
     const plus = (x, y, flowId, after, title) =>
       html.push(`<button class="dg-plus" style="left:${x}px;top:${y}px" data-dg-insert="${flowId}" data-after="${after || ''}" title="${title}">${icon('plus', 12)}</button>`);
@@ -1093,7 +1108,7 @@ $(function () {
         if (i < flow.screens.length - 1) {
           const x1 = dgX(col + i + 1);
           edges.push(`<path class="dg-edge" d="M${x0} ${mid}H${x1 - 2}"/>`);
-          arrow(x1 - 1, mid, 'right', '#94a3b8');
+          arrow(x1 - 1, mid, 'right', 'var(--dg-ink)');
           plus((x0 + x1) / 2, mid, flow.id, x.id, 'Add a screen or condition here');
         }
       });
@@ -1141,7 +1156,7 @@ $(function () {
       } else {
         const top = topPriority(x);
         const open = x.comments.filter((c) => !c.resolved).length;
-        html.push(`<div class="dg-node screen ${top ? `ring-${top}` : ''}" style="left:${nx}px;top:${ny}px" data-dg-open="${x.id}" title="Open screen">
+        html.push(`<div class="dg-node screen ${isPopup(x) ? 'popup' : ''} ${top ? `ring-${top}` : ''}" style="left:${nx}px;top:${ny}px" data-dg-open="${x.id}" title="Open screen">
           <span class="dg-step">${String(no).padStart(2, '0')}</span>
           <div class="min-w-0 flex-1">${isPopup(x) ? '<p class="dg-kind">Popup</p>' : ''}<p class="dg-name">${esc(x.name)}</p><p class="dg-page">${esc(x.page || '—')}</p>
             ${x.action ? `<p class="dg-action">${icon('tap', 11)} ${esc(x.action)}</p>` : ''}
@@ -1446,6 +1461,906 @@ $(function () {
     });
   });
 
+  // ---------------------------------------------------------------- draw a flow: a whiteboard that turns into screens and conditions
+  //
+  // Boxes are screens, dashed boxes popups, diamonds conditions, and arrows join them; text notes are only notes.
+  // "Create" reads the drawing (sketchPlan) and makes everything in one call:
+  // - the one box no arrow points into is the first screen; following the arrows gives the order of the flow
+  // - a screen with more than one arrow out continues along the unlabelled arrow that points most to the right;
+  //   each other arrow starts a new flow from that screen, named after the arrow's text (Full access)
+  // - every arrow out of a condition is a branch named after its text: to a box not placed yet it becomes the
+  //   branch's path (1.1, 1.2 … on the board); to a screen already placed it points back at that screen
+  // The drawing is kept in this browser (per module, or per flow when drawing into one) until it is created.
+
+  const SK = { w: 170, h: 72, condW: 170, condH: 110, stickyW: 170, stickyH: 150 };
+  const SK_SHAPES = ['screen', 'popup', 'condition'];
+  const SK_TOOLS = [
+    { id: 'select', key: 'v', no: '1', icon: 'cursor', title: 'Select and move' },
+    { id: 'hand', key: 'h', no: '', icon: 'hand', title: 'Move around (or hold Space)' },
+    { id: 'screen', key: 'r', no: '2', icon: 'box', title: 'Screen' },
+    { id: 'popup', key: 'p', no: '3', icon: 'popup', title: 'Popup' },
+    { id: 'condition', key: 'd', no: '4', icon: 'diamond', title: 'Condition' },
+    { id: 'arrow', key: 'a', no: '5', icon: 'arrow', title: 'Arrow: drag from one box to another' },
+    { id: 'text', key: 's', no: '6', icon: 'sticky', title: 'Sticky note (not created as a step)' },
+  ];
+  const sketch = { open: false, els: [], sel: new Set(), tool: 'select', zoom: 1, panX: 0, panY: 0, past: [], future: [], editing: null, drag: null };
+  const skId = () => Math.random().toString(36).slice(2, 10);
+  const skFind = (id) => sketch.els.find((e) => e.id === id);
+  const skName = (e) => (e.text || '').replace(/\s+/g, ' ').trim();
+  const skCenter = (e) => [e.x + e.w / 2, e.y + e.h / 2];
+  const skSvg = () => $('#sketchBody .sk-svg')[0];
+
+  // where the line from e's centre towards `p` leaves e (with a small gap)
+  function skEdge(e, p) {
+    const [cx, cy] = skCenter(e);
+    const dx = p[0] - cx;
+    const dy = p[1] - cy;
+    if (!dx && !dy) return [cx, cy];
+    const hw = e.w / 2 + 6;
+    const hh = e.h / 2 + 6;
+    const t = e.type === 'condition' ? 1 / (Math.abs(dx) / hw + Math.abs(dy) / hh) : Math.min(hw / Math.abs(dx || 1e-9), hh / Math.abs(dy || 1e-9));
+    return [cx + dx * t, cy + dy * t];
+  }
+  // An arrow runs between the centres of the boxes it is joined to (or where an end was let go), bent by `bend`:
+  // the control point of its curve sits `bend` away from the middle of that line, at a right angle.
+  function skControl(a, bend = a.bend || 0) {
+    const from = a.from && skFind(a.from);
+    const to = a.to && skFind(a.to);
+    const p1 = from ? skCenter(from) : [a.x1, a.y1];
+    const p2 = to ? skCenter(to) : [a.x2, a.y2];
+    const len = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) || 1;
+    const n = [-(p2[1] - p1[1]) / len, (p2[0] - p1[0]) / len];
+    return { from, to, p1, p2, n, mid: [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2], c: [(p1[0] + p2[0]) / 2 + n[0] * bend, (p1[1] + p2[1]) / 2 + n[1] * bend] };
+  }
+  // its two ends, on the edge of the box each is joined to, and the curve's control point
+  function skEnds(a, bend) {
+    const { from, to, p1, p2, c } = skControl(a, bend);
+    return [from ? skEdge(from, c) : p1, to ? skEdge(to, c) : p2, c];
+  }
+  // points along the arrow (for hit tests and boxes)
+  function skCurve(a, bend) {
+    const [p1, p2, c] = skEnds(a, bend);
+    return Array.from({ length: 17 }, (_, i) => {
+      const t = i / 16;
+      const u = 1 - t;
+      return [u * u * p1[0] + 2 * u * t * c[0] + t * t * p2[0], u * u * p1[1] + 2 * u * t * c[1] + t * t * p2[1]];
+    });
+  }
+  const skArrowMid = (a) => skCurve(a)[8];
+  const skNearArrow = (p, a, tol) => skCurve(a).some((q, i, pts) => i && skSegDist(p, pts[i - 1], q) <= tol);
+  function skBox(e) {
+    if (e.type !== 'arrow') return { x: e.x, y: e.y, w: e.w, h: e.h };
+    const pts = skCurve(e);
+    const xs = pts.map((q) => q[0]);
+    const ys = pts.map((q) => q[1]);
+    return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+  }
+  // a new arrow that would run through another box curves around it (the smallest bend that clears every box)
+  function skAutoBend(a) {
+    const others = sketch.els.filter((e) => SK_SHAPES.includes(e.type) && e.id !== a.from && e.id !== a.to);
+    const clear = (bend) => !skCurve(a, bend).some((q) => others.some((e) => skInside(e, q, 12)));
+    a.bend = [0, -70, 70, -130, 130, -200, 200].find(clear) || 0;
+  }
+  const skSegDist = ([px, py], [x1, y1], [x2, y2]) => {
+    const l = (x2 - x1) ** 2 + (y2 - y1) ** 2;
+    const t = l ? Math.max(0, Math.min(1, ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / l)) : 0;
+    return Math.hypot(px - (x1 + t * (x2 - x1)), py - (y1 + t * (y2 - y1)));
+  };
+  const skInside = (e, [x, y], pad = 0) => {
+    if (e.type === 'condition') {
+      const [cx, cy] = skCenter(e);
+      return Math.abs(x - cx) / (e.w / 2 + pad) + Math.abs(y - cy) / (e.h / 2 + pad) <= 1;
+    }
+    return x >= e.x - pad && x <= e.x + e.w + pad && y >= e.y - pad && y <= e.y + e.h + pad;
+  };
+  // topmost element at a point; arrows are easier to grab than the box under them
+  function skHit(p) {
+    const tol = 7 / sketch.zoom;
+    const list = sketch.els.slice().reverse();
+    return list.find((e) => e.type === 'arrow' && skNearArrow(p, e, tol))
+      || list.find((e) => e.type !== 'arrow' && skInside(e, p, tol / 2));
+  }
+  const skShapeAt = (p, not) => sketch.els.slice().reverse().find((e) => SK_SHAPES.includes(e.type) && e.id !== not && skInside(e, p, 10 / sketch.zoom));
+
+
+  // ---- reading the drawing
+
+  function sketchPlan(flowName) {
+    const errors = [];
+    const warnings = [];
+    const bad = new Set(); // ids drawn in red
+    const skipped = new Set(); // ids drawn faded
+    const shapes = sketch.els.filter((e) => SK_SHAPES.includes(e.type));
+    const byId = new Map(shapes.map((e) => [e.id, e]));
+    const quote = (e) => `“${skName(e) || 'unnamed'}”`;
+    const arrows = [];
+    let loose = 0;
+    sketch.els.filter((e) => e.type === 'arrow').forEach((a) => {
+      if (byId.has(a.from) && byId.has(a.to) && a.from !== a.to) arrows.push(a);
+      else { loose += 1; skipped.add(a.id); }
+    });
+    if (!shapes.length) return { steps: [], errors, warnings, bad, skipped, empty: true };
+    if (loose) warnings.push(`${loose} arrow${loose === 1 ? ' is' : 's are'} not joined to a box at both ends, so ${loose === 1 ? 'it is' : 'they are'} skipped.`);
+    const unnamed = shapes.filter((e) => !skName(e));
+    unnamed.forEach((e) => bad.add(e.id));
+    if (unnamed.length) errors.push(`${unnamed.length} box${unnamed.length === 1 ? ' has' : 'es have'} no name. Double-click a box to write its name.`);
+
+    const outs = new Map(shapes.map((e) => [e.id, []]));
+    const ins = new Map(shapes.map((e) => [e.id, 0]));
+    arrows.forEach((a) => { outs.get(a.from).push(a); ins.set(a.to, ins.get(a.to) + 1); });
+    const leftTop = (p, q) => (p.x - q.x) || (p.y - q.y);
+    const starts = shapes.filter((e) => !ins.get(e.id)).sort(leftTop);
+    if (starts.length > 1) {
+      starts.forEach((e) => bad.add(e.id));
+      errors.push(`Only the first screen can have no arrow coming in, but ${starts.length} boxes have none: ${starts.map(quote).join(', ')}. Join them with arrows, or delete the ones you don't need.`);
+    }
+    const start = starts[0] || shapes.slice().sort(leftTop)[0]; // all in a loop: start top-left
+
+    const placed = new Map(); // shape id → step
+    const later = []; // conditions and screens whose other arrows are read after the lane they are in
+    const walk = (first, laneName) => {
+      const steps = [];
+      for (let cur = first; cur && !placed.has(cur.id);) {
+        const step = { key: cur.id, type: cur.type, name: skName(cur) };
+        placed.set(cur.id, step);
+        steps.push(step);
+        const out = outs.get(cur.id);
+        if (cur.type === 'condition') { later.push({ step, cond: cur, out, laneName }); break; }
+        if (!out.length) break;
+        const [cx, cy] = skCenter(cur);
+        const ahead = (a) => { const [x, y] = skCenter(byId.get(a.to)); return (x - cx) - Math.abs(y - cy) / 2; };
+        const [next, ...rest] = out.slice().sort((p, q) => (Boolean(skName(p)) - Boolean(skName(q)))
+          || (placed.has(p.to) - placed.has(q.to)) || (ahead(q) - ahead(p)));
+        if (rest.length) later.push({ step, screen: cur, out: rest, laneName });
+        if (placed.has(next.to)) {
+          skipped.add(next.id);
+          warnings.push(`The arrow ${quote(cur)} → ${quote(byId.get(next.to))} is skipped: a screen can only be in one place. To go back to a screen, point a condition's branch at it.`);
+          break;
+        }
+        cur = byId.get(next.to);
+      }
+      return { steps };
+    };
+    const root = walk(start, flowName);
+    while (later.length) {
+      const item = later.shift();
+      if (item.cond) {
+        if (item.out.some((a) => !skName(a))) warnings.push(`Name every arrow out of ${quote(item.cond)}: its text is the branch (e.g. Success). Double-click an arrow to write on it.`);
+        const y = (a) => skCenter(byId.get(a.to))[1];
+        item.step.branches = item.out.slice().sort((p, q) => y(p) - y(q)).map((a) => {
+          const label = skName(a);
+          const to = byId.get(a.to);
+          if (!placed.has(to.id)) {
+            const pathName = `${item.laneName} › ${label || 'Path'}`;
+            return { label, path: walk(to, pathName), pathName };
+          }
+          if (to.type === 'condition') {
+            skipped.add(a.id);
+            warnings.push(`Branch “${label || '—'}” of ${quote(item.cond)} points at a condition, but a branch can only show a screen. It is left empty.`);
+            return { label };
+          }
+          return { label, target: to.id };
+        });
+      } else {
+        item.step.extends = item.out.map((a) => {
+          const to = byId.get(a.to);
+          if (placed.has(to.id)) {
+            skipped.add(a.id);
+            warnings.push(`The arrow ${quote(item.screen)} → ${quote(to)} is skipped: ${quote(to)} is already in the flow.`);
+            return null;
+          }
+          const name = skName(a) || `${item.laneName} › ${item.step.name}`;
+          return { name, steps: walk(to, name).steps };
+        }).filter(Boolean);
+        if (item.step.extends.length && !can('full')) {
+          bad.add(item.screen.id);
+          errors.push(`${quote(item.screen)} has more than one arrow out. Starting a new flow from a screen needs Full access: put a condition (diamond) after it instead.`);
+        }
+      }
+    }
+    const lost = shapes.filter((e) => !placed.has(e.id) && !bad.has(e.id));
+    lost.forEach((e) => skipped.add(e.id));
+    if (lost.length) warnings.push(`Not joined to the flow, so skipped: ${lost.map(quote).join(', ')}.`);
+    return { steps: root.steps, errors, warnings, bad, skipped, startId: start.id, placed };
+  }
+
+  // ---- drawing: FigJam's look — pastel boxes with a stronger outline, sticky notes, smooth connectors
+
+  // colours a box or a sticky can have: [fill, outline, sticky fill]
+  const SK_COLORS = {
+    blue: ['#d4ecff', '#0d99ff', '#b6dcff'], violet: ['#e9deff', '#9747ff', '#d9c7ff'], yellow: ['#fff1c2', '#f5a700', '#ffe589'],
+    green: ['#d6f5dc', '#14ae5c', '#b8ecc4'], orange: ['#ffe2c7', '#ff8a00', '#ffd0a3'], red: ['#ffd9d4', '#f24822', '#ffc2ba'],
+    pink: ['#ffd6f3', '#ff24bd', '#ffbdeb'], teal: ['#cff7f3', '#0fb9a8', '#b0efe8'], gray: ['#f0f0f0', '#8d8d8d', '#e3e3e3'],
+  };
+  const SK_DEFAULT = { screen: 'blue', popup: 'violet', condition: 'yellow', text: 'yellow' };
+  const skColor = (e) => SK_COLORS[e.color] || SK_COLORS[SK_DEFAULT[e.type]];
+  const skArrowColor = (a) => {
+    const from = a.from && skFind(a.from);
+    if (!from || from.type !== 'condition') return 'var(--sk-line)'; // black, white in the dark theme
+    const t = tone(skName(a));
+    return t === 'other' ? '#5f6b7a' : TONE_COLOR[t];
+  };
+  function skElementSvg(e) {
+    if (e.type === 'arrow') {
+      const [[x1, y1], [x2, y2], [cx, cy]] = skEnds(e);
+      const color = skArrowColor(e);
+      const ang = Math.atan2(y2 - cy, x2 - cx); // the curve's direction where it ends
+      const back = `${x2 - 9 * Math.cos(ang)} ${y2 - 9 * Math.sin(ang)}`; // the line stops under the head
+      const head = (s) => `${x2 - 13 * Math.cos(ang + s)} ${y2 - 13 * Math.sin(ang + s)}`;
+      const d = Math.abs(e.bend || 0) > 1 ? `M${x1} ${y1}Q${cx} ${cy} ${back}` : `M${x1} ${y1}L${back}`;
+      return `<path d="${d}" style="fill:none;stroke:${color}" stroke-width="2" stroke-linecap="round"/>
+        <path d="M${x2} ${y2}L${head(0.42)}L${head(-0.42)}Z" style="fill:${color};stroke:${color}" stroke-width="1.5" stroke-linejoin="round"/>`;
+    }
+    const [fill, line, sticky] = skColor(e);
+    if (e.type === 'text') return `<rect class="sk-sticky" x="${e.x}" y="${e.y}" width="${e.w}" height="${e.h}" rx="3" fill="${sticky}"/>`;
+    if (e.type === 'condition') {
+      return `<path d="M${e.x + e.w / 2} ${e.y}L${e.x + e.w} ${e.y + e.h / 2}L${e.x + e.w / 2} ${e.y + e.h}L${e.x} ${e.y + e.h / 2}Z"
+        fill="${fill}" stroke="${line}" stroke-width="2" stroke-linejoin="round"/>`;
+    }
+    return `<rect x="${e.x}" y="${e.y}" width="${e.w}" height="${e.h}" rx="12" fill="${fill}" stroke="${line}" stroke-width="2"${e.type === 'popup' ? ' stroke-dasharray="7 5"' : ''}/>`;
+  }
+  function skLabelSvg(e) {
+    if (sketch.editing === e.id || !e.text) return '';
+    if (e.type === 'arrow') {
+      const [x, y] = skArrowMid(e);
+      return `<foreignObject x="${x - 110}" y="${y - 13}" width="220" height="26"><div class="sk-pill"><span style="--tone:${skArrowColor(e)}">${esc(skName(e))}</span></div></foreignObject>`;
+    }
+    const inset = e.type === 'condition' ? { x: e.w / 4, y: e.h / 4 } : e.type === 'text' ? { x: 12, y: 10 } : { x: 8, y: 6 };
+    return `<foreignObject x="${e.x + inset.x}" y="${e.y + inset.y}" width="${Math.max(1, e.w - inset.x * 2)}" height="${Math.max(1, e.h - inset.y * 2)}">
+      <div class="sk-label ${e.type}">${esc(e.text)}</div></foreignObject>`;
+  }
+
+  // the colour bar above what is selected (boxes and stickies)
+  function skColorBar() {
+    const $bar = $('#sketchBody .sk-colors');
+    const picked = sketch.els.filter((e) => sketch.sel.has(e.id) && e.type !== 'arrow');
+    if (!picked.length || sketch.drag || sketch.editing) { $bar.addClass('hidden'); return; }
+    const z = sketch.zoom;
+    const x0 = Math.min(...picked.map((e) => e.x));
+    const x1 = Math.max(...picked.map((e) => e.x + e.w));
+    const y0 = Math.min(...picked.map((e) => e.y));
+    const y1 = Math.max(...picked.map((e) => e.y + e.h));
+    const same = new Set(picked.map((e) => e.color || SK_DEFAULT[e.type])).size === 1 && (picked[0].color || SK_DEFAULT[picked[0].type]);
+    const top = y0 * z + sketch.panY - 52;
+    $bar.removeClass('hidden').css({ left: ((x0 + x1) / 2) * z + sketch.panX, top: top < 8 ? y1 * z + sketch.panY + 14 : top })
+      .html(Object.entries(SK_COLORS).map(([key, [fill, line]]) =>
+        `<button class="sk-swatch ${same === key ? 'on' : ''}" data-sk-color="${key}" title="${key[0].toUpperCase()}${key.slice(1)}" style="background:${fill};border-color:${line}"></button>`).join(''));
+  }
+
+  function skDraw() {
+    if (!sketch.open) return;
+    const { zoom: z, drag } = sketch;
+    const plan = sketchPlan(skFlowName());
+    const px = 1 / z; // one screen pixel, in canvas units
+    const out = [];
+    sketch.els.forEach((e) => {
+      const cls = plan.skipped.has(e.id) ? 'sk-skipped' : '';
+      out.push(`<g class="${cls}">${skElementSvg(e)}${skLabelSvg(e)}</g>`);
+      if (plan.bad.has(e.id)) {
+        const b = skBox(e);
+        out.push(`<rect class="sk-bad" x="${b.x - 6}" y="${b.y - 6}" width="${b.w + 12}" height="${b.h + 12}" rx="14"/>`);
+      }
+    });
+    const start = plan.startId && !plan.errors.length && skFind(plan.startId);
+    if (start) out.push(`<foreignObject x="${start.x}" y="${start.y - 26}" width="90" height="22"><div class="sk-badge">${icon('play', 10)} Start</div></foreignObject>`);
+    // selection
+    const selected = sketch.els.filter((e) => sketch.sel.has(e.id));
+    selected.forEach((e) => {
+      if (e.type === 'arrow') {
+        out.push(`<polyline class="sk-sel-arrow" points="${skCurve(e).map((q) => q.join(',')).join(' ')}" style="stroke-width:${10 * px}"/>`);
+        if (selected.length === 1) {
+          skArrowHandles(e).forEach(([x, y], i) => out.push(`<circle class="sk-handle ${i === 2 ? 'bend' : ''}" cx="${x}" cy="${y}" r="${(i === 2 ? 4 : 5) * px}" style="stroke-width:${1.5 * px}"/>`));
+        }
+        return;
+      }
+      const p = 5 * px;
+      out.push(`<rect class="sk-sel" x="${e.x - p}" y="${e.y - p}" width="${e.w + 2 * p}" height="${e.h + 2 * p}" style="stroke-width:${px}"/>`);
+      if (selected.length === 1) {
+        skCorners(e).forEach(([x, y]) => out.push(`<rect class="sk-handle" x="${x - 4 * px}" y="${y - 4 * px}" width="${8 * px}" height="${8 * px}" style="stroke-width:${1.5 * px}"/>`));
+      }
+    });
+    // what is being drawn right now
+    if (drag && drag.kind === 'create') {
+      const b = skDragBox(drag);
+      out.push(drag.type === 'condition'
+        ? `<path class="sk-ghost" d="M${b.x + b.w / 2} ${b.y}L${b.x + b.w} ${b.y + b.h / 2}L${b.x + b.w / 2} ${b.y + b.h}L${b.x} ${b.y + b.h / 2}Z" style="stroke-width:${1.5 * px}"/>`
+        : `<rect class="sk-ghost" x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="12" style="stroke-width:${1.5 * px}"/>`);
+    }
+    if (drag && drag.kind === 'arrow') {
+      const from = drag.from && skFind(drag.from);
+      const target = drag.over && skFind(drag.over);
+      const end = target ? skEdge(target, from ? skCenter(from) : drag.start) : drag.cur;
+      const a = from ? skEdge(from, end) : drag.start;
+      out.push(`<line class="sk-ghost" x1="${a[0]}" y1="${a[1]}" x2="${end[0]}" y2="${end[1]}" style="stroke-width:${1.5 * px}"/>`);
+    }
+    if (drag && drag.over) {
+      const t = skFind(drag.over);
+      if (t) { const b = skBox(t); out.push(`<rect class="sk-target" x="${b.x - 8}" y="${b.y - 8}" width="${b.w + 16}" height="${b.h + 16}" rx="10" style="stroke-width:${2 * px}"/>`); }
+    }
+    if (drag && drag.kind === 'marquee') {
+      const b = skDragBox(drag);
+      out.push(`<rect class="sk-marquee" x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" style="stroke-width:${px}"/>`);
+    }
+    $('#sketchBody .sk-world').attr('transform', `translate(${sketch.panX} ${sketch.panY}) scale(${z})`).html(out.join(''));
+    $('#sketchBody .sk-svg').css('--grid', `${20 * z}px`).css('background-position', `${sketch.panX}px ${sketch.panY}px`);
+    $('#sketchBody [data-sk-tool]').each(function () { $(this).toggleClass('active', $(this).data('sk-tool') === sketch.tool); });
+    $('#sketchBody [data-sk-zoom="0"]').text(`${Math.round(z * 100)}%`);
+    $('#sketchBody [data-sk-undo]').prop('disabled', !sketch.past.length);
+    $('#sketchBody [data-sk-redo]').prop('disabled', !sketch.future.length);
+    $('#sketchBody .sk-empty').toggleClass('hidden', sketch.els.length > 0);
+    $('#sketchBody .sk-stage').attr('data-tool', sketch.space ? 'hand' : sketch.tool);
+    skColorBar();
+  }
+
+  const skArrowHandles = (a) => { const [p1, p2] = skEnds(a); return [p1, p2, skArrowMid(a)]; }; // ends, then the bend
+  const skCorners = (e) => [[e.x, e.y], [e.x + e.w, e.y], [e.x, e.y + e.h], [e.x + e.w, e.y + e.h]];
+  const skDragBox = ({ start: [x1, y1], cur: [x2, y2] }) => ({ x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) });
+
+  // ---- the side panel: what will be created
+
+  const skFlow = () => sketch.target && sketch.target.flowId && findFlow(sketch.target.flowId);
+  const skFlowName = () => { const f = skFlow(); return f ? f.name : (sketch.name || 'New flow'); };
+
+  function skOutline(steps) {
+    const nameOf = (key) => skName(skFind(key) || {});
+    return `<ol class="sk-plan">${steps.map((s) => `
+      <li>
+        <button class="sk-step" data-sk-focus="${s.key}">
+          ${s.type === 'condition' ? '<span class="cond-diamond sm"></span>' : `<span class="sk-ico ${s.type}"></span>`}
+          <span class="truncate">${esc(s.name || 'unnamed')}</span>${s.type === 'popup' ? '<span class="sk-tag">Popup</span>' : ''}
+        </button>
+        ${s.type === 'condition' ? `<ul class="sk-branches">${(s.branches && s.branches.length ? s.branches : [{ label: 'Success' }, { label: 'Pending' }, { label: 'Else' }].map((b) => ({ ...b, auto: true }))).map((b) => `
+          <li style="--tone:${TONE_COLOR[tone(b.label)]}">
+            <p class="sk-branch"><span class="dot"></span>If <b>${esc(b.label || '—')}</b>
+              ${b.target ? `→ back to “${esc(nameOf(b.target))}”` : b.path ? `→ path <i>${esc(b.pathName)}</i>` : b.auto ? '<span class="text-slate-400">(no arrow drawn)</span>' : '→ no screen'}</p>
+            ${b.path ? skOutline(b.path.steps) : ''}
+          </li>`).join('')}</ul>` : ''}
+        ${(s.extends || []).map((x) => `
+          <div class="sk-branches"><p class="sk-branch">${icon('extend', 12)} New flow <i>${esc(x.name)}</i></p>${skOutline(x.steps)}</div>`).join('')}
+      </li>`).join('')}</ol>`;
+  }
+
+  function skPanel() {
+    if (!sketch.open) return;
+    const f = skFlow();
+    const plan = sketchPlan(skFlowName());
+    const all = [...plan.placed ? plan.placed.values() : []];
+    const screens = all.filter((s) => s.type !== 'condition').length;
+    const conds = all.length - screens;
+    const paths = all.reduce((n, s) => n + (s.branches || []).filter((b) => b.path).length + (s.extends || []).length, 0);
+    const list = (items, cls) => (items.length ? `<ul class="sk-notes ${cls}">${items.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : '');
+    const focused = document.activeElement && document.activeElement.matches('[data-sk-name]');
+    $('#sketchBody .sk-side').html(`
+      ${f ? `<p class="text-sm text-slate-600">The steps are added after the last step of <b class="text-slate-900">${esc(f.name)}</b>.</p>`
+    : `<label class="block"><span class="field-label">Flow name</span>
+          <input class="input w-full" data-sk-name value="${esc(sketch.name || '')}" placeholder="e.g. Sign Up, Add Money" maxlength="200" autocomplete="off"></label>`}
+      <div>
+        <p class="sk-h">Will be created</p>
+        ${plan.empty ? '<p class="text-sm text-slate-500">Nothing yet. Draw a box to start.</p>'
+    : `<p class="mb-2 text-xs text-slate-500">${screens} screen${screens === 1 ? '' : 's'} · ${conds} condition${conds === 1 ? '' : 's'} · ${paths} path${paths === 1 ? '' : 's'}</p>${skOutline(plan.steps)}`}
+      </div>
+      ${list(plan.errors, 'error')}
+      ${list(plan.warnings, 'warn')}
+      <button class="btn-primary w-full justify-center" data-sk-create ${plan.empty || plan.errors.length ? 'disabled' : ''}>${f ? 'Add to flow' : 'Create flow'}</button>
+      <div class="sk-legend">
+        <p class="sk-h">How it reads</p>
+        <p><span class="sk-ico screen"></span> Box = screen</p>
+        <p><span class="sk-ico popup"></span> Dashed box = popup</p>
+        <p><span class="cond-diamond sm"></span> Diamond = condition</p>
+        <p>${icon('arrow', 14)} Arrow = the next step. Out of a condition, its text is the branch (Success, Failed …).</p>
+        <p>${icon('sticky', 14)} Sticky note = just a note, not created.</p>
+        <p class="text-slate-400">Double-click a box or an arrow to write on it; pick a colour above what is selected. Your drawing is kept in this browser until it is created.</p>
+      </div>`);
+    if (focused) $('#sketchBody [data-sk-name]').trigger('focus');
+  }
+
+  // ---- history, saving, view
+
+  function skRemember() {
+    sketch.past.push(JSON.stringify(sketch.els));
+    if (sketch.past.length > 100) sketch.past.shift();
+    sketch.future = [];
+  }
+  function skSave() {
+    storage('set', sketch.key, sketch.els.length || sketch.name ? JSON.stringify({ els: sketch.els, name: sketch.name }) : '');
+  }
+  function skChanged() { skSave(); skDraw(); skPanel(); }
+  function skStep(from, to) {
+    if (!from.length) return;
+    to.push(JSON.stringify(sketch.els));
+    sketch.els = JSON.parse(from.pop());
+    sketch.sel = new Set([...sketch.sel].filter(skFind));
+    skChanged();
+  }
+
+  function skWorld(e) {
+    const r = skSvg().getBoundingClientRect();
+    return [(e.clientX - r.left - sketch.panX) / sketch.zoom, (e.clientY - r.top - sketch.panY) / sketch.zoom];
+  }
+  function skZoomTo(z, at) {
+    const r = skSvg().getBoundingClientRect();
+    const [sx, sy] = at || [r.width / 2, r.height / 2];
+    const zoom = Math.min(3, Math.max(0.2, z));
+    sketch.panX = sx - ((sx - sketch.panX) * zoom) / sketch.zoom;
+    sketch.panY = sy - ((sy - sketch.panY) * zoom) / sketch.zoom;
+    sketch.zoom = zoom;
+    skDraw();
+  }
+  function skFit() {
+    const r = skSvg().getBoundingClientRect();
+    if (!sketch.els.length) { Object.assign(sketch, { zoom: 1, panX: 80, panY: 80 }); return; }
+    const boxes = sketch.els.map(skBox);
+    const x0 = Math.min(...boxes.map((b) => b.x));
+    const y0 = Math.min(...boxes.map((b) => b.y));
+    const x1 = Math.max(...boxes.map((b) => b.x + b.w));
+    const y1 = Math.max(...boxes.map((b) => b.y + b.h));
+    const zoom = Math.min(1.2, Math.max(0.2, Math.min(r.width / (x1 - x0 + 160), r.height / (y1 - y0 + 160))));
+    Object.assign(sketch, { zoom, panX: r.width / 2 - ((x0 + x1) / 2) * zoom, panY: r.height / 2 - ((y0 + y1) / 2) * zoom });
+  }
+
+  // ---- open / close
+
+  function openSketch(target) {
+    const key = target.flowId ? `sketch.flow.${target.flowId}` : `sketch.module.${target.moduleId}`;
+    let saved = null;
+    try { saved = JSON.parse(storage('get', key) || 'null'); } catch (e) { saved = null; }
+    const m = allModules.find((x) => x.id === (target.moduleId || (findFlow(target.flowId) || {}).moduleId));
+    Object.assign(sketch, {
+      open: true, target, key, els: saved && Array.isArray(saved.els) ? saved.els : [], name: (saved && saved.name) || '',
+      sel: new Set(), tool: 'select', past: [], future: [], editing: null, drag: null, space: false,
+    });
+    const f = skFlow();
+    $('#sketchBody').html(`
+      <div class="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
+        <span class="text-indigo-600">${icon('pen', 18)}</span>
+        <div class="min-w-0 flex-1">
+          <h3 class="truncate text-base font-semibold text-slate-900">${f ? `Draw into ${esc(f.name)}` : `Draw a new flow${m ? ` · ${esc(m.name)}` : ''}`}</h3>
+          <p class="truncate text-xs text-slate-500">Draw boxes and join them with arrows, like on a whiteboard. When the list on the right reads right, create it: the screens, conditions and paths are made for you.</p>
+        </div>
+        <button class="icon-btn" data-close-sketch title="Close (your drawing is kept)">${icon('close', 18)}</button>
+      </div>
+      <div class="sk-body">
+        <div class="sk-stage">
+          <svg class="sk-svg" aria-label="Drawing canvas"><g class="sk-world"></g></svg>
+          <div class="sk-island sk-toolbar">
+            ${SK_TOOLS.map((t) => `<button class="sk-tool" data-sk-tool="${t.id}" title="${t.title} — ${t.key.toUpperCase()}${t.no ? ` or ${t.no}` : ''}">${icon(t.icon, 18)}${t.no ? `<span class="sk-key">${t.no}</span>` : ''}</button>`).join('')}
+          </div>
+          <div class="sk-island sk-corner">
+            <button class="sk-tool" data-sk-undo title="Undo — Ctrl+Z">${icon('undo', 16)}</button>
+            <button class="sk-tool" data-sk-redo title="Redo — Ctrl+Shift+Z">${icon('redo', 16)}</button>
+            <span class="sk-sep"></span>
+            <button class="sk-tool" data-sk-zoom="-1" title="Zoom out">${icon('minus', 16)}</button>
+            <button class="sk-zoom" data-sk-zoom="0" title="Reset zoom">100%</button>
+            <button class="sk-tool" data-sk-zoom="1" title="Zoom in">${icon('plus', 16)}</button>
+            <button class="sk-tool" data-sk-fit title="Fit the drawing">${icon('fit', 16)}</button>
+            <span class="sk-sep"></span>
+            <button class="sk-tool danger" data-sk-clear title="Clear the canvas">${icon('trash', 16)}</button>
+          </div>
+          <div class="sk-island sk-colors hidden"></div>
+          <div class="sk-empty">
+            <p class="sk-empty-title">Draw your flow</p>
+            <p>Pick <b>Screen</b> (R) and drag on the canvas, then <b>Arrow</b> (A) from one box to the next.<br>
+              A <b>Condition</b> (D) splits the flow: write the branch name on each arrow out of it.</p>
+          </div>
+        </div>
+        <aside class="sk-side"></aside>
+      </div>`);
+    $('#sketchModal').removeClass('hidden');
+    $('body').addClass('overflow-hidden');
+    const svg = skSvg();
+    svg.addEventListener('wheel', skWheel, { passive: false });
+    svg.addEventListener('pointerdown', skDown);
+    svg.addEventListener('pointermove', skMove);
+    svg.addEventListener('pointerup', skUp);
+    svg.addEventListener('pointercancel', skUp);
+    svg.addEventListener('dblclick', skDouble);
+    skFit();
+    skDraw();
+    skPanel();
+  }
+  function closeSketch() {
+    if (sketch.editing) $('#sketchBody .sk-input').trigger('blur');
+    skSave();
+    Object.assign(sketch, { open: false, drag: null, editing: null });
+    $('#sketchModal').addClass('hidden');
+    $('#sketchBody').empty();
+    unlockScroll();
+  }
+  function skEscape() {
+    if (sketch.drag) return;
+    if (sketch.sel.size) { sketch.sel.clear(); skDraw(); return; }
+    if (sketch.tool !== 'select') { sketch.tool = 'select'; skDraw(); return; }
+    closeSketch();
+  }
+
+  // ---- pointer
+
+  function skDown(e) {
+    if (sketch.drag || (e.button !== 0 && e.button !== 1)) return;
+    if (sketch.editing) $('#sketchBody .sk-input').trigger('blur');
+    const p = skWorld(e);
+    const { tool } = sketch;
+    let drag = null;
+    if (e.button === 1 || tool === 'hand' || sketch.space) {
+      drag = { kind: 'pan', x: e.clientX, y: e.clientY, panX: sketch.panX, panY: sketch.panY };
+    } else if (tool === 'select') {
+      const one = sketch.sel.size === 1 && skFind([...sketch.sel][0]);
+      const near = (q) => Math.hypot(p[0] - q[0], p[1] - q[1]) <= 8 / sketch.zoom;
+      const corner = one && SK_SHAPES.includes(one.type) ? skCorners(one).findIndex(near) : -1;
+      const end = one && one.type === 'arrow' ? skArrowHandles(one).findIndex(near) : -1;
+      if (corner >= 0) {
+        skRemember();
+        drag = { kind: 'resize', id: one.id, corner, orig: { x: one.x, y: one.y, w: one.w, h: one.h } };
+      } else if (end === 2) {
+        skRemember();
+        drag = { kind: 'bend', id: one.id };
+      } else if (end >= 0) {
+        skRemember();
+        drag = { kind: 'end', id: one.id, end, cur: p };
+      } else {
+        const hit = skHit(p);
+        if (hit) {
+          if (e.shiftKey) { if (sketch.sel.has(hit.id)) sketch.sel.delete(hit.id); else sketch.sel.add(hit.id); }
+          else if (!sketch.sel.has(hit.id)) sketch.sel = new Set([hit.id]);
+          drag = { kind: 'move', start: p, moved: false };
+        } else {
+          if (!e.shiftKey) sketch.sel.clear();
+          drag = { kind: 'marquee', start: p, cur: p };
+        }
+      }
+    } else if (SK_SHAPES.includes(tool)) {
+      drag = { kind: 'create', type: tool, start: p, cur: p };
+    } else if (tool === 'arrow') {
+      const from = skShapeAt(p);
+      drag = { kind: 'arrow', from: from && from.id, start: p, cur: p };
+    } else if (tool === 'text') {
+      skAddNote(p);
+      return;
+    }
+    sketch.drag = drag;
+    if (drag) { e.preventDefault(); skSvg().setPointerCapture(e.pointerId); }
+    skDraw();
+  }
+
+  function skMove(e) {
+    const { drag } = sketch;
+    if (!drag) {
+      if (sketch.tool === 'select' && !sketch.space) $('#sketchBody .sk-stage').toggleClass('over-element', Boolean(skHit(skWorld(e))));
+      return;
+    }
+    const p = skWorld(e);
+    if (drag.kind === 'pan') {
+      sketch.panX = drag.panX + e.clientX - drag.x;
+      sketch.panY = drag.panY + e.clientY - drag.y;
+    } else if (drag.kind === 'move') {
+      const dx = p[0] - drag.start[0];
+      const dy = p[1] - drag.start[1];
+      if (!drag.moved) {
+        if (Math.hypot(dx, dy) * sketch.zoom < 3) return;
+        skRemember();
+        drag.moved = true;
+        // an arrow moved without the box it is joined to lets go of it
+        sketch.els.filter((a) => a.type === 'arrow' && sketch.sel.has(a.id)).forEach((a) => {
+          const [p1, p2] = skEnds(a);
+          if (a.from && !sketch.sel.has(a.from)) { a.from = null; [a.x1, a.y1] = p1; }
+          if (a.to && !sketch.sel.has(a.to)) { a.to = null; [a.x2, a.y2] = p2; }
+        });
+        drag.orig = new Map(sketch.els.filter((x) => sketch.sel.has(x.id)).map((x) => [x.id, { ...x }]));
+      }
+      drag.orig.forEach((o, id) => {
+        const x = skFind(id);
+        if (!x) return;
+        if (x.type === 'arrow') Object.assign(x, { x1: o.x1 + dx, y1: o.y1 + dy, x2: o.x2 + dx, y2: o.y2 + dy });
+        else Object.assign(x, { x: o.x + dx, y: o.y + dy });
+      });
+    } else if (drag.kind === 'resize') {
+      const x = skFind(drag.id);
+      const o = drag.orig;
+      const fixed = skCorners(o)[3 - drag.corner]; // the opposite corner stays put
+      const w = Math.max(40, Math.abs(p[0] - fixed[0]));
+      const h = Math.max(30, Math.abs(p[1] - fixed[1]));
+      Object.assign(x, { w, h, x: p[0] < fixed[0] ? fixed[0] - w : fixed[0], y: p[1] < fixed[1] ? fixed[1] - h : fixed[1] });
+    } else if (drag.kind === 'bend') {
+      // the curve's middle follows the pointer: it sits half way to the control point
+      const a = skFind(drag.id);
+      const { mid, n } = skControl(a, 0);
+      const bend = 2 * ((p[0] - mid[0]) * n[0] + (p[1] - mid[1]) * n[1]);
+      a.bend = Math.abs(bend) < 8 ? 0 : bend;
+    } else if (drag.kind === 'end') {
+      const a = skFind(drag.id);
+      const other = drag.end === 0 ? a.to : a.from;
+      const over = skShapeAt(p, other);
+      drag.over = over && over.id;
+      if (drag.end === 0) Object.assign(a, { from: null, x1: p[0], y1: p[1] });
+      else Object.assign(a, { to: null, x2: p[0], y2: p[1] });
+    } else {
+      drag.cur = p;
+      if (drag.kind === 'arrow') { const over = skShapeAt(p, drag.from); drag.over = over && over.id; }
+    }
+    skDraw();
+  }
+
+  function skUp(e) {
+    const { drag } = sketch;
+    if (!drag) return;
+    sketch.drag = null;
+    if (skSvg().hasPointerCapture(e.pointerId)) skSvg().releasePointerCapture(e.pointerId);
+    if (drag.kind === 'pan') { skDraw(); return; }
+    if (drag.kind === 'create') {
+      let b = skDragBox(drag);
+      const cond = drag.type === 'condition';
+      if (b.w * sketch.zoom < 12 && b.h * sketch.zoom < 12) { // a click: the usual size, centred on it
+        const w = cond ? SK.condW : SK.w;
+        const h = cond ? SK.condH : SK.h;
+        b = { x: drag.start[0] - w / 2, y: drag.start[1] - h / 2, w, h };
+      }
+      skRemember();
+      const el = { id: skId(), type: drag.type, x: b.x, y: b.y, w: Math.max(40, b.w), h: Math.max(30, b.h), text: '' };
+      sketch.els.push(el);
+      sketch.sel = new Set([el.id]);
+      sketch.tool = 'select';
+      skChanged();
+      skEdit(el.id, true);
+      return;
+    }
+    if (drag.kind === 'arrow') {
+      const far = Math.hypot(drag.cur[0] - drag.start[0], drag.cur[1] - drag.start[1]) * sketch.zoom > 12;
+      if (!drag.over && !far) { skDraw(); return; }
+      skRemember();
+      const a = {
+        id: skId(), type: 'arrow', from: drag.from || null, to: drag.over || null, text: '',
+        x1: drag.start[0], y1: drag.start[1], x2: drag.cur[0], y2: drag.cur[1],
+      };
+      skAutoBend(a);
+      sketch.els.push(a);
+      sketch.sel = new Set([a.id]);
+      sketch.tool = 'select';
+      skChanged();
+      const from = a.from && skFind(a.from);
+      if (from && from.type === 'condition' && a.to) skEdit(a.id, true); // a branch: write its name
+      return;
+    }
+    if (drag.kind === 'end') {
+      const a = skFind(drag.id);
+      if (drag.over) a[drag.end === 0 ? 'from' : 'to'] = drag.over;
+    }
+    if (drag.kind === 'marquee') {
+      const m = skDragBox(drag);
+      sketch.els.forEach((x) => {
+        const b = skBox(x);
+        if (b.x >= m.x && b.y >= m.y && b.x + b.w <= m.x + m.w && b.y + b.h <= m.y + m.h) sketch.sel.add(x.id);
+      });
+    }
+    if (drag.kind === 'move' && !drag.moved) { skDraw(); return; }
+    skChanged();
+  }
+
+  function skWheel(e) {
+    e.preventDefault();
+    if (sketch.editing) $('#sketchBody .sk-input').trigger('blur');
+    if (e.ctrlKey || e.metaKey) {
+      const r = skSvg().getBoundingClientRect();
+      skZoomTo(sketch.zoom * Math.exp(-e.deltaY * 0.01), [e.clientX - r.left, e.clientY - r.top]);
+      return;
+    }
+    sketch.panX -= e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX;
+    sketch.panY -= e.shiftKey && !e.deltaX ? 0 : e.deltaY;
+    skDraw();
+  }
+
+  function skDouble(e) {
+    const p = skWorld(e);
+    const hit = skHit(p);
+    if (hit) skEdit(hit.id);
+    else skAddNote(p);
+  }
+
+  // ---- writing on an element
+
+  function skAddNote(p) {
+    skRemember();
+    const el = { id: skId(), type: 'text', x: p[0] - SK.stickyW / 2, y: p[1] - SK.stickyH / 2, w: SK.stickyW, h: SK.stickyH, text: '' };
+    sketch.els.push(el);
+    sketch.sel = new Set([el.id]);
+    sketch.tool = 'select';
+    skDraw();
+    skEdit(el.id, true);
+  }
+
+  function skEdit(id, fresh) {
+    const el = skFind(id);
+    if (!el) return;
+    sketch.editing = id;
+    sketch.sel = new Set([id]);
+    skDraw();
+    const z = sketch.zoom;
+    const note = el.type === 'text';
+    let center;
+    let width;
+    if (el.type === 'arrow') {
+      center = skArrowMid(el);
+      width = 170;
+    } else if (!note) {
+      center = skCenter(el);
+      width = el.type === 'condition' ? el.w * 0.62 : el.w - 12;
+    }
+    const $t = $('<textarea class="sk-input" spellcheck="false" rows="1"></textarea>')
+      .addClass(note ? 'note' : 'center').val(el.text || '')
+      .css({ fontSize: `${(note ? 15 : 14) * z}px` })
+      .appendTo('#sketchBody .sk-stage');
+    const t = $t[0];
+    const fit = () => {
+      if (note) { // the sticky's own box, writing from its top left
+        $t.css({ left: (el.x + 12) * z + sketch.panX, top: (el.y + 10) * z + sketch.panY, width: (el.w - 24) * z, height: (el.h - 20) * z });
+        return;
+      }
+      $t.css({ width: width * z, height: 'auto' });
+      const h = t.scrollHeight;
+      $t.css({ left: center[0] * z + sketch.panX - (width * z) / 2, top: center[1] * z + sketch.panY - h / 2, height: h });
+    };
+    fit();
+    $t.on('input', fit)
+      .on('keydown', (ev) => {
+        ev.stopPropagation();
+        const done = ev.key === 'Escape' || (ev.key === 'Enter' && (note ? ev.metaKey || ev.ctrlKey : !ev.shiftKey));
+        if (done) { ev.preventDefault(); t.blur(); }
+      })
+      .on('blur', () => skEndEdit(id, t.value, fresh));
+    setTimeout(() => { t.focus(); t.select(); });
+  }
+
+  function skEndEdit(id, value, fresh) {
+    if (sketch.editing !== id) return;
+    sketch.editing = null;
+    $('#sketchBody .sk-input').remove();
+    const el = skFind(id);
+    if (!el) return;
+    const text = el.type === 'text' ? value.replace(/\s+$/, '') : value.trim();
+    if (text !== (el.text || '')) {
+      if (!fresh) skRemember();
+      el.text = text;
+    }
+    skChanged();
+  }
+
+  // ---- keys and buttons
+
+  function skDelete() {
+    if (!sketch.sel.size) return;
+    skRemember();
+    const gone = sketch.sel;
+    sketch.els = sketch.els.filter((x) => !gone.has(x.id) && !(x.type === 'arrow' && (gone.has(x.from) || gone.has(x.to))));
+    sketch.sel = new Set();
+    skChanged();
+  }
+  function skDuplicate() {
+    const picked = sketch.els.filter((x) => sketch.sel.has(x.id));
+    if (!picked.length) return;
+    skRemember();
+    const ids = new Map(picked.map((x) => [x.id, skId()]));
+    const copies = picked.map((x) => {
+      const c = { ...x, id: ids.get(x.id) };
+      if (c.type !== 'arrow') return Object.assign(c, { x: x.x + 24, y: x.y + 24 });
+      // a copied arrow keeps a join only to a copied box
+      const [p1, p2] = skEnds(x);
+      Object.assign(c, { from: ids.get(x.from) || null, to: ids.get(x.to) || null, x1: p1[0] + 24, y1: p1[1] + 24, x2: p2[0] + 24, y2: p2[1] + 24 });
+      return c;
+    });
+    sketch.els.push(...copies);
+    sketch.sel = new Set(copies.map((x) => x.id));
+    skChanged();
+  }
+  function skNudge(dx, dy) {
+    const picked = sketch.els.filter((x) => sketch.sel.has(x.id));
+    if (!picked.length) return;
+    skRemember();
+    picked.forEach((x) => {
+      if (x.type !== 'arrow') { x.x += dx; x.y += dy; return; }
+      if (!x.from) { x.x1 += dx; x.y1 += dy; }
+      if (!x.to) { x.x2 += dx; x.y2 += dy; }
+    });
+    skChanged();
+  }
+
+  $doc.on('keydown', (e) => {
+    if (!sketch.open || dialog.isOpen() || $(e.target).is('input, textarea, select, [contenteditable]')) return;
+    const mod = e.metaKey || e.ctrlKey;
+    const k = e.key.toLowerCase();
+    if (k === ' ') { e.preventDefault(); if (!sketch.space) { sketch.space = true; skDraw(); } return; }
+    if (mod && k === 'z') { e.preventDefault(); if (e.shiftKey) skStep(sketch.future, sketch.past); else skStep(sketch.past, sketch.future); return; }
+    if (mod && k === 'y') { e.preventDefault(); skStep(sketch.future, sketch.past); return; }
+    if (mod && k === 'a') { e.preventDefault(); sketch.sel = new Set(sketch.els.map((x) => x.id)); skDraw(); return; }
+    if (mod && k === 'd') { e.preventDefault(); skDuplicate(); return; }
+    if (mod && (k === '=' || k === '+' || k === '-')) { e.preventDefault(); skZoomTo(sketch.zoom * (k === '-' ? 0.9 : 1.1)); return; }
+    if (mod) return;
+    if (k === 'delete' || k === 'backspace') { e.preventDefault(); skDelete(); return; }
+    if (k === 'enter' && sketch.sel.size === 1) { e.preventDefault(); skEdit([...sketch.sel][0]); return; }
+    const nudge = { arrowleft: [-1, 0], arrowright: [1, 0], arrowup: [0, -1], arrowdown: [0, 1] }[k];
+    if (nudge) { e.preventDefault(); skNudge(nudge[0] * (e.shiftKey ? 10 : 1), nudge[1] * (e.shiftKey ? 10 : 1)); return; }
+    const tool = SK_TOOLS.find((t) => t.key === k || (t.no && t.no === k));
+    if (tool) { sketch.tool = tool.id; if (tool.id !== 'select') sketch.sel.clear(); skDraw(); }
+  });
+  $doc.on('keyup', (e) => {
+    if (e.key === ' ' && sketch.space) { sketch.space = false; skDraw(); }
+  });
+
+  $doc.on('click', '[data-sketch-module]', function () { openSketch({ moduleId: $(this).data('sketch-module') }); });
+  $doc.on('click', '[data-sketch-flow]', function () { openSketch({ flowId: $(this).data('sketch-flow') }); });
+  $doc.on('click', '[data-close-sketch]', closeSketch);
+  $('#sketchModal').on('mousedown', function (e) { if (e.target === this) closeSketch(); });
+  $doc.on('click', '[data-sk-tool]', function () {
+    sketch.tool = $(this).data('sk-tool');
+    if (sketch.tool !== 'select') sketch.sel.clear();
+    skDraw();
+  });
+  $doc.on('click', '[data-sk-color]', function () {
+    const color = $(this).data('sk-color');
+    skRemember();
+    sketch.els.forEach((e) => { if (sketch.sel.has(e.id) && e.type !== 'arrow') e.color = color; });
+    skChanged();
+  });
+  $doc.on('click', '[data-sk-undo]', () => skStep(sketch.past, sketch.future));
+  $doc.on('click', '[data-sk-redo]', () => skStep(sketch.future, sketch.past));
+  $doc.on('click', '[data-sk-zoom]', function () {
+    const step = Number($(this).data('sk-zoom'));
+    skZoomTo(step ? sketch.zoom * (step > 0 ? 1.1 : 1 / 1.1) : 1);
+  });
+  $doc.on('click', '[data-sk-fit]', () => { skFit(); skDraw(); });
+  $doc.on('click', '[data-sk-clear]', () => {
+    if (!sketch.els.length) return;
+    dialog.confirm({
+      title: 'Clear the canvas?',
+      message: 'Everything drawn here is removed. Undo (Ctrl+Z) brings it back.',
+      confirmText: 'Clear',
+      danger: true,
+      onConfirm: () => {
+        skRemember();
+        sketch.els = [];
+        sketch.sel = new Set();
+        skChanged();
+        return $.Deferred().resolve().promise();
+      },
+    });
+  });
+  $doc.on('input', '[data-sk-name]', function () { sketch.name = this.value; skSave(); });
+  $doc.on('change', '[data-sk-name]', () => skPanel()); // path names follow the flow name
+  // a step in the list: select its box and bring it into view
+  $doc.on('click', '[data-sk-focus]', function () {
+    const el = skFind($(this).data('sk-focus'));
+    if (!el) return;
+    const r = skSvg().getBoundingClientRect();
+    const [cx, cy] = skCenter(el);
+    sketch.sel = new Set([el.id]);
+    sketch.panX = r.width / 2 - cx * sketch.zoom;
+    sketch.panY = r.height / 2 - cy * sketch.zoom;
+    skDraw();
+  });
+  $doc.on('click', '[data-sk-create]', function () {
+    const f = skFlow();
+    const plan = sketchPlan(skFlowName());
+    if (plan.empty || plan.errors.length) return;
+    const name = (sketch.name || '').trim();
+    if (!f && !name) {
+      $('#sketchBody [data-sk-name]').addClass('invalid').trigger('focus');
+      toast('Name the flow first');
+      return;
+    }
+    const steps = plan.steps;
+    const count = sketch.els.filter((x) => plan.placed.has(x.id)).length;
+    const req = f
+      ? api('POST', `/api/flows/${f.id}/sketch`, { steps }, this)
+      : api('POST', `/api/modules/${sketch.target.moduleId}/sketch`, { name, steps }, this);
+    req.done((flow) => {
+      sketch.els = [];
+      sketch.name = '';
+      skSave();
+      closeSketch();
+      toast(`${count} step${count === 1 ? '' : 's'} created`);
+      activeId = flow.moduleId;
+      load().done(() => gotoFlow(flow.id));
+    });
+  });
+
   // ---------------------------------------------------------------- screen popup
 
   function renderPopup() {
@@ -1594,6 +2509,88 @@ $(function () {
     unlockScroll();
   }
 
+  // ---------------------------------------------------------------- send on Teams: rows of a sheet or issues, with the columns picked
+  //
+  // openTeamsSend({ title, count, columns: [{ id, label, on }], people: [{ id, name, teams }], send })
+  //   send({ columns, userIds, note, button }) → jqXHR answering { teams, rows }
+
+  let teamsSend = null;
+
+  function openTeamsSend({ title, count, columns, people, send }) {
+    teamsSend = { send };
+    const pick = (name, value, label, on) => `<label class="teams-pick"><input type="checkbox" class="h-4 w-4 accent-indigo-600" name="${name}" value="${esc(value)}" ${on ? 'checked' : ''}> ${label}</label>`;
+    $('#teamsForm').html(`
+      <div class="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
+        <span class="text-indigo-600">${icon('share', 18)}</span>
+        <div class="min-w-0 flex-1">
+          <h3 class="truncate text-base font-semibold text-slate-900">${esc(title)}</h3>
+          <p class="text-xs text-slate-500">${count} row${count === 1 ? '' : 's'} go to the app's Teams channel${count > 40 ? ' (the first 40 are listed, with a link to the rest)' : ''}.</p>
+        </div>
+        <button type="button" class="icon-btn" data-close-teams title="Close">${icon('close', 18)}</button>
+      </div>
+      <div class="space-y-4 px-5 py-4">
+        <div>
+          <div class="flex items-center gap-2"><span class="field-label flex-1">Columns to send</span>
+            <button type="button" class="text-xs text-indigo-600 hover:underline" data-teams-all="col">All</button>
+            <button type="button" class="text-xs text-indigo-600 hover:underline" data-teams-none="col">None</button></div>
+          <div class="teams-picks">${columns.map((c) => pick('col', c.id, esc(c.label), c.on !== false)).join('')}</div>
+        </div>
+        <div>
+          <span class="field-label">@mention <span class="font-normal text-slate-400">(optional)</span></span>
+          <div class="teams-picks max-h-40 overflow-y-auto">${people.map((u) => pick('user', u.id, `${esc(u.name)}${u.teams ? '' : ' <span class="text-xs text-slate-400">· no Teams email</span>'}`, false)).join('')
+            || '<span class="text-sm text-slate-400">Nobody else can open this app.</span>'}</div>
+        </div>
+        <label class="block"><span class="field-label">Message <span class="font-normal text-slate-400">(optional)</span></span>
+          <textarea class="input w-full" name="note" rows="2" maxlength="1000" placeholder="e.g. Please check these before the 6 pm build"></textarea></label>
+        <p class="dialog-error hidden"></p>
+      </div>
+      <div class="flex justify-end gap-2 border-t border-slate-200 px-5 py-3">
+        <button type="button" class="btn-secondary" data-close-teams>Cancel</button>
+        <button class="btn-primary">${icon('share', 14)} Send on Teams</button>
+      </div>`);
+    $('#teamsModal').removeClass('hidden');
+    $('body').addClass('overflow-hidden');
+  }
+  function closeTeamsSend() {
+    teamsSend = null;
+    $('#teamsModal').addClass('hidden');
+    unlockScroll();
+  }
+  $doc.on('click', '[data-close-teams]', closeTeamsSend);
+  $('#teamsModal').on('mousedown', function (e) { if (e.target === this) closeTeamsSend(); });
+  $doc.on('click', '[data-teams-all], [data-teams-none]', function () {
+    const all = $(this).is('[data-teams-all]');
+    $(`#teamsForm [name="${$(this).data(all ? 'teams-all' : 'teams-none')}"]`).prop('checked', all);
+  });
+  $('#teamsForm').on('submit', function (e) {
+    e.preventDefault();
+    const $f = $(this);
+    const $err = $f.find('.dialog-error').addClass('hidden');
+    const picked = (name) => $f.find(`[name="${name}"]:checked`).map((i, el) => el.value).get();
+    const columns = picked('col');
+    if (!columns.length) { $err.text('Pick at least one column.').removeClass('hidden'); return; }
+    teamsSend.send({ columns, userIds: picked('user'), note: $f.find('[name=note]').val().trim(), button: $f.find('[type=submit]')[0] })
+      .done((r) => { closeTeamsSend(); toast(`Sent ${r.rows} row${r.rows === 1 ? '' : 's'} on Teams`); })
+      .fail((xhr) => $err.text(errorText(xhr)).removeClass('hidden'));
+  });
+
+  // Issues on Teams (from the issues list or the issue writer): issues of one app
+  const ISSUE_TEAMS_COLUMNS = [['where', 'Module › Flow › Screen'], ['text', 'Issue'], ['priority', 'Priority'], ['status', 'Status'],
+    ['assignees', 'Assigned to'], ['remarks', 'Remarks'], ['area', 'Area', false], ['added', 'Added on', false]];
+  function sendIssuesOnTeams(pid, ids) {
+    if (!ids.length) { toast('Tick the issues to send'); return; }
+    api('GET', `/api/products/${encodeURIComponent(pid)}/people`).done((d) => {
+      if (!d.teams) { dialog.alert('This app has no Teams channel yet. A super admin can add it in Sanity → Teams channel.', 'Teams'); return; }
+      openTeamsSend({
+        title: `Send ${ids.length === 1 ? 'an issue' : `${ids.length} issues`} on Teams`,
+        count: ids.length,
+        columns: ISSUE_TEAMS_COLUMNS.map(([id, label, on]) => ({ id, label, on })),
+        people: d.people.filter((u) => u.id !== me.id),
+        send: (val) => api('POST', '/api/issues/teams', { productId: pid, ids, columns: val.columns, userIds: val.userIds, note: val.note }, val.button, QUIET),
+      });
+    });
+  }
+
   // ---------------------------------------------------------------- issues by status (header counts open this)
 
   function renderBugs() {
@@ -1608,6 +2605,9 @@ $(function () {
     const list = status ? rows : rows.filter(({ c }) => filter === 'all' || (filter === 'open' ? !c.resolved : c.resolved));
     const screenCount = new Set(list.map((x) => x.s.id)).size;
     const tag = status && statusOf(status);
+    bugsView.picked = new Set([...(bugsView.picked || [])].filter((id) => list.some((x) => x.c.id === id)));
+    const { picked } = bugsView;
+    const allPicked = list.length && list.every((x) => picked.has(x.c.id));
 
     $('#bugsBody').html(`
       <div class="flex flex-wrap items-center gap-3 border-b border-slate-200 px-5 py-4">
@@ -1621,14 +2621,17 @@ $(function () {
           ${[['open', 'Open'], ['fixed', 'Fixed'], ['all', 'All']].map(([k, label]) =>
             `<button data-bugs-filter="${k}" class="${filter === k ? 'on' : ''}">${label} (${counts[k]})</button>`).join('')}
         </div>`}
+        <button class="btn-secondary text-sm" data-bugs-teams ${list.length ? '' : 'disabled'} title="${picked.size ? 'Send the ticked issues on Teams' : 'Send every issue listed on Teams (tick some to send only those)'}">
+          ${icon('share', 14)} ${picked.size ? `Send ${picked.size} on Teams` : 'Send on Teams'}</button>
         <button class="icon-btn" data-close-bugs title="Close">${icon('close', 18)}</button>
       </div>
-      <div class="bugs-cols"><span>Module › Flow › Screen</span><span>Priority</span><span>Status</span><span>Issue</span><span>Assigned to</span><span></span></div>
+      <div class="bugs-cols"><span><input type="checkbox" class="h-4 w-4 accent-indigo-600" data-bugs-pick-all ${allPicked ? 'checked' : ''} title="Tick every issue listed"></span><span>Module › Flow › Screen</span><span>Priority</span><span>Status</span><span>Issue</span><span>Assigned to</span><span></span></div>
       <div class="bugs-rows">
         ${list.map(({ c, s, f, m }) => {
           const p = prio(c);
           return `
           <div class="bugs-row ${p} ${c.resolved ? 'is-fixed' : ''}">
+            <input type="checkbox" class="mt-1 h-4 w-4 accent-indigo-600" data-bugs-pick="${c.id}" ${picked.has(c.id) ? 'checked' : ''}>
             <div class="min-w-0">
               <p class="truncate text-xs text-slate-500">${esc(m.name)} › ${esc(f.name)}</p>
               <p class="truncate text-sm font-medium text-slate-900">${esc(s.name)}</p>
@@ -1724,14 +2727,27 @@ $(function () {
       ${version ? `<button class="version-tag" data-action="sanity-logs" title="Present version of ${esc(current.name)}: the latest version tested in Sanity. Opens the sanity logs.">v${esc(version)}</button>` : ''}
       <span class="account" title="${esc(ACCESS[me.access].hint)}">${icon('user', 14)} ${esc(me.name || me.username)}
         <span class="access-tag access-${me.access}">${ACCESS[me.access].label}</span></span>
-      <button class="btn-secondary px-3 py-1 text-xs" data-action="sheets" title="Your own sheets: typed columns, links to flows and screens, Excel in and out">${icon('grid', 12)} Sheets</button>
+      <button class="btn-secondary px-3 py-1 text-xs ${sheetsView ? 'on' : ''}" data-action="sheets" title="Your own sheets: typed columns, links to flows and screens, Excel in and out">${icon('grid', 12)} Sheets</button>
       <button class="btn-secondary px-3 py-1 text-xs ${sanity ? 'on' : ''}" data-action="sanity" title="Daily sanity checklist of this app">${icon('check', 12)} Sanity</button>
       <button class="btn-secondary px-3 py-1 text-xs" data-action="done" title="What you finished today, shared on Teams">${icon('note', 12)} Done today</button>
       <button class="btn-primary px-3 py-1 text-xs" data-action="writer" title="Write an issue on any screen">${icon('plus', 12)} Write issue</button>
       <a class="btn-secondary px-3 py-1 text-xs" href="/api/export" title="Download every task as an Excel sheet">${icon('download', 12)} Excel</a>
       <button class="btn-secondary px-3 py-1 text-xs" data-action="admin">Admin</button>
+      ${themeButton()}
       <button class="tab-add" data-action="logout">Sign out</button>`);
   }
+  // light / dark (public/theme.js)
+  const themeButton = () => {
+    const dark = window.flowTheme && window.flowTheme.isDark();
+    return `<button class="icon-btn" data-theme-toggle title="${dark ? 'Light theme' : 'Dark theme'}">${icon(dark ? 'sun' : 'moon', 16)}</button>`;
+  };
+  $doc.on('click', '[data-theme-toggle]', function () {
+    if (!window.flowTheme) return;
+    window.flowTheme.toggle();
+    $(this).replaceWith(themeButton());
+    if (diagram.flowId) renderDiagram(); // its wires take colours from the theme
+    if (sketch.open) skDraw();
+  });
 
   function showLogin() {
     if (!$('#login').hasClass('hidden')) return;
@@ -2042,6 +3058,8 @@ $(function () {
         <p class="dialog-error hidden"></p>
       </div>
       <div class="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-3">
+        <label class="mr-auto flex items-center gap-2 text-sm text-slate-600" title="After adding, pick the columns and people and post these issues to the app's Teams channel">
+          <input type="checkbox" class="h-4 w-4 accent-indigo-600" name="sendTeams" ${writer.sendTeams ? 'checked' : ''}> Send them on Teams too</label>
         <button type="button" class="btn-secondary" data-close-writer>Close</button>
         <button class="btn-primary">Add issues</button>
       </div>`);
@@ -2095,9 +3113,16 @@ $(function () {
     if ($lost.length) { $err.text('Pick a screen for every issue.').removeClass('hidden'); $lost.first().find('[name=screen]').trigger('focus'); return; }
     // one at a time so the issues keep their order; a saved row leaves the form, a failed one stays to retry
     let added = 0;
+    const made = []; // { id, productId }
+    writer.sendTeams = $f.find('[name=sendTeams]').prop('checked');
     const next = (i) => {
       if (i === $rows.length) {
         toast(`${added === 1 ? 'Issue' : `${added} issues`} added`);
+        // "Send them on Teams too": one message per app
+        if (writer.sendTeams && made.length) {
+          const pid = made[0].productId;
+          sendIssuesOnTeams(pid, made.filter((x) => x.productId === pid).map((x) => x.id));
+        }
         // ready for the next ones, on the last place used
         const $grid = $f.find('.writer-grid');
         if (!$grid.children('.writer-row').length) $grid.append(writerRow(writer));
@@ -2114,7 +3139,7 @@ $(function () {
         assignees: peopleOf($row.find('.people')),
         remarks: $row.find('[name=remarks]').val().trim(),
       }, null, QUIET)
-        .done((c) => { flashId = c.id; added += 1; Object.assign(writer, rowPlace($row)); $row.remove(); next(i + 1); })
+        .done((c) => { flashId = c.id; added += 1; made.push({ id: c.id, productId: rowPlace($row).productId }); Object.assign(writer, rowPlace($row)); $row.remove(); next(i + 1); })
         .fail((xhr) => {
           $err.text(errorText(xhr)).removeClass('hidden');
           $row.find('[name=text]').trigger('focus');
@@ -2193,6 +3218,7 @@ $(function () {
     selectProduct($(this).data('product'));
     render();
     if (sanity) openSanity(productId); // on the Sanity page: that app's sanity
+    if (sheetsView) openSheets(productId); // on the Sheets page: that app's sheets
   });
   $doc.on('click', '[data-action="add-product"]', () => ask({
     title: 'New product',
@@ -2614,6 +3640,20 @@ $(function () {
   // issues by status
   $doc.on('click', '[data-bugs]', function () { openBugs(String($(this).data('bugs'))); });
   $doc.on('click', '[data-bugs-filter]', function () { bugsView.filter = $(this).data('bugs-filter'); renderBugs(); applyAccess(); });
+  $doc.on('change', '[data-bugs-pick]', function () {
+    const id = $(this).data('bugs-pick');
+    if (this.checked) bugsView.picked.add(id); else bugsView.picked.delete(id);
+    renderBugs(); applyAccess();
+  });
+  $doc.on('change', '[data-bugs-pick-all]', function () {
+    const ids = $('#bugsBody [data-bugs-pick]').map((i, el) => $(el).data('bugs-pick')).get();
+    bugsView.picked = this.checked ? new Set(ids) : new Set();
+    renderBugs(); applyAccess();
+  });
+  $doc.on('click', '[data-bugs-teams]', () => {
+    const ids = $('#bugsBody [data-bugs-pick]').map((i, el) => $(el).data('bugs-pick')).get();
+    sendIssuesOnTeams(productId, bugsView.picked.size ? ids.filter((id) => bugsView.picked.has(id)) : ids);
+  });
   $doc.on('click', '[data-close-bugs]', closeBugs);
   $('#bugsModal').on('mousedown', function (e) { if (e.target === this) closeBugs(); });
   $doc.on('click', '[data-go-screen]', function () { goToScreen($(this).data('go-screen')); });
@@ -2731,9 +3771,10 @@ $(function () {
   $doc.on('keydown', (e) => {
     if (e.key !== 'Escape') return;
     if (dialog.isOpen()) dialog.cancel();
+    else if (teamsSend) closeTeamsSend();
+    else if (sketch.open) skEscape();
     else if (!$('#copyModal').hasClass('hidden')) closeCopy();
     else if (sanityLog) closeSanityLog();
-    else if (sheetsView) closeSheets();
     else if (doneView) closeDone();
     else if (!$('#statusModal').hasClass('hidden')) closeStatuses();
     else if (bugsView) closeBugs();
@@ -2752,7 +3793,8 @@ $(function () {
   // ---------------------------------------------------------------- go to a flow / screen anywhere (any app or module)
 
   function showPlace(flowId) {
-    if (sanity) closeSanity(); // going to a flow or screen leaves the Sanity page
+    if (sanity) closeSanity(); // going to a flow or screen leaves the Sanity (or Sheets) page
+    if (sheetsView) closeSheets();
     const f = findFlow(flowId);
     const p = f && productOf(f.moduleId);
     if (!p) { toast('That is no longer here'); return false; }
@@ -2786,6 +3828,7 @@ $(function () {
     if (sheetId) closeSheet();
     if (openId) closePopup();
     if (diagram.flowId) closeDiagram();
+    if (sketch.open) closeSketch();
     if (sanity) closeSanity();
     history.replaceState(null, '', location.pathname + location.search);
     activeId = modules[0] ? modules[0].id : null;
@@ -2801,6 +3844,10 @@ $(function () {
     if (h.get('flow')) showFlow(h.get('flow'));
     else if (h.get('screen')) showScreen(h.get('screen'));
     else if (h.get('sheet')) api('GET', `/api/sheets/${encodeURIComponent(h.get('sheet'))}`).done((x) => openSheets(x.productId, x.id));
+    else if (h.get('sheets')) {
+      if (products.some((p) => p.id === h.get('sheets'))) { selectProduct(h.get('sheets')); render(); }
+      openSheets(productId);
+    }
     else if (h.get('sanity') || h.get('done')) {
       const pid = h.get('sanity') || h.get('done');
       if (products.some((p) => p.id === pid)) { selectProduct(pid); render(); }
@@ -2843,6 +3890,7 @@ $(function () {
       sanity = { productId: pid, ...d, logs, missing, logFilter, view: view || (sanity && sanity.view) || 'sheet' };
       renderSanity();
       // the page takes the board's place; the address keeps it, so a refresh or a shared link comes back here
+      if (sheetsView) closeSheets();
       $('#board, #tabs').addClass('hidden');
       $('#sanityPage').removeClass('hidden');
       $('[data-action="sanity"]').addClass('on');
@@ -3418,23 +4466,32 @@ $(function () {
   const SHEET_SHARES = [['private', 'Private: only me and editors'], ['view', 'Everyone in the app can view'], ['edit', 'Everyone in the app can edit']];
   const TONE_TAG = { success: 'green', pending: 'amber', fail: 'red', other: 'slate' }; // dropdown value → status tag colour
 
-  let sheetsView = null; // { productId, list, people, canCreate, doc, search, sort: { col, dir } }
+  // { productId, list, people, canCreate, teams, doc, search, sort: { col, dir }, picked: Set of row ids (to send on Teams) }
+  let sheetsView = null;
 
+  // Sheets is a page of its own, in the board's place (like Sanity); the address (#sheets=<app>&sheet=<id>) keeps it
   function openSheets(pid, sheetId) {
     if (!pid) { dialog.alert('Add an app first.', 'No app'); return; }
     api('GET', `/api/sheets?product=${encodeURIComponent(pid)}`).done((d) => {
+      if (sanity) closeSanity();
       const keep = sheetsView && sheetsView.productId === pid ? sheetsView : {};
-      sheetsView = { productId: pid, list: d.sheets, people: d.people, canCreate: d.canCreate, doc: null, search: keep.search || '', sort: keep.sort || null };
+      sheetsView = {
+        productId: pid, list: d.sheets, people: d.people, canCreate: d.canCreate, teams: d.teams, doc: null,
+        search: keep.search || '', sort: keep.sort || null, picked: new Set(),
+      };
       const id = sheetId || (keep.doc && d.sheets.some((x) => x.id === keep.doc.id) ? keep.doc.id : d.sheets[0] && d.sheets[0].id);
-      $('#sheetsModal').removeClass('hidden');
-      $('body').addClass('overflow-hidden');
+      $('#board, #tabs').addClass('hidden');
+      $('#sheetsPage').removeClass('hidden');
+      $('[data-action="sheets"]').addClass('on');
+      if (!keep.productId) window.scrollTo(0, 0);
       if (id) openSheetDoc(id); else renderSheets();
     });
   }
   function openSheetDoc(id) {
     return api('GET', `/api/sheets/${id}`).done((doc) => {
-      if (!sheetsView.doc || sheetsView.doc.id !== id) { sheetsView.sort = null; sheetsView.search = ''; }
+      if (!sheetsView.doc || sheetsView.doc.id !== id) { sheetsView.sort = null; sheetsView.search = ''; sheetsView.picked = new Set(); }
       sheetsView.doc = doc;
+      sheetsView.picked = new Set([...sheetsView.picked].filter((r) => doc.rowList.some((x) => x.id === r)));
       renderSheets();
     });
   }
@@ -3443,9 +4500,17 @@ $(function () {
 
   function closeSheets() {
     sheetsView = null;
-    $('#sheetsModal').addClass('hidden');
-    unlockScroll();
+    $('#sheetsPage').addClass('hidden').empty();
+    $('#board, #tabs').removeClass('hidden');
+    $('[data-action="sheets"]').removeClass('on');
+    history.replaceState(null, '', location.pathname + location.search);
   }
+
+  // a dropdown value's colour: its own (e.g. from Excel), else the usual one from its word
+  const optionStyle = (col, v) => {
+    const hex = (col.colors || {})[v];
+    return hex ? { cls: 'st custom', style: `style="--c:${hex}"` } : { cls: `st st-${TONE_TAG[tone(v)]}`, style: '' };
+  };
 
   const sheetPerson = (id) => (sheetsView.people.find((x) => x.id === id) || {}).name || '';
   function sheetFlows() {
@@ -3471,7 +4536,10 @@ $(function () {
       case 'number': return `<input class="sc-input num" type="number" step="any" value="${has ? esc(v) : ''}" ${attrs}>`;
       case 'date': return `<input class="sc-input" type="date" value="${has ? esc(v) : ''}" ${attrs}>`;
       case 'checkbox': return `<label class="sc-check"><input type="checkbox" class="h-4 w-4 accent-indigo-600" ${v ? 'checked' : ''} ${attrs}></label>`;
-      case 'select': return `<select class="sc-input sc-select ${has ? `st st-${TONE_TAG[tone(v)]}` : ''}" ${attrs}>${none}${col.options.map((o) => `<option ${o === v ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
+      case 'select': {
+        const look = has ? optionStyle(col, v) : { cls: '', style: '' };
+        return `<select class="sc-input sc-select ${look.cls}" ${look.style} ${attrs}>${none}${col.options.map((o) => `<option ${o === v ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
+      }
       case 'person': return `<select class="sc-input" ${attrs}>${none}${sheetsView.people.map((x) => `<option value="${x.id}" ${x.id === v ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>`;
       case 'flow': {
         const groups = {};
@@ -3510,7 +4578,7 @@ $(function () {
     const { doc } = sheetsView;
     const rows = sheetRows();
     if (!rows.length || !doc.columns.some((c) => c.type === 'number' || c.type === 'checkbox')) return '';
-    return `<tr><td class="sc-num">Σ</td>${doc.columns.map((c) => {
+    return `<tr><td class="sc-num">Σ</td><td></td>${doc.columns.map((c) => {
       if (c.type === 'number') {
         const sum = rows.reduce((t, r) => t + (Number(r.cells[c.id]) || 0), 0);
         return `<td class="num">${sum.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>`;
@@ -3527,10 +4595,15 @@ $(function () {
     const edit = doc && doc.edit;
     const rows = doc ? sheetRows() : [];
     const dragOk = edit && !v.search.trim() && !v.sort;
-    $('#sheetsBody').html(`
-      <div class="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
-        <h3 class="min-w-0 flex-1 text-lg font-semibold text-slate-900">Sheets <span class="font-normal text-slate-400">· ${esc(p ? p.name : '')}</span></h3>
-        <button class="icon-btn" data-close-sheets title="Close">${icon('close', 18)}</button>
+    const picked = doc ? rows.filter((r) => v.picked.has(r.id)) : [];
+    const allPicked = rows.length && picked.length === rows.length;
+    $('#sheetsPage').html(`<div class="sheets-page">
+      <div class="flex flex-wrap items-center gap-3 border-b border-slate-200 px-5 py-3">
+        <button class="btn-secondary text-sm" data-close-sheets title="Back to the board">${icon('left', 14)} Board</button>
+        <div class="min-w-0 flex-1">
+          <h3 class="truncate text-lg font-semibold text-slate-900">Sheets <span class="font-normal text-slate-400">· ${esc(p ? p.name : '')}</span></h3>
+          <p class="truncate text-xs text-slate-500">Your own sheets and imported Excel files. Tick rows to send them on Teams.</p>
+        </div>
       </div>
       <div class="sheets-layout">
         <aside class="sheets-side">
@@ -3566,6 +4639,9 @@ $(function () {
                   <p class="mt-2 text-xs text-slate-400">View-only logins can never edit.</p>
                 </div>
               </details>` : ''}
+              ${can('edit') ? `<button class="btn-secondary text-sm" data-sheet-teams ${v.teams && rows.length ? '' : 'disabled'}
+                title="${v.teams ? (picked.length ? 'Send the ticked rows on Teams' : 'Send the rows shown on Teams (tick rows to send only those)') : 'This app has no Teams channel yet'}">
+                ${icon('share', 14)} ${picked.length ? `Send ${picked.length} on Teams` : 'Send on Teams'}</button>` : ''}
               <a class="btn-secondary text-sm" href="/api/sheets/${doc.id}/export" title="Download as Excel">${icon('download', 14)} Excel</a>
               ${doc.manage ? `<button class="icon-btn danger" data-sheet-delete title="Delete sheet">${icon('trash', 14)}</button>` : ''}
             </div>
@@ -3574,6 +4650,7 @@ $(function () {
             <table class="sheet-table">
               <thead><tr>
                 <th class="sc-num">#</th>
+                <th class="sc-pick"><input type="checkbox" class="h-4 w-4 accent-indigo-600" data-sheet-pick-all ${allPicked ? 'checked' : ''} title="Tick every row shown"></th>
                 ${doc.columns.map((c) => `
                   <th style="width:${c.width}px;min-width:${c.width}px" data-col-id="${c.id}">
                     <div class="sc-head">
@@ -3591,9 +4668,10 @@ $(function () {
                 ${rows.map((r) => `
                   <tr data-row-id="${r.id}">
                     <td class="sc-num"><span class="${dragOk ? 'drag' : ''}" title="${dragOk ? 'Drag to reorder' : ''}">${doc.rowList.indexOf(r) + 1}</span></td>
+                    <td class="sc-pick"><input type="checkbox" class="h-4 w-4 accent-indigo-600" data-sheet-pick="${r.id}" ${v.picked.has(r.id) ? 'checked' : ''}></td>
                     ${doc.columns.map((c) => `<td>${sheetCell(c, r, edit)}</td>`).join('')}
                     <td class="sc-tools">${edit ? `<button class="icon-btn sm danger" data-sheet-row-delete="${r.id}" title="Delete row">${icon('trash', 12)}</button>` : ''}</td>
-                  </tr>`).join('') || `<tr><td colspan="${doc.columns.length + 2}" class="py-10 text-center text-sm text-slate-400">${v.search ? 'No rows match' : 'No rows yet'}</td></tr>`}
+                  </tr>`).join('') || `<tr><td colspan="${doc.columns.length + 3}" class="py-10 text-center text-sm text-slate-400">${v.search ? 'No rows match' : 'No rows yet'}</td></tr>`}
               </tbody>
               <tfoot id="sheetTotals">${sheetTotals()}</tfoot>
             </table>
@@ -3603,13 +4681,15 @@ $(function () {
             <span>${rows.length}${rows.length !== doc.rowList.length ? ` of ${doc.rowList.length}` : ''} row${doc.rowList.length === 1 ? '' : 's'} · ${doc.columns.length} column${doc.columns.length === 1 ? '' : 's'}</span>
             ${v.sort ? '<button class="text-indigo-600 hover:underline" data-sheet-unsort>Clear sort</button>' : ''}
             ${edit && !dragOk ? '<span>Clear search and sort to drag rows.</span>' : ''}
+            ${picked.length ? `<span class="text-indigo-600">${picked.length} ticked</span><button class="text-indigo-600 hover:underline" data-sheet-unpick>Untick all</button>` : ''}
           </div>` : `
           <div class="flex h-full flex-col items-center justify-center gap-3 p-10 text-center">
             <p class="text-sm text-slate-500">Make a sheet for anything: release checklists, test cases, device matrix, a tracker…<br>Columns can link to people, flows and screens of this app.</p>
             ${v.canCreate ? `<button class="btn-primary" data-sheet-new>${icon('plus', 14)} New sheet</button>` : ''}
           </div>`}
         </section>
-      </div>`);
+      </div></div>`);
+    history.replaceState(null, '', `${location.pathname}${location.search}#sheets=${encodeURIComponent(v.productId)}${doc ? `&sheet=${encodeURIComponent(doc.id)}` : ''}`);
     $('#sheetRowsBody .sc-text').each((i, el) => autoGrow(el));
     if (dragOk) {
       Sortable.create($('#sheetRowsBody')[0], {
@@ -3634,9 +4714,32 @@ $(function () {
     { name: 'options', label: 'Dropdown options, comma separated (Dropdown only)', value: c.options.join(', '), placeholder: 'e.g. To do, In progress, Done', max: 600 },
   ];
 
-  $doc.on('click', '[data-action="sheets"]', () => openSheets(productId));
+  $doc.on('click', '[data-action="sheets"]', () => (sheetsView ? closeSheets() : openSheets(productId)));
   $doc.on('click', '[data-close-sheets]', closeSheets);
-  $('#sheetsModal').on('mousedown', function (e) { if (e.target === this) closeSheets(); });
+  $doc.on('change', '[data-sheet-pick]', function () {
+    const id = $(this).data('sheet-pick');
+    if (this.checked) sheetsView.picked.add(id); else sheetsView.picked.delete(id);
+    renderSheets();
+  });
+  $doc.on('change', '[data-sheet-pick-all]', function () {
+    sheetRows().forEach((r) => (this.checked ? sheetsView.picked.add(r.id) : sheetsView.picked.delete(r.id)));
+    renderSheets();
+  });
+  $doc.on('click', '[data-sheet-unpick]', () => { sheetsView.picked = new Set(); renderSheets(); });
+  // the ticked rows (or, with none ticked, the rows shown), with the columns picked
+  $doc.on('click', '[data-sheet-teams]', () => {
+    const { doc, picked } = sheetsView;
+    const shown = sheetRows();
+    const rows = shown.filter((r) => picked.has(r.id));
+    const send = rows.length ? rows : shown;
+    openTeamsSend({
+      title: `Send “${doc.name}” on Teams`,
+      count: send.length,
+      columns: doc.columns.map((c) => ({ id: c.id, label: c.name })),
+      people: sheetsView.people,
+      send: (val) => api('POST', `/api/sheets/${doc.id}/teams`, { rowIds: send.map((r) => r.id), columnIds: val.columns, userIds: val.userIds, note: val.note }, val.button, QUIET),
+    });
+  });
   $doc.on('click', '[data-sheet-open]', function () { openSheetDoc($(this).data('sheet-open')); });
   $doc.on('click', '[data-sheet-new]', () => ask({
     title: 'New sheet', fields: [{ name: 'name', label: 'Sheet name', placeholder: 'e.g. Release 1.12 checklist', required: true, max: 80 }],
@@ -3650,7 +4753,7 @@ $(function () {
     if (file.size > 5 * 1024 * 1024) { dialog.alert('Please choose an Excel file under 5 MB.', 'File too large'); return; }
     const reader = new FileReader();
     reader.onload = () => api('POST', '/api/sheets/import', { productId: sheetsView.productId, name: file.name.replace(/\.xlsx$/i, ''), dataUrl: reader.result })
-      .done((x) => { toast(`Imported ${x.rows} rows, ${x.columns} columns`); reloadSheets(x.id); });
+      .done((x) => { toast(`Imported ${x.sheets > 1 ? `${x.sheets} sheets, ` : ''}${x.rows} rows, ${x.columns} columns`); reloadSheets(x.id); });
     reader.readAsDataURL(file);
   });
   $doc.on('click', '[data-sheet-rename]', () => ask({
