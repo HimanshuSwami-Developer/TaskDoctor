@@ -60,6 +60,8 @@ $(function () {
     filter: 'M3 4h18l-7 8.5V19l-4 2v-8.5z',
     panel: 'M3 3h18v18H3zM9 3v18',
     chat: 'M21 11.5a8.4 8.4 0 0 1-9 8.4 8.6 8.6 0 0 1-3.8-.9L3 21l1.9-5.2A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z',
+    fork: 'M12 3v6M12 9l-6 6v5M12 9l6 6v5M3.5 17.5 6 20l2.5-2.5M15.5 17.5 18 20l2.5-2.5',
+    clock: 'M12 7v5l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z',
   };
   const icon = (name, size = 16) =>
     `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${PATHS[name]}"/></svg>`;
@@ -815,44 +817,196 @@ $(function () {
       `<optgroup label="${esc(f.name)}">${onlyScreens(f.screens).map((x) =>
         `<option value="${x.id}" ${x.id === selected ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</optgroup>`).join('');
 
+    const branches = c.branches || [];
+    const steps = findFlow(c.flowId).screens;
+    const next = steps[steps.findIndex((x) => x.id === c.id) + 1];
+    // a branch wired to the next card takes the place of the dashed arrow to it
+    const wiredNext = Boolean(next) && branches.some((b) => b.targetId === next.id);
     return `
-      <div class="card cond" data-id="${c.id}">
+      <div class="card cond ${wiredNext ? 'wired-next' : ''}" data-id="${c.id}">
         ${arrowAdd(c)}
-        <div class="flex items-center gap-2">
-          <span class="cond-diamond"></span>
+        <div class="cond-head">
+          <span class="cond-badge">${icon('fork', 18)}</span>
           <div class="min-w-0 flex-1">
-            <p class="text-[11px] font-semibold uppercase tracking-wide text-indigo-600">Condition</p>
-            <h4 class="truncate text-sm font-semibold text-slate-900">${esc(c.name)}</h4>
+            <h4 class="cond-name" title="${esc(c.name)}">${esc(c.name)}</h4>
+            <p class="cond-kind">Decision · ${branches.length} outcome${branches.length === 1 ? '' : 's'}</p>
           </div>
           <button class="icon-btn" data-copy-screen="${c.id}" title="Copy condition and its paths to other flows">${icon('copy', 14)}</button>
           <button class="icon-btn" data-rename-condition="${c.id}" title="Rename">${icon('edit', 14)}</button>
           <button class="icon-btn danger" data-cond-tool data-delete-screen="${c.id}" title="Delete condition">${icon('trash', 14)}</button>
         </div>
-        <ul class="mt-3 space-y-2">
-          ${(c.branches || []).map((b) => `
-            <li class="branch tone-${tone(b.label)}" data-branch="${b.id}">
-              <div class="flex items-center gap-2">
-                <span class="text-xs font-medium text-slate-500">If</span>
-                <input class="input min-w-0 flex-1 py-1 text-sm" value="${esc(b.label)}" placeholder="e.g. Success" data-branch-label>
+        <ul class="cond-branches">
+          ${branches.map((b) => `
+            <li class="cond-branch tone-${tone(b.label)}" data-branch="${b.id}">
+              <div class="cb-line">
+                <span class="cb-ico" title="If">${icon(TONE_ICON[tone(b.label)], 12)}</span>
+                <input class="cb-input cb-label" value="${esc(b.label)}" placeholder="If… e.g. Success" title="If" data-branch-label>
                 <button class="icon-btn sm danger" data-remove-branch="${b.id}" title="Remove branch">${icon('close', 12)}</button>
               </div>
-              <div class="flex items-center gap-2">
-                <span class="text-xs font-medium text-slate-500">Show</span>
-                <select class="input min-w-0 flex-1 py-1 text-sm" data-branch-target>${targetOptions(b.targetId)}</select>
+              <div class="cb-line">
+                <span class="cb-show" title="Show">${icon('right', 14)}</span>
+                <select class="cb-input cb-target" title="Show" data-branch-target>${targetOptions(b.targetId)}</select>
                 ${b.targetId ? `<button class="icon-btn sm" data-locate="${b.targetId}" title="Go to screen">${icon('locate', 14)}</button>` : ''}
               </div>
               ${pathsOf(c.id, b.id).map((path) => `
-                <div class="flex items-center gap-2 text-xs">
-                  <span class="font-medium text-slate-500">Path</span>
+                <div class="cb-line cb-path">
+                  <span class="cb-show">${icon('extend', 12)}</span>
                   <button class="min-w-0 flex-1 truncate text-left font-medium text-indigo-600 hover:underline" data-goto-flow="${path.id}">${esc(path.name)}</button>
                   <span class="shrink-0 text-slate-400">${onlyScreens(path.screens).length} screens</span>
                 </div>`).join('') || `
-                <button class="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:underline" data-extend-path="${c.id}" data-branch-id="${b.id}">${icon('plus', 12)} Extend path</button>`}
+                <button class="cb-extend" data-extend-path="${c.id}" data-branch-id="${b.id}">${icon('plus', 12)} Extend path</button>`}
+              <span class="cb-port" data-port="${b.id}"></span>
             </li>`).join('')}
         </ul>
-        <button class="mt-2 inline-flex items-center gap-1 text-sm font-medium text-indigo-600 hover:underline" data-add-branch="${c.id}">${icon('plus', 14)} Add branch</button>
+        <button class="cb-add" data-add-branch="${c.id}">${icon('plus', 14)} Add branch</button>
       </div>`;
   }
+
+  // ---------------------------------------------------------------- condition wires: each branch drawn to the screen it shows
+  //
+  // One SVG behind the board's cards (it only shows in the gaps) with a line from each branch's port to its target card,
+  // in the branch colour. The next card in the row is reached straight across the gap; a card further along the
+  // row by a lane under the row, rising into the card; a card in another flow (a path) by the lane under the row, then
+  // down the gap left of the card and in from its side. A card scrolled out of its row is wired to the row's edge.
+  // Every wire is always there, faint; hovering a condition (or one branch) makes its wires glow, and tapping keeps
+  // that glow until another condition or branch is tapped. Redrawn with the "L" elbows (render, resize, row scroll).
+  const TONE_ICON = { success: 'check', pending: 'clock', fail: 'close', other: 'fork' };
+  const WIRE_COLOR = { success: '#16a34a', pending: '#ea580c', fail: '#dc2626', other: '#64748b' };
+
+  // a path through points with rounded corners, ending in an arrowhead
+  function wirePath(pts) {
+    const p = pts.filter((q, i) => !i || q[0] !== pts[i - 1][0] || q[1] !== pts[i - 1][1]);
+    let d = `M${p[0][0]} ${p[0][1]}`;
+    for (let i = 1; i < p.length - 1; i += 1) {
+      const [a, b, c] = [p[i - 1], p[i], p[i + 1]];
+      const r = Math.min(8, Math.hypot(b[0] - a[0], b[1] - a[1]) / 2, Math.hypot(c[0] - b[0], c[1] - b[1]) / 2);
+      const s = (q, t) => [b[0] + Math.sign(q[0] - b[0]) * t, b[1] + Math.sign(q[1] - b[1]) * t];
+      const [x1, y1] = s(a, r);
+      const [x2, y2] = s(c, r);
+      d += `L${x1} ${y1}Q${b[0]} ${b[1]} ${x2} ${y2}`;
+    }
+    const [ex, ey] = p[p.length - 1];
+    const [fx, fy] = p[p.length - 2] || p[0];
+    d += `L${ex} ${ey}`;
+    const ang = Math.atan2(ey - fy, ex - fx);
+    const head = (t) => `${ex - 7 * Math.cos(ang + t)} ${ey - 7 * Math.sin(ang + t)}`;
+    return { d, head: `M${head(0.5)}L${ex} ${ey}L${head(-0.5)}` };
+  }
+
+  function placeWires() {
+    const board = document.getElementById('board');
+    if (!board) return;
+    let svg = board.querySelector(':scope > .cond-wires');
+    const conds = board.querySelectorAll('.card.cond');
+    if (!conds.length) { if (svg) svg.remove(); return; }
+    if (!svg) {
+      svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('class', 'cond-wires');
+      svg.setAttribute('aria-hidden', 'true');
+      board.prepend(svg); // first, so the cards are drawn over it
+    }
+    const base = board.getBoundingClientRect();
+    const rel = (x, y) => [Math.round(x - base.left), Math.round(y - base.top)];
+    const lanes = new Map(); // row → lanes used under it
+    const out = [];
+    conds.forEach((card) => {
+      const row = card.closest('.screens');
+      const rr = row.getBoundingClientRect();
+      const cr = card.getBoundingClientRect();
+      if (cr.right < rr.left || cr.right > rr.right) return; // condition scrolled out of its row
+      const s = findScreen($(card).data('id'));
+      (s && s.branches || []).forEach((b, i) => {
+        const target = b.targetId && board.querySelector(`.card[data-id="${b.targetId}"]`);
+        const port = card.querySelector(`[data-port="${b.id}"]`);
+        if (!b.targetId || !port) return;
+        const pr = port.getBoundingClientRect();
+        const color = WIRE_COLOR[tone(b.label)];
+        const tag = `class="wire" data-wire="${b.id}" data-cond="${s.id}" data-target="${b.targetId}" style="--wire:${color}"`;
+        if (!target) { // a screen not on this board (another module): a short dashed stub
+          const [sx, sy] = rel(pr.left + pr.width / 2, pr.top + pr.height / 2);
+          const stub = wirePath([[sx, sy], [sx + 24, sy]]);
+          out.push(`<g ${tag}><path class="wire-line stub" d="${stub.d}"/><path class="wire-head" d="${stub.head}"/></g>`);
+          return;
+        }
+        const tr = target.getBoundingClientRect();
+        const tRow = target.closest('.screens');
+        const trr = tRow.getBoundingClientRect();
+        const [px, py] = rel(pr.left + pr.width / 2, pr.top + pr.height / 2);
+        const right = rel(cr.right, 0)[0];
+        const mid = right + 12 + (i % 4) * 7;
+        const next = tRow === row && tr.left >= cr.right && tr.left - cr.right < 80; // the card right after
+        // a lane under the row, one per wire that uses it
+        const lane = () => {
+          const n = lanes.get(row) || 0;
+          lanes.set(row, n + 1);
+          return rel(0, rr.bottom)[1] + 4 + (n % 5) * 6;
+        };
+        const tIn = Math.min(Math.max(tr.left, trr.left), trr.right); // the target's left edge, kept inside its row
+        const [tx, ty] = rel(tIn, tr.top + 107); // card arrow height
+        let pts;
+        if (next) {
+          pts = [[px, py], [Math.min(mid, tx - 10), py], [Math.min(mid, tx - 10), ty], [tx - 2, ty]]; // the next card
+        } else if (tRow === row && tr.left >= cr.right) {
+          const y = lane();
+          const cx = Math.min(rel(tr.left + tr.width / 2, 0)[0], rel(rr.right, 0)[0] - 12);
+          const seen = tr.left + tr.width / 2 < rr.right;
+          pts = [[px, py], [mid, py], [mid, y], seen ? [cx, y] : [cx + 8, y]];
+          if (seen) pts.push([cx, rel(0, tr.bottom)[1] + 2]);
+        } else {
+          const y = lane();
+          const gx = tx - 20;
+          pts = [[px, py], [mid, py], [mid, y], [gx, y], [gx, ty], [tx - 2, ty]];
+        }
+        const { d, head } = wirePath(pts);
+        // wire-flow: light running along the wire towards the screen while it glows
+        out.push(`<g ${tag}><path class="wire-line" d="${d}"/><path class="wire-flow" d="${d}"/><path class="wire-head" d="${head}"/></g>`);
+      });
+    });
+    svg.setAttribute('width', board.scrollWidth);
+    svg.setAttribute('height', board.scrollHeight);
+    svg.innerHTML = out.join('');
+    glowWires();
+  }
+
+  // Glow: { cond, branch } (branch null = every wire of the condition). Hovering shows one for a moment; tapping
+  // keeps one until another condition or branch is tapped (tapping the glowing one again lets it go).
+  let wireHover = null;
+  let wirePinned = null;
+  const sameGlow = (a, b) => Boolean(a && b) && a.cond === b.cond && a.branch === b.branch;
+  const glowOf = (el) => {
+    const $el = $(el);
+    return { cond: $el.closest('.card.cond').data('id'), branch: $el.closest('[data-branch]').data('branch') || null };
+  };
+  function glowWires() {
+    const lit = [wirePinned, wireHover].filter(Boolean);
+    const on = (g) => lit.some((x) => g.dataset.cond === x.cond && (!x.branch || g.dataset.wire === x.branch));
+    $('#board .wire-target').removeClass('wire-target');
+    $('#board .cond-branch.lit').removeClass('lit');
+    $('#board .cond-wires .wire').each((i, g) => {
+      g.classList.toggle('on', on(g));
+      if (on(g)) {
+        $(`#board .card[data-id="${g.dataset.target}"]`).addClass('wire-target').css('--wire', g.style.getPropertyValue('--wire'));
+        $(`#board .cond-branch[data-branch="${g.dataset.wire}"]`).addClass('lit');
+      }
+    });
+    $('#board .card.cond').each((i, el) => el.classList.toggle('pinned', Boolean(wirePinned) && $(el).data('id') === wirePinned.cond));
+  }
+  $doc.on('mouseover', '.card.cond', function (e) {
+    // the gaps between branch rows keep what is glowing, so moving from one branch to the next doesn't flash them all
+    if ($(e.target).closest('.cond-branches').length && !$(e.target).closest('[data-branch]').length) return;
+    const g = glowOf(e.target);
+    if (sameGlow(g, wireHover)) return;
+    wireHover = g;
+    glowWires();
+  });
+  $doc.on('mouseleave', '.card.cond', () => { wireHover = null; glowWires(); });
+  $doc.on('click', '.card.cond', function (e) {
+    const g = glowOf(e.target);
+    // a tap on a field or button (editing a branch) keeps the glow on; a tap elsewhere toggles it
+    const editing = $(e.target).closest('input, select, button, label').length;
+    wirePinned = sameGlow(g, wirePinned) && !editing ? null : g;
+    glowWires();
+  });
 
   // "+" on the arrow after a card: put a new condition between it and the next card
   const arrowAdd = (s) => `<button class="arrow-add" data-insert-condition="${s.id}" title="Add a condition here">${icon('plus', 12)}</button>`;
@@ -927,6 +1081,7 @@ $(function () {
       const grip = sec.querySelector('.elbow-grip');
       if (grip) Object.assign(grip.style, { left: `${x}px`, top: `${top}px` });
     });
+    placeWires();
   }
   let elbowFrame = 0;
   const queueElbows = () => { cancelAnimationFrame(elbowFrame); elbowFrame = requestAnimationFrame(placeElbows); };
