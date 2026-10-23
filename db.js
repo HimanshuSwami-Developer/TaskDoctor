@@ -297,6 +297,22 @@ CREATE INDEX IF NOT EXISTS sanity_logs_product_idx ON sanity_logs(product_id, ru
 -- who the sanity report is sent to (@mentioned on Teams) when a sanity is submitted
 ALTER TABLE products ADD COLUMN IF NOT EXISTS sanity_recipients text[] NOT NULL DEFAULT '{}';
 
+-- Sanity, tester first: besides pass / fail a case can be blocked (could not be tested) or skipped (not tested on
+-- purpose). A case keeps its expected result; each day's result has the actual result, steps to reproduce and
+-- evidence (Cloudinary screenshots / videos: [{ id, url, publicId, kind, name }]), and how its Teams message went
+-- ('sent', 'off' = no channel, else why it failed). Logs count blocked / skipped too and keep every share of the
+-- report: [{ at, by, scope: 'all' | 'failed', target: 'channel' | 'direct' | 'mine', to: [names], status }].
+ALTER TABLE sanity_results DROP CONSTRAINT IF EXISTS sanity_results_state_check;
+ALTER TABLE sanity_results ADD CONSTRAINT sanity_results_state_check CHECK (state IN ('pending', 'pass', 'fail', 'blocked', 'skipped'));
+ALTER TABLE sanity_items ADD COLUMN IF NOT EXISTS expected text NOT NULL DEFAULT '';
+ALTER TABLE sanity_results ADD COLUMN IF NOT EXISTS actual text NOT NULL DEFAULT '';
+ALTER TABLE sanity_results ADD COLUMN IF NOT EXISTS repro text NOT NULL DEFAULT '';
+ALTER TABLE sanity_results ADD COLUMN IF NOT EXISTS evidence jsonb NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE sanity_results ADD COLUMN IF NOT EXISTS notify_status text NOT NULL DEFAULT '';
+ALTER TABLE sanity_logs ADD COLUMN IF NOT EXISTS blocked int NOT NULL DEFAULT 0;
+ALTER TABLE sanity_logs ADD COLUMN IF NOT EXISTS skipped int NOT NULL DEFAULT 0;
+ALTER TABLE sanity_logs ADD COLUMN IF NOT EXISTS shares jsonb NOT NULL DEFAULT '[]'::jsonb;
+
 -- "Done today": what someone finished on a day in an app, with the screens they changed.
 CREATE TABLE IF NOT EXISTS done_items (
   id          text PRIMARY KEY,

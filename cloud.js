@@ -52,6 +52,18 @@ function uploadVideo(buffer, flowId) {
   });
 }
 
+/** Upload sanity evidence (a screenshot or a screen recording, raw bytes) under its own id. */
+function uploadEvidence(buffer, publicId, kind) {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder: FOLDER, public_id: publicId, resource_type: kind === 'video' ? 'video' : 'image' },
+      (err, r) => (err
+        ? reject(Object.assign(new Error(`Upload failed: ${reason(err)}`), { status: 502, expose: true }))
+        : resolve({ url: r.secure_url, publicId: r.public_id })));
+    stream.end(buffer);
+  });
+}
+
 /** Best-effort delete; a failure here never blocks deleting data. */
 async function remove(publicIds, resourceType = 'image') {
   const ids = [...new Set(publicIds.filter(Boolean))];
@@ -67,4 +79,4 @@ async function remove(publicIds, resourceType = 'image') {
 
 const ping = () => cloudinary.api.ping();
 
-module.exports = { FOLDER, configured, upload, uploadVideo, remove, ping, reason };
+module.exports = { FOLDER, configured, upload, uploadVideo, uploadEvidence, remove, ping, reason };

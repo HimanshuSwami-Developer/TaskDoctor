@@ -62,6 +62,13 @@ $(function () {
     chat: 'M21 11.5a8.4 8.4 0 0 1-9 8.4 8.6 8.6 0 0 1-3.8-.9L3 21l1.9-5.2A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z',
     fork: 'M12 3v6M12 9l-6 6v5M12 9l6 6v5M3.5 17.5 6 20l2.5-2.5M15.5 17.5 18 20l2.5-2.5',
     clock: 'M12 7v5l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z',
+    ban: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM5.6 5.6l12.8 12.8',
+    skip: 'M5 5l9 7-9 7zM18 5v14',
+    search: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4',
+    clip: 'M21 11.5l-8.6 8.6a5 5 0 0 1-7.1-7.1l8.6-8.6a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9',
+    keyboard: 'M2 6h20v12H2zM6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10',
+    focus: 'M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
+    compare: 'M8 3v18M16 3v18M3 7h5M3 12h5M16 12h5M16 17h5',
   };
   const icon = (name, size = 16) =>
     `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${PATHS[name]}"/></svg>`;
@@ -2690,13 +2697,16 @@ $(function () {
   const teamsTargets = (webhook) => TEAMS_TARGETS.filter(([k]) => (k === 'app' ? webhook : window.flowGraph.configured()));
   const canSendTeams = (webhook) => teamsTargets(webhook).length > 0;
 
-  function openTeamsSend({ title, count, columns, people, webhook, send }) {
+  // people: [{ id, name, teams, on }] (on: ticked to start with). target: where to start (else the last one used).
+  // preview: html shown above the fields. after({ target, results }): called once it went out (results: direct messages).
+  function openTeamsSend({ title, count, columns, people, webhook, send, target, preview, after }) {
     const targets = teamsTargets(webhook);
     if (!targets.length) { dialog.alert('This app has no Teams channel yet. A super admin can add it in Sanity → Teams channel.', 'Teams'); return; }
     const last = storage('get', 'teamsTarget');
+    const start = [target, last].find((k) => targets.some(([t]) => t === k));
     teamsSend = {
-      send, count,
-      target: targets.some(([k]) => k === last) ? last : targets[0][0],
+      send, count, after,
+      target: start || targets[0][0],
       team: storage('get', 'teamsTeam') || '', channel: storage('get', 'teamsChannel') || '', teams: null,
     };
     const pick = (name, value, label, on) => `<label class="teams-pick"><input type="checkbox" class="h-4 w-4 accent-indigo-600" name="${name}" value="${esc(value)}" ${on ? 'checked' : ''}> ${label}</label>`;
@@ -2710,6 +2720,7 @@ $(function () {
         <button type="button" class="icon-btn" data-close-teams title="Close">${icon('close', 18)}</button>
       </div>
       <div class="space-y-4 px-5 py-4">
+        ${preview || ''}
         <div>
           <span class="field-label">Send to</span>
           ${targets.length > 1 ? `<div class="seg">${targets.map(([k, label]) => `<button type="button" data-teams-target="${k}">${label}</button>`).join('')}</div>` : ''}
@@ -2730,7 +2741,7 @@ $(function () {
         </div>
         <div>
           <span class="field-label" data-teams-people-label>@mention</span>
-          <div class="teams-picks max-h-40 overflow-y-auto">${people.map((u) => pick('user', u.id, `${esc(u.name)}${u.teams ? '' : ' <span class="text-xs text-slate-400">· no Teams email</span>'}`, false)).join('')
+          <div class="teams-picks max-h-40 overflow-y-auto">${people.map((u) => pick('user', u.id, `${esc(u.name)}${u.teams ? '' : ' <span class="text-xs text-slate-400">· no Teams email</span>'}`, Boolean(u.on))).join('')
             || '<span class="text-sm text-slate-400">Nobody else can open this app.</span>'}</div>
         </div>
         <label class="block"><span class="field-label">Message <span class="font-normal text-slate-400">(optional)</span></span>
@@ -2835,9 +2846,11 @@ $(function () {
     storage('set', 'teamsTarget', target);
     const button = $f.find('[data-teams-submit]')[0];
     const val = { columns, userIds, note: $f.find('[name=note]').val().trim(), button };
+    const { after } = teamsSend;
+    const told = (out) => { if (after) after({ target, ...out }); };
     if (target === 'app') {
       teamsSend.send({ ...val, mode: 'channel' })
-        .done((r) => { closeTeamsSend(); toast(`Sent ${r.rows} row${r.rows === 1 ? '' : 's'} on Teams`); })
+        .done((r) => { closeTeamsSend(); toast(`Sent ${r.rows} row${r.rows === 1 ? '' : 's'} on Teams`); told({}); })
         .fail((xhr) => fail(errorText(xhr)));
       return;
     }
@@ -2848,8 +2861,11 @@ $(function () {
     signIn
       .then(() => teamsSend.send({ ...val, mode: 'card' }))
       .then((r) => (target === 'direct'
-        ? window.flowGraph.sendDirect(r.people, r.direct).then((results) => { closeTeamsSend(); teamsDirectResult(results); })
-        : window.flowGraph.sendChannel(team, channel, r.card).then(() => { closeTeamsSend(); toast(`Posted ${r.rows} row${r.rows === 1 ? '' : 's'} on Teams`); })))
+        ? window.flowGraph.sendDirect(r.people, r.direct).then((results) => { closeTeamsSend(); teamsDirectResult(results); told({ results }); })
+        : window.flowGraph.sendChannel(team, channel, r.card).then(() => {
+          closeTeamsSend(); toast(`Posted ${r.rows} row${r.rows === 1 ? '' : 's'} on Teams`);
+          told({ results: r.people.map((u) => ({ name: u.name, ok: true })) });
+        })))
       .catch((err) => fail(err && err.readyState !== undefined ? errorText(err) : (err && err.message) || 'Could not send on Teams'))
       .finally(() => { setBusy(button, false); renderAccount(); });
   });
@@ -4106,6 +4122,7 @@ $(function () {
     else if (sketch.open) skEscape();
     else if (!$('#copyModal').hasClass('hidden')) closeCopy();
     else if (sanityLog) closeSanityLog();
+    else if (sanity && sanity.view === 'sheet' && (sanity.focus || sanity.review || sanity.help) && !$(e.target).is('input, textarea, select')) sanityEscape();
     else if (doneView) closeDone();
     else if (!$('#statusModal').hasClass('hidden')) closeStatuses();
     else if (bugsView) closeBugs();
@@ -4199,13 +4216,32 @@ $(function () {
   const flowLabel = (m, f) => `${m.name} › ${f.name}`;
 
   // ---------------------------------------------------------------- sanity testing: daily checklist of an app
-  // Headings are flows of the app (tap to go there) or typed headings. Each day starts fresh; earlier days stay as history.
-  // Sanity testers tick Done / Failed and write a review; a failure is posted to the app's Teams channel with the
-  // owner @mentioned. The version and time are set per day; at that time the channel gets a reminder.
+  // Test cases are the flows of the app (grouped by module) and typed headings. Each day starts fresh; earlier days
+  // stay as history. A tester runs each case — Pass, Fail, Blocked or Not tested — with its expected / actual result,
+  // steps to reproduce, remarks and evidence; everything saves as it is typed. A failure is posted to the app's Teams
+  // channel with the case's developer @mentioned. Focus mode shows one case at a time; Review & submit checks the run
+  // and shows the report before it is saved and sent. The version and time are set per day; at that time the channel
+  // gets a reminder.
 
-  // { productId, date, today, run, items, people, canRun, canManage, teams, webhook, logs,
-  //   view: 'sheet' | 'logs', logFilter: { q, date } }
+  // { productId, date, today, run, items, people, columns, canRun, canManage, teams, webhook, recipients, evidence, logs,
+  //   view: 'sheet' | 'logs', missing, logFilter: { q, date, bad }, ui: { q, status, module, selected, open, cursor, shut },
+  //   retestLog, focus (case id), review, help, logsTab: 'reports' | 'failures' | 'compare', compare: [older, newer], allChanges }
   let sanity = null;
+
+  const SANITY_STATE = {
+    pass: { label: 'Pass', done: 'Passed', key: 'p', icon: 'check' },
+    fail: { label: 'Fail', done: 'Failed', key: 'f', icon: 'close' },
+    blocked: { label: 'Blocked', done: 'Blocked', key: 'b', icon: 'ban' },
+    skipped: { label: 'Not tested', done: 'Not tested', key: 'n', icon: 'skip' },
+  };
+  const stateLabel = (st) => (SANITY_STATE[st] ? SANITY_STATE[st].done : 'Not run');
+  const stateChip = (st) => `<span class="sc-chip st-${SANITY_STATE[st] ? st : 'pending'}">${icon(SANITY_STATE[st] ? SANITY_STATE[st].icon : 'clock', 11)} ${stateLabel(st)}</span>`;
+  const isBad = (st) => st === 'fail' || st === 'blocked';
+  const sanityUi = () => ({ q: '', status: 'all', module: '', selected: new Set(), open: new Set(), cursor: null, shut: new Set() });
+  const sanityPerson = (id) => (sanity && sanity.people.find((x) => x.id === id) || {}).name || '';
+  const sanityRuns = (d) => d.date === d.today && d.canRun; // marking cases, details, version / time
+  const timeText = (at) => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const logWhen = (l) => `${fmtDate(l.date)} · ${new Date(l.submittedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 
   // view: the checklist ('sheet') or the logs page ('logs'); kept as it is when left out
   function openSanity(pid, date, view) {
@@ -4215,10 +4251,24 @@ $(function () {
       api('GET', `/api/sanity/logs?product=${encodeURIComponent(pid)}`),
     ).done(([d], [logs]) => {
       const fresh = !sanity;
-      // rows flagged by a refused submit stay flagged until they are fixed
-      const missing = sanity && sanity.productId === pid ? sanity.missing : new Set();
-      const logFilter = sanity && sanity.productId === pid ? sanity.logFilter : { q: '', date: '' };
-      sanity = { productId: pid, ...d, logs, missing, logFilter, view: view || (sanity && sanity.view) || 'sheet' };
+      // the same app keeps what the tester set up: filters, open cases, selection, focus / review, flagged rows
+      const keep = sanity && sanity.productId === pid ? sanity : null;
+      const ui = keep ? keep.ui : sanityUi();
+      ui.selected = new Set([...ui.selected].filter((id) => d.items.some((it) => it.id === id)));
+      sanity = {
+        productId: pid, ...d, logs,
+        missing: keep ? keep.missing : new Set(),
+        logFilter: keep ? keep.logFilter : { q: '', date: '', bad: false },
+        view: view || (keep && keep.view) || 'sheet',
+        ui,
+        retestLog: keep ? keep.retestLog : null,
+        focus: keep && keep.focus && d.items.some((it) => it.id === keep.focus) ? keep.focus : null,
+        review: keep ? keep.review : false,
+        help: false,
+        logsTab: keep ? keep.logsTab : 'reports',
+        compare: keep ? keep.compare : null,
+        allChanges: keep ? keep.allChanges : false,
+      };
       renderSanity();
       // the page takes the board's place; the address keeps it, so a refresh or a shared link comes back here
       if (sheetsView) closeSheets();
@@ -4229,11 +4279,14 @@ $(function () {
       if (fresh) window.scrollTo(0, 0);
     });
   }
-  const reloadSanity = () => sanity && openSanity(sanity.productId, sanity.date);
+  // everything typed is saved first, so a reload never brings back an older value
+  const reloadSanity = () => sanity && flushSanitySaves().always(() => openSanity(sanity.productId, sanity.date));
 
   function closeSanity() {
+    flushSanitySaves();
     sanity = null;
     $('#sanityPage').addClass('hidden').empty();
+    $('body').removeClass('sc-locked');
     $('#board, #tabs').removeClass('hidden');
     $('[data-action="sanity"]').removeClass('on');
     history.replaceState(null, '', location.pathname + location.search);
@@ -4245,118 +4298,449 @@ $(function () {
     <button data-sanity-view="logs" class="${d.view === 'logs' ? 'on' : ''}">${icon('note', 12)} Logs <span class="text-slate-400">${d.logs.length}</span></button>
   </div>`;
 
-  function renderSanity() {
-    const d = sanity;
-    if (d.view === 'logs') { renderSanityLogs(); return; }
+  function sanityHeader(d, title, sub, extra = '') {
     const p = products.find((x) => x.id === d.productId);
-    const isToday = d.date === d.today;
-    const run = isToday && d.canRun; // tick, review, version / time
-    const flowName = (it) => (it.flowId && findFlow(it.flowId) ? findFlow(it.flowId).name : it.heading);
-    const person = (id) => (d.people.find((x) => x.id === id) || {}).name || '';
+    return `<div class="sc-header">
+      <button class="btn-secondary text-sm" data-close-sanity title="Back to the board">${icon('left', 14)} Board</button>
+      <div class="min-w-0 flex-1">
+        <h3 class="text-lg font-semibold text-slate-900">${title} <span class="font-normal text-slate-400">· ${esc(p ? p.name : '')}</span></h3>
+        <p class="text-xs text-slate-500">${sub}</p>
+      </div>
+      ${sanityViews(d)}
+      ${extra}
+    </div>`;
+  }
+
+  // ---- retest: cases that failed or were blocked in a report (the latest one, or one picked in the logs)
+
+  function sanityRetest(d) {
+    const log = (d.retestLog && d.logs.find((l) => l.id === d.retestLog)) || d.logs[0];
+    if (!log) return null;
+    const bad = log.cases.filter((c) => isBad(c.state));
+    if (!bad.length) return null;
+    // older reports name their headings only
+    return { log, byId: new Map(bad.filter((c) => c.itemId).map((c) => [c.itemId, c])), byName: new Map(bad.map((c) => [c.heading, c])) };
+  }
+  const retestOf = (d, it) => (d.retest ? d.retest.byId.get(it.id) || d.retest.byName.get(it.heading) || null : null);
+
+  // ---- grouping, filters
+
+  function caseGroup(it) {
+    const f = it.flowId && findFlow(it.flowId);
+    const m = f && allModules.find((x) => x.id === f.moduleId);
+    return m ? { key: m.id, name: m.name } : { key: 'other', name: 'Other checks' };
+  }
+
+  function sanityVisible(d) {
+    const q = d.ui.q.trim().toLowerCase();
+    const st = d.ui.status;
+    return d.items.filter((it) => {
+      const g = caseGroup(it);
+      if (d.ui.module && g.key !== d.ui.module) return false;
+      if (q && ![it.heading, g.name, it.review, it.actual, it.expected, it.repro].join(' ').toLowerCase().includes(q)) return false;
+      if (st === 'retest') return Boolean(retestOf(d, it));
+      return st === 'all' || it.state === st;
+    });
+  }
+
+  // ---- autosave: each field is saved a moment after typing stops; failures retry by themselves
+
+  const scTimers = new Map(); // key → { timer, run }
+  let scInFlight = 0;
+  let scSavedAt = null;
+  let scFailed = false;
+
+  function sanitySaved() {
+    const $s = $('#scSaved');
+    if (!$s.length) return;
+    const busy = scInFlight || scTimers.size;
+    $s.toggleClass('busy', Boolean(busy)).toggleClass('error', scFailed && !busy)
+      .html(scFailed && !busy ? `${icon('close', 12)} Not saved · retrying`
+        : busy ? `<span class="sc-spin"></span> Saving…`
+          : scSavedAt ? `${icon('check', 12)} All changes saved · ${timeText(scSavedAt)}` : `${icon('check', 12)} Saves automatically`);
+  }
+  function sanityAutosave(key, run, delay = 600) {
+    const old = scTimers.get(key);
+    if (old) clearTimeout(old.timer);
+    const go = () => {
+      scTimers.delete(key);
+      scInFlight += 1;
+      sanitySaved();
+      return run()
+        .done(() => { scSavedAt = new Date(); scFailed = false; })
+        .fail((xhr) => {
+          if (xhr.status === 401) { showLogin(); return; }
+          scFailed = true;
+          if (xhr.status >= 500 || !xhr.status) sanityAutosave(key, run, 4000); // offline / server trouble: try again
+          else dialog.alert(errorText(xhr), 'Not saved');
+        })
+        .always(() => { scInFlight -= 1; sanitySaved(); });
+    };
+    scTimers.set(key, { timer: setTimeout(go, delay), run: go });
+    sanitySaved();
+  }
+  // save everything waiting now (before a reload, a submit or leaving the page)
+  function flushSanitySaves() {
+    const waiting = [...scTimers.values()];
+    waiting.forEach((x) => clearTimeout(x.timer));
+    return $.when(...waiting.map((x) => x.run()));
+  }
+  window.addEventListener('beforeunload', (e) => {
+    if (scTimers.size || scInFlight) { flushSanitySaves(); e.preventDefault(); e.returnValue = ''; }
+  });
+
+  const saveCaseField = (it, field, value) => {
+    it[field] = value;
+    sanityAutosave(`${it.id}:${field}`, () => api('PUT', `/api/sanity/items/${it.id}/result`, { [field]: value }, null, QUIET));
+  };
+  const saveCaseCell = (it, col, value) => {
+    it.cells = { ...it.cells, [col]: value };
+    sanityAutosave(`${it.id}:cell:${col}`, () => api('PUT', `/api/sanity/items/${it.id}/result`, { cells: { [col]: value } }, null, QUIET));
+  };
+  const saveExpected = (it, value) => {
+    it.expected = value;
+    sanityAutosave(`${it.id}:expected`, () => api('PATCH', `/api/sanity/items/${it.id}`, { expected: value }, null, QUIET));
+  };
+
+  // Mark one or more cases. The checklist changes at once; the server follows (a new failure goes to Teams).
+  // Marking a case with the state it already has puts it back to "not run".
+  let scFocusField = null; // after a render, put the cursor here: { id, field }
+  function setSanityState(ids, state) {
+    const d = sanity;
+    const list = d.items.filter((it) => ids.includes(it.id));
+    if (!list.length) return;
+    const to = list.length === 1 && list[0].state === state ? 'pending' : state;
+    const before = list.map((it) => ({ it, state: it.state, resultBy: it.resultBy, resultAt: it.resultAt }));
+    list.forEach((it) => { Object.assign(it, { state: to, resultBy: me.id, resultAt: new Date().toISOString() }); d.missing.delete(it.id); });
+    // a failure needs its story: open the case and start on the actual result
+    if (to === 'fail' && list.length === 1) {
+      d.ui.open.add(list[0].id);
+      if (!list[0].actual) scFocusField = { id: list[0].id, field: 'actual' };
+    }
+    scInFlight += 1;
+    renderSanity();
+    const req = list.length === 1
+      ? api('PUT', `/api/sanity/items/${list[0].id}/result`, { state: to }, null, QUIET)
+      : api('PUT', '/api/sanity/results', { productId: d.productId, itemIds: list.map((it) => it.id), state: to }, null, QUIET);
+    req.done((r) => {
+      scSavedAt = new Date();
+      scFailed = false;
+      if (r.teams) {
+        list.filter((it) => it.state === 'fail').forEach((it) => { it.notifyStatus = r.teams; });
+        teamsResult(r.teams, list.length === 1 ? 'Failure posted on Teams' : 'Failures posted on Teams');
+        if (sanity === d) renderSanity();
+      }
+    }).fail((xhr) => {
+      before.forEach((b) => Object.assign(b.it, { state: b.state, resultBy: b.resultBy, resultAt: b.resultAt }));
+      if (sanity === d) renderSanity();
+      if (xhr.status === 401) showLogin(); else dialog.alert(errorText(xhr), 'Not saved');
+    }).always(() => { scInFlight -= 1; sanitySaved(); });
+  }
+
+  // ---- evidence: screenshots and screen recordings, uploaded straight away (also pasted with Ctrl+V)
+
+  function uploadEvidence(it, files) {
+    [...files].forEach((file) => {
+      if (!/^(image|video)\//.test(file.type)) { dialog.alert('Attach a screenshot (PNG, JPG…) or a screen recording (MP4, MOV, WEBM).', 'Not an image or video'); return; }
+      if (file.size > 100 * 1024 * 1024) { dialog.alert('Please choose a file under 100 MB.', 'File too large'); return; }
+      it.uploading = (it.uploading || 0) + 1;
+      renderSanity();
+      startLoading();
+      $.ajax({
+        method: 'POST', url: `/api/sanity/items/${it.id}/evidence?name=${encodeURIComponent(file.name || 'Screenshot')}`,
+        data: file, processData: false, contentType: file.type,
+      })
+        .done((r) => { it.evidence = r.evidence; toast('Evidence attached'); })
+        .fail((xhr) => {
+          if (xhr.status === 401) showLogin();
+          else dialog.alert(xhr.status === 413 ? 'Please choose a file under 100 MB.' : errorText(xhr), 'Upload failed');
+        })
+        .always(() => { it.uploading -= 1; stopLoading(); if (sanity) renderSanity(); });
+    });
+  }
+
+  // ---- pieces of the checklist
+
+  function sanityProgress(d, run) {
     const n = d.items.length;
     const count = (st) => d.items.filter((it) => it.state === st).length;
+    const left = count('pending');
+    const retest = d.retest ? d.items.filter((it) => retestOf(d, it)).length : 0;
+    const seg = (st) => (n && count(st) ? `<i class="st-${st}" style="width:${(count(st) / n) * 100}%" title="${stateLabel(st)}: ${count(st)}"></i>` : '');
+    const chip = (key, label, num, cls = '') => `<button class="sc-filter ${cls} ${d.ui.status === key ? 'on' : ''}" data-sc-status="${key}">${label} <b>${num}</b></button>`;
+    return `<div class="sc-progress">
+      <div class="sc-progress-row">
+        <div class="sc-progress-count"><b>${n - left}</b><span>/ ${n} run</span>${left ? `<em>${left} left</em>` : n ? '<em class="all">all run</em>' : ''}</div>
+        <div class="sc-bar" role="img" aria-label="${n - left} of ${n} cases run">${['pass', 'fail', 'blocked', 'skipped'].map(seg).join('')}</div>
+        <span class="sc-saved" id="scSaved"></span>
+        ${run && n ? `
+        <button class="btn-secondary" data-sc-focus title="One case at a time (Shift+F)">${icon('focus', 14)} Focus mode</button>
+        <button class="btn-primary" data-sc-review title="Check the run and send the report (R)">${icon('check', 14)} Review &amp; submit</button>` : ''}
+      </div>
+      <div class="sc-filters" role="group" aria-label="Show">
+        ${chip('all', 'All', n)}
+        ${chip('pending', 'Not run', left, 'st-pending')}
+        ${chip('fail', 'Failed', count('fail'), 'st-fail')}
+        ${chip('blocked', 'Blocked', count('blocked'), 'st-blocked')}
+        ${retest ? chip('retest', `${icon('flip', 11)} Retest`, retest, 'st-retest') : ''}
+        ${chip('pass', 'Passed', count('pass'), 'st-pass')}
+        ${chip('skipped', 'Not tested', count('skipped'), 'st-skipped')}
+      </div>
+    </div>`;
+  }
+
+  function caseMeta(d, it) {
+    const r = retestOf(d, it);
+    const out = [];
+    if (r) {
+      const v = esc(d.retest.log.version);
+      out.push(it.state === 'pass' ? `<span class="sc-badge fixed">${icon('check', 11)} Fixed since ${v}</span>`
+        : isBad(it.state) ? `<span class="sc-badge still">${icon('flip', 11)} Still ${it.state === 'fail' ? 'failing' : 'blocked'} since ${v}</span>`
+          : `<span class="sc-badge retest">${icon('flip', 11)} Retest · ${stateLabel(r.state).toLowerCase()} in ${v}</span>`);
+    }
+    out.push(`<span>${esc(caseGroup(it).name)}</span>`);
+    if (it.state !== 'pending' && it.resultAt) out.push(`<span>${stateLabel(it.state)} by ${esc(sanityPerson(it.resultBy) || '—')}</span>`);
+    if (it.ownerId) out.push(`<span>${icon('user', 11)} ${esc(sanityPerson(it.ownerId))}</span>`);
+    if (it.evidence.length) out.push(`<span>${icon('clip', 11)} ${it.evidence.length}</span>`);
+    if (it.state === 'fail') out.push(notifyBadge(it));
+    return out.join('');
+  }
+
+  // how the failure's Teams message went
+  const notifyBadge = (it) => (it.notifyStatus === 'sent' ? `<span class="sc-badge sent">${icon('share', 11)} ${it.ownerId ? 'Developer notified' : 'Posted on Teams'}${it.sharedAt ? ` · ${timeText(it.sharedAt)}` : ''}</span>`
+    : it.notifyStatus === 'off' ? `<span class="sc-badge muted" title="This app has no Teams channel">${icon('share', 11)} Not sent: no Teams channel</span>`
+      : it.notifyStatus ? `<span class="sc-badge error" title="${esc(it.notifyStatus)}">${icon('share', 11)} Teams message failed</span>` : '');
+
+  function caseActions(it, run, big) {
+    if (!run) return stateChip(it.state);
+    return Object.entries(SANITY_STATE).map(([k, v]) => `<button class="sc-act ${k} ${it.state === k ? 'on' : ''}" data-sc-state="${k}"
+      title="${v.label} (${v.key.toUpperCase()})" aria-pressed="${it.state === k}">${icon(v.icon, big ? 16 : 13)}<span>${v.label}</span>${big ? `<kbd>${v.key.toUpperCase()}</kbd>` : ''}</button>`).join('');
+  }
+
+  function caseDetail(d, it, run, inFocus) {
+    const isToday = d.date === d.today;
+    const field = (name, label, value, hint, on) => `<label class="sc-field ${name === 'actual' && it.state === 'fail' && !value ? 'wanted' : ''}">
+      <span>${label}</span>
+      <textarea class="input" rows="2" data-sc-field="${name}" placeholder="${run ? hint : ''}" ${on ? '' : 'disabled'} maxlength="2000">${esc(value)}</textarea>
+    </label>`;
+    const f = it.flowId && findFlow(it.flowId);
+    return `<div class="sc-detail">
+      <div class="sc-fields">
+        ${inFocus ? '' : `<label class="sc-field expected"><span>Expected result</span>
+          <textarea class="input" rows="2" data-sc-expected placeholder="${d.canManage && isToday ? 'What should happen (kept for every run)' : ''}" ${d.canManage && isToday ? '' : 'disabled'} maxlength="2000">${esc(it.expected)}</textarea></label>`}
+        ${field('actual', 'Actual result', it.actual, 'What happened', run)}
+        ${field('repro', 'Steps to reproduce', it.repro, '1. Open …\n2. Tap …', run)}
+        ${field('review', 'Remarks', it.review, 'Anything else (device, network, build…)', run)}
+        ${d.columns.map((c) => `<label class="sc-field small"><span>${esc(c.name)}</span>
+          <input class="input" data-sc-cell="${c.id}" value="${esc(it.cells[c.id] || '')}" maxlength="500" ${run ? '' : 'disabled'}></label>`).join('')}
+      </div>
+      <div class="sc-evidence">
+        <span class="sc-label">Evidence</span>
+        <div class="sc-thumbs">
+          ${it.evidence.map((e) => `<div class="sc-thumb">
+            <a href="${esc(e.url)}" target="_blank" rel="noopener" title="${esc(e.name)}">${e.kind === 'video'
+              ? `<span class="sc-vid">${icon('play', 18)}</span>` : `<img src="${esc(imageUrl(e.url, 'sm'))}" alt="${esc(e.name)}" loading="lazy">`}</a>
+            <span class="truncate">${esc(e.name)}</span>
+            ${run ? `<button class="sc-thumb-x" data-sc-evidence-remove="${e.id}" title="Remove">${icon('close', 11)}</button>` : ''}
+          </div>`).join('')}
+          ${it.uploading ? '<div class="sc-thumb loading"><span class="sc-spin"></span><span>Uploading…</span></div>' : ''}
+          ${run ? (d.evidence
+            ? `<label class="sc-attach">${icon('clip', 14)} Add screenshot or video<input type="file" class="hidden" accept="image/*,video/*" multiple data-sc-evidence></label>`
+            : '<span class="sc-hint">Attachments need Cloudinary to be set up for this server.</span>')
+            : (it.evidence.length ? '' : '<span class="sc-hint">None</span>')}
+        </div>
+        ${run && d.evidence ? '<span class="sc-hint">Tip: paste a screenshot with Ctrl+V / ⌘V while this case is open.</span>' : ''}
+      </div>
+      <div class="sc-foot">
+        <label class="sc-dev">${icon('user', 13)} Developer
+          <select class="input" data-sc-owner ${d.canManage && isToday ? '' : 'disabled'}>
+            <option value="">Nobody</option>${d.people.map((x) => `<option value="${x.id}" ${x.id === it.ownerId ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}
+          </select></label>
+        ${f ? `<button class="sc-link" data-sanity-go="${it.flowId}">${icon('link', 12)} Open flow</button>` : ''}
+        ${it.state === 'fail' ? notifyBadge(it) : ''}
+        ${it.state === 'fail' && run && d.teams ? `<button class="sc-link" data-sanity-share="${it.id}">${icon('share', 12)} ${it.notifyStatus === 'sent' ? 'Notify again' : 'Post on Teams'}</button>` : ''}
+        ${d.canManage && !inFocus ? `<button class="sc-link danger" data-sanity-delete="${it.id}">${icon('trash', 12)} Remove case</button>` : ''}
+      </div>
+    </div>`;
+  }
+
+  function caseRow(d, it, no, run, drag) {
+    const open = d.ui.open.has(it.id);
+    const picked = d.ui.selected.has(it.id);
+    const retest = retestOf(d, it) && it.state === 'pending';
+    return `<div class="sc-row st-${it.state} ${retest ? 'retest' : ''} ${open ? 'open' : ''} ${picked ? 'picked' : ''}
+        ${d.missing.has(it.id) && it.state === 'pending' ? 'missing' : ''} ${d.ui.cursor === it.id ? 'cursor' : ''}" data-item="${it.id}">
+      <div class="sc-main">
+        ${run ? `<input type="checkbox" class="sc-check" data-sc-select ${picked ? 'checked' : ''} aria-label="Select ${esc(it.heading)}">` : ''}
+        <span class="sc-no ${drag ? 'drag' : ''}" title="${drag ? 'Drag to reorder' : ''}">${no}</span>
+        <button class="sc-title" data-sc-toggle aria-expanded="${open}">
+          <span class="sc-heading">${esc(it.heading)}</span>
+          <span class="sc-meta">${caseMeta(d, it)}</span>
+        </button>
+        <div class="sc-acts">${caseActions(it, run)}</div>
+        <button class="icon-btn sc-chev" data-sc-toggle title="Details (Enter)">${icon('down', 16)}</button>
+      </div>
+      ${open ? caseDetail(d, it, run, false) : ''}
+    </div>`;
+  }
+
+  // ---- the checklist page
+
+  function renderSanity() {
+    const d = sanity;
+    if (!d) return;
+    // keep the cursor where the tester is typing (the page is drawn again after every change)
+    const active = document.activeElement;
+    let keepFocus = null;
+    if (active && $(active).closest('#sanityPage').length && $(active).is('input, textarea, select')) {
+      keepFocus = {
+        item: $(active).closest('[data-item]').data('item') || null,
+        attrs: [...active.attributes].filter((a) => a.name.startsWith('data-')).map((a) => `[${a.name}${a.value ? `="${a.value}"` : ''}]`).join(''),
+        start: active.selectionStart, end: active.selectionEnd, overlay: $(active).closest('.sc-focus, .sc-review').length > 0,
+      };
+    }
+    d.retest = sanityRetest(d);
+    if (d.view === 'logs') renderSanityLogs(); else renderSanityChecklist(d);
+    $('body').toggleClass('sc-locked', Boolean(d.view === 'sheet' && (d.focus || d.review)));
+    document.documentElement.style.setProperty('--app-header', `${$('header').outerHeight() || 0}px`);
+    sanitySaved();
+    $('#sanityPage textarea').each((i, el) => autoGrow(el));
+    if (scFocusField) {
+      // in focus mode the case is the one on the card; else its row in the list
+      const $where = d.focus ? $('#sanityPage .sc-focus') : $(`#sanityPage .sc-groups [data-item="${scFocusField.id}"]`);
+      const el = $where.find(`[data-sc-field="${scFocusField.field}"]`)[0];
+      scFocusField = null;
+      if (el) { el.focus(); return; }
+    }
+    if (keepFocus && keepFocus.attrs) {
+      const scope = keepFocus.overlay ? '#sanityPage .sc-focus, #sanityPage .sc-review' : '#sanityPage';
+      const $scope = keepFocus.item ? $(scope).find(`[data-item="${keepFocus.item}"]`).addBack(`[data-item="${keepFocus.item}"]`) : $(scope);
+      const el = $scope.find(keepFocus.attrs)[0];
+      if (el) {
+        el.focus({ preventScroll: true });
+        if (typeof keepFocus.start === 'number' && el.setSelectionRange) try { el.setSelectionRange(keepFocus.start, keepFocus.end); } catch (e) { /* not a text field */ }
+      }
+    }
+  }
+
+  function renderSanityChecklist(d) {
+    const p = products.find((x) => x.id === d.productId);
+    const isToday = d.date === d.today;
+    const run = sanityRuns(d);
+    const visible = sanityVisible(d);
     const used = new Set(d.items.map((it) => it.flowId).filter(Boolean));
     const flowOptions = (p ? p.modules : []).map((m) => `<optgroup label="${esc(m.name)}">${m.flows.filter((f) => !used.has(f.id))
       .map((f) => `<option value="${f.id}">${esc(f.name)}</option>`).join('')}</optgroup>`).join('');
+    // reordering only makes sense on the whole list
+    const drag = d.canManage && isToday && d.ui.status === 'all' && !d.ui.q && !d.ui.module;
+    const modulesUsed = [];
+    d.items.forEach((it) => { const g = caseGroup(it); if (!modulesUsed.some((x) => x.key === g.key)) modulesUsed.push(g); });
+    const groups = [];
+    visible.forEach((it) => {
+      const g = caseGroup(it);
+      let grp = groups.find((x) => x.key === g.key);
+      if (!grp) { grp = { ...g, items: [] }; groups.push(grp); }
+      grp.items.push(it);
+    });
+    const numberOf = new Map(d.items.map((it, i) => [it.id, i + 1]));
+    const allPicked = visible.length && visible.every((it) => d.ui.selected.has(it.id));
 
-    $('#sanityPage').html(`<div class="sanity-page">
-      <div class="flex flex-wrap items-center gap-3 border-b border-slate-200 px-5 py-3">
-        <button class="btn-secondary text-sm" data-close-sanity title="Back to the board">${icon('left', 14)} Board</button>
-        <div class="min-w-0 flex-1">
-          <h3 class="text-lg font-semibold text-slate-900">Sanity testing <span class="font-normal text-slate-400">· ${esc(p ? p.name : '')}</span></h3>
-          <p class="text-xs text-slate-500">${isToday ? `Today · ${fmtDate(d.date)} · resets at midnight (${esc(d.timezone)})` : `History of ${fmtDate(d.date)}`}</p>
-        </div>
-        ${sanityViews(d)}
+    $('#sanityPage').html(`<div class="sanity-page sc-page">
+      ${sanityHeader(d, 'Sanity testing', isToday ? `Today · ${fmtDate(d.date)} · resets at midnight (${esc(d.timezone)})` : `History of ${fmtDate(d.date)} · read only`, `
         <input type="date" class="input py-1 text-sm" data-sanity-date value="${d.date}" max="${d.today}" title="Look at an earlier day">
-        <a class="btn-secondary text-sm" href="/api/sanity/export?product=${encodeURIComponent(d.productId)}&date=${d.date}" title="Download this day's sheet">${icon('download', 14)} Excel</a>
-        ${isToday ? '' : `<button class="btn-secondary text-sm" data-sanity-today>Today</button>`}
-      </div>
+        ${isToday ? '' : '<button class="btn-secondary text-sm" data-sanity-today>Today</button>'}
+        <a class="btn-secondary text-sm" href="/api/sanity/export?product=${encodeURIComponent(d.productId)}&date=${d.date}" title="Download this day's sheet">${icon('download', 14)} Excel</a>`)}
 
-      <form id="sanityRun" class="sanity-run">
-        <label><span class="field-label">Version</span>
-          <input class="input w-40" name="version" value="${esc(d.run ? d.run.version : '')}" placeholder="e.g. 1.12.0 (245)" maxlength="60" ${run ? '' : 'disabled'}></label>
+      ${sanityProgress(d, run)}
+
+      <form id="sanityRun" class="sc-run">
+        <label><span class="field-label">Version under test</span>
+          <input class="input w-44" name="version" value="${esc(d.run ? d.run.version : '')}" placeholder="e.g. 1.12.0 (245)" maxlength="60" ${run ? '' : 'disabled'}></label>
         <label><span class="field-label">Sanity time</span>
           <input class="input w-32" type="time" name="time" value="${esc(d.run ? d.run.time : '')}" ${run ? '' : 'disabled'}></label>
         ${run ? '<button class="btn-secondary self-end">Save</button>' : ''}
-        <div class="sanity-progress self-end">
-          <span class="chip pass">${icon('check', 12)} ${count('pass')} / ${n} done</span>
-          <span class="chip fail">${icon('close', 12)} ${count('fail')} failed</span>
-          <span class="chip">${count('pending')} left</span>
-        </div>
-        ${run && n ? `<button type="button" class="btn-primary self-end" data-sanity-submit title="Check everything, save the log and send the report">${icon('check', 14)} Submit sanity</button>` : ''}
-      </form>
-      <div class="sanity-recipients">
-        <span class="text-xs font-medium text-slate-500">Report goes to</span>
-        ${d.recipients.map((id) => `<span class="person">${esc(person(id) || '—')}</span>`).join('') || '<span class="text-xs text-slate-400">nobody yet</span>'}
-        ${d.canManage ? `
-        <details class="sheet-share">
-          <summary class="text-xs font-medium text-indigo-600 hover:underline">Change</summary>
-          <div class="sheet-share-pop left-0 right-auto">
-            <span class="field-label">@mention on Teams when a sanity is submitted</span>
-            <div class="max-h-56 overflow-y-auto">${d.people.map((x) => `
-              <label class="flex items-center gap-2 py-0.5 text-sm"><input type="checkbox" class="h-4 w-4 accent-indigo-600" data-sanity-recipient value="${x.id}" ${d.recipients.includes(x.id) ? 'checked' : ''}> ${esc(x.name)}${x.teams ? '' : ' <span class="text-xs text-slate-400">(no Teams email)</span>'}</label>`).join('')}</div>
+        <div class="sc-recipients">
+          <span class="field-label">Report goes to</span>
+          <div class="flex flex-wrap items-center gap-1.5">
+            ${d.recipients.map((id) => `<span class="person">${esc(sanityPerson(id) || '—')}</span>`).join('') || '<span class="text-xs text-slate-400">nobody yet</span>'}
+            ${d.canManage ? `
+            <details class="sheet-share">
+              <summary class="text-xs font-medium text-indigo-600 hover:underline">Change</summary>
+              <div class="sheet-share-pop left-0 right-auto">
+                <span class="field-label">@mention on Teams when a sanity is submitted</span>
+                <div class="max-h-56 overflow-y-auto">${d.people.map((x) => `
+                  <label class="flex items-center gap-2 py-0.5 text-sm"><input type="checkbox" class="h-4 w-4 accent-indigo-600" data-sanity-recipient value="${x.id}" ${d.recipients.includes(x.id) ? 'checked' : ''}> ${esc(x.name)}${x.teams ? '' : ' <span class="text-xs text-slate-400">(no Teams email)</span>'}</label>`).join('')}</div>
+              </div>
+            </details>` : ''}
           </div>
-        </details>` : ''}
-        ${d.teams ? '' : '<span class="text-xs text-amber-700">· no Teams channel yet, so reports are only kept in the logs</span>'}
-      </div>
-      ${isToday && d.run && d.run.time ? `<p class="px-5 pt-2 text-xs text-slate-500">${d.teams
-        ? (d.run.remindedAt ? 'Teams reminder sent today.' : `Teams reminder at ${esc(d.run.time)}.`)
-        : 'No Teams channel for this app yet, so no reminder goes out.'}</p>` : ''}
+          <p class="text-xs text-slate-500">${d.teams
+            ? (isToday && d.run && d.run.time ? (d.run.remindedAt ? 'Teams reminder sent today.' : `Teams reminder at ${esc(d.run.time)}.`) : 'Posted on the app’s Teams channel.')
+            : '<span class="text-amber-700">No Teams channel yet: reports are only kept in the logs.</span>'}</p>
+        </div>
+      </form>
       ${isToday && !d.canRun ? '<p class="mx-5 mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">You can look at the sanity list. Testers and developers run it; for any other login, ask an admin to tick <b>Sanity tester</b>.</p>' : ''}
+      ${d.retest && d.ui.status !== 'retest' && d.items.some((it) => retestOf(d, it) && it.state === 'pending') ? `
+        <div class="sc-note retest">${icon('flip', 14)}
+          <span><b>${d.items.filter((it) => retestOf(d, it) && it.state === 'pending').length} case(s) to retest</b> — failed or blocked in ${esc(d.retest.log.version)} (${logWhen(d.retest.log)}).</span>
+          <button class="sc-link" data-sc-status="retest">Show them</button>
+          ${d.retestLog ? '<button class="sc-link" data-sc-retest-clear>Back to the latest report</button>' : ''}
+        </div>` : ''}
 
-      <div class="sanity-sheet-wrap">
-        <table class="sanity-sheet">
-          <thead><tr>
-            <th class="w-10">#</th><th class="min-w-[220px]">Heading</th><th>Status</th><th class="min-w-[220px]">Remarks</th>
-            ${d.columns.map((c) => `<th class="min-w-[150px]" data-col="${c.id}"><div class="sanity-col">
-              <span class="truncate">${esc(c.name)}</span>
-              ${d.canManage ? `<button class="icon-btn sm" data-col-rename="${c.id}" title="Rename column">${icon('edit', 12)}</button>
-                <button class="icon-btn sm danger" data-col-delete="${c.id}" title="Delete column">${icon('close', 12)}</button>` : ''}
-            </div></th>`).join('')}
-            <th class="w-px whitespace-nowrap">${d.canManage ? `<button class="sanity-addcol" data-col-add title="Add a column">${icon('plus', 12)} Column</button>` : ''}</th>
-          </tr></thead>
-          <tbody id="sanityList">
-          ${d.items.map((it, i) => {
-            const f = it.flowId && findFlow(it.flowId);
-            const m = f && allModules.find((x) => x.id === f.moduleId);
-            return `
-            <tr class="sanity-row ${it.state} ${d.missing.has(it.id) && it.state === 'pending' ? 'missing' : ''}" data-item="${it.id}">
-              <td><span class="sanity-no ${d.canManage ? 'drag' : ''}" title="${d.canManage ? 'Drag to reorder' : ''}">${i + 1}</span></td>
-              <td>
-                ${f ? `<button class="sanity-heading link" data-sanity-go="${it.flowId}" title="Go to this flow">${esc(flowName(it))} ${icon('link', 12)}</button>`
-                  : `<span class="sanity-heading">${esc(flowName(it))}</span>`}
-                <div class="sanity-meta">
-                  ${m ? `<span>${esc(m.name)}</span>` : '<span>Manual heading</span>'}
-                  ${it.resultAt && it.state !== 'pending' ? `<span>${it.state === 'pass' ? 'Done' : 'Failed'} by ${esc(person(it.resultBy) || '—')}</span>` : ''}
-                  ${it.sharedAt ? `<span class="text-indigo-600">${icon('share', 11)} on Teams</span>` : ''}
-                </div>
-              </td>
-              <td><div class="seg sanity-state">
-                <button data-sanity-state="pass" class="${it.state === 'pass' ? 'on pass' : ''}" ${run ? '' : 'disabled'} title="Done">${icon('check', 13)} Done</button>
-                <button data-sanity-state="fail" class="${it.state === 'fail' ? 'on fail' : ''}" ${run ? '' : 'disabled'} title="Failed: posts to Teams">${icon('close', 13)} Failed</button>
-              </div></td>
-              <td><textarea class="input sanity-review" data-sanity-review rows="1" maxlength="1000" placeholder="${run ? 'Remarks / what failed' : ''}" ${run ? '' : 'disabled'}>${esc(it.review)}</textarea></td>
-              ${d.columns.map((c) => `<td><input class="input sanity-cell" data-sanity-cell="${c.id}" value="${esc(it.cells[c.id] || '')}" maxlength="500" ${run ? '' : 'disabled'}></td>`).join('')}
-              <td><div class="flex items-center justify-end">
-                ${run && d.teams && it.state === 'fail' ? `<button class="icon-btn" data-sanity-share="${it.id}" title="Share this failure on Teams again">${icon('share', 14)}</button>` : ''}
-                ${d.canManage ? `<button class="icon-btn danger" data-sanity-delete="${it.id}" title="Remove from the list">${icon('trash', 14)}</button>` : ''}
-              </div></td>
-            </tr>`;
-          }).join('') || `<tr><td colspan="${5 + d.columns.length}" class="py-10 text-center text-sm text-slate-400">No headings yet. Every flow of this app shows up here, and you can add your own below.</td></tr>`}
-          </tbody>
-        </table>
+      <div class="sc-toolbar">
+        ${run ? `<input type="checkbox" class="sc-check" data-sc-select-all ${allPicked ? 'checked' : ''} title="Select every case shown" aria-label="Select every case shown">` : ''}
+        <label class="sc-search">${icon('search', 14)}
+          <input class="input" data-sc-search value="${esc(d.ui.q)}" placeholder="Search cases, remarks, results" autocomplete="off"><kbd>/</kbd></label>
+        <select class="input sc-module" data-sc-module title="Module">
+          <option value="">All modules</option>${modulesUsed.map((g) => `<option value="${g.key}" ${d.ui.module === g.key ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}
+        </select>
+        ${d.ui.q || d.ui.module || d.ui.status !== 'all' ? '<button class="sc-link" data-sc-clear-filters>Clear filters</button>' : ''}
+        <span class="flex-1"></span>
+        <button class="sc-link" data-sc-expand="${groups.length && visible.every((it) => d.ui.open.has(it.id)) ? 'none' : 'all'}">${visible.length && visible.every((it) => d.ui.open.has(it.id)) ? 'Collapse all' : 'Expand all'}</button>
+        <button class="icon-btn" data-sc-help title="Keyboard shortcuts (?)">${icon('keyboard', 16)}</button>
+      </div>
+      ${run && d.ui.selected.size ? `
+      <div class="sc-bulk" role="toolbar" aria-label="Selected cases">
+        <b>${d.ui.selected.size} selected</b><span>Mark as</span>
+        ${Object.entries(SANITY_STATE).map(([k, v]) => `<button class="sc-act ${k}" data-sc-bulk="${k}">${icon(v.icon, 13)}<span>${v.label}</span></button>`).join('')}
+        <button class="sc-act" data-sc-bulk="pending">${icon('clock', 13)}<span>Not run</span></button>
+        <button class="sc-link" data-sc-select-none>Clear</button>
+      </div>` : ''}
+
+      <div class="sc-groups">
+        ${groups.map((g) => {
+          const all = d.items.filter((it) => caseGroup(it).key === g.key);
+          const ran = all.filter((it) => it.state !== 'pending').length;
+          const bad = all.filter((it) => isBad(it.state)).length;
+          const shut = d.ui.shut.has(g.key);
+          return `<section class="sc-group ${shut ? 'shut' : ''}">
+            <button class="sc-group-head" data-sc-group="${g.key}" aria-expanded="${!shut}">
+              ${icon('down', 14)}<span class="sc-group-name">${esc(g.name)}</span>
+              <span class="sc-group-count">${ran}/${all.length} run</span>
+              ${bad ? `<span class="sc-chip st-fail">${bad} failed / blocked</span>` : ''}
+              <span class="sc-group-bar"><i style="width:${all.length ? (ran / all.length) * 100 : 0}%"></i></span>
+            </button>
+            ${shut ? '' : `<div class="sc-list" data-sc-list="${g.key}">${g.items.map((it) => caseRow(d, it, numberOf.get(it.id), run, drag)).join('')}</div>`}
+          </section>`;
+        }).join('') || `<p class="sc-empty">${d.items.length ? 'No case matches these filters.' : 'No cases yet. Every flow of this app shows up here, and you can add your own below.'}</p>`}
       </div>
 
       ${d.canManage ? `
       <form id="sanityAdd" class="sanity-add">
         <select class="input" name="flowId" title="A flow of this app, or a new heading">
-          <option value="">New heading…</option>${flowOptions.replace(/<optgroup[^>]*><\/optgroup>/g, '')}
+          <option value="">New case…</option>${flowOptions.replace(/<optgroup[^>]*><\/optgroup>/g, '')}
         </select>
-        <input class="input min-w-0 flex-1" name="heading" placeholder="New row: heading, e.g. Login with OTP" maxlength="120" autocomplete="off">
-        <button class="btn-primary">${icon('plus', 14)} Add</button>
+        <input class="input min-w-0 flex-1" name="heading" placeholder="New case, e.g. Login with OTP" maxlength="120" autocomplete="off">
+        <button class="btn-primary">${icon('plus', 14)} Add case</button>
         ${can('developer') && p && p.modules.length ? `
         <label class="sanity-newflow"><input type="checkbox" name="createFlow" class="h-4 w-4 accent-indigo-600">
           Also create it as a flow in <select class="input py-0.5 text-sm" name="moduleId">${p.modules.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('')}</select></label>` : ''}
+        <div class="sc-columns">
+          <span class="text-xs font-medium text-slate-500">Extra fields on every case:</span>
+          ${d.columns.map((c) => `<span class="person">${esc(c.name)}
+            <button type="button" data-col-rename="${c.id}" title="Rename">${icon('edit', 10)}</button>
+            <button type="button" data-col-delete="${c.id}" title="Delete">${icon('close', 10)}</button></span>`).join('') || '<span class="text-xs text-slate-400">none</span>'}
+          <button type="button" class="sanity-addcol" data-col-add>${icon('plus', 12)} Field</button>
+        </div>
       </form>` : ''}
 
       <p class="sanity-logs text-xs text-slate-500">The checklist resets every day; every submitted sanity is kept in the
@@ -4374,83 +4758,363 @@ $(function () {
           </div>
         </form>
       </details>` : ''}
+      ${d.focus ? sanityFocusHtml(d) : ''}
+      ${d.review ? sanityReviewHtml(d) : ''}
+      ${d.help ? sanityHelpHtml() : ''}
     </div>`);
 
-    if (d.canManage) {
-      Sortable.create($('#sanityList')[0], {
-        handle: '.sanity-no', animation: 150, draggable: 'tr.sanity-row',
-        onEnd: () => api('PUT', '/api/sanity/order', { productId: d.productId, ids: $('#sanityList .sanity-row').map((i, el) => $(el).data('item')).get() }).done(reloadSanity),
-      });
+    if (drag) {
+      $('#sanityPage .sc-list').each((i, el) => Sortable.create(el, {
+        handle: '.sc-no', animation: 150, draggable: '.sc-row',
+        onEnd: () => api('PUT', '/api/sanity/order', { productId: d.productId, ids: $('#sanityPage .sc-row').map((j, row) => $(row).data('item')).get() }).done(reloadSanity),
+      }));
     }
-    $('#sanityList .sanity-review').each((i, el) => autoGrow(el));
   }
 
-  // ---- the sanity logs page: every submitted sanity of the app, newest first, filtered by day and text
+  // ---- focus mode: one case at a time, big buttons, keys; after a result it moves on to the next case not run
+
+  const sanityQueue = (d) => sanityVisible(d);
+  const autoNext = () => storage('get', 'sanityAutoNext') !== 'off';
+
+  function sanityFocusHtml(d) {
+    const queue = sanityQueue(d);
+    const at = Math.max(0, queue.findIndex((it) => it.id === d.focus));
+    const it = queue[at] || d.items.find((x) => x.id === d.focus);
+    if (!it) return '';
+    const run = sanityRuns(d);
+    const left = d.items.filter((x) => x.state === 'pending').length;
+    const r = retestOf(d, it);
+    return `<div class="sc-focus st-${it.state}" data-item="${it.id}" role="dialog" aria-modal="true" aria-label="Focus mode">
+      <div class="sc-focus-bar">
+        <button class="btn-secondary" data-sc-focus-exit title="Back to the list (Esc)">${icon('close', 14)} Exit</button>
+        <div class="sc-focus-progress">
+          <span><b>Case ${at + 1}</b> of ${queue.length}${d.ui.status !== 'all' || d.ui.q || d.ui.module ? ' (filtered)' : ''} · ${left ? `${left} not run` : 'every case run'}</span>
+          <div class="sc-bar">${['pass', 'fail', 'blocked', 'skipped'].map((st) => {
+            const n = d.items.filter((x) => x.state === st).length;
+            return n ? `<i class="st-${st}" style="width:${(n / d.items.length) * 100}%"></i>` : '';
+          }).join('')}</div>
+        </div>
+        <label class="sc-auto"><input type="checkbox" class="h-4 w-4 accent-indigo-600" data-sc-auto ${autoNext() ? 'checked' : ''}> Go to the next case not run</label>
+        <span class="sc-saved" id="scSaved"></span>
+      </div>
+      <div class="sc-focus-body">
+        <article class="sc-focus-card">
+          <p class="sc-focus-kicker">${esc(caseGroup(it).name)} · case ${d.items.indexOf(it) + 1}
+            ${r ? `<span class="sc-badge retest">${icon('flip', 11)} Retest · ${stateLabel(r.state).toLowerCase()} in ${esc(d.retest.log.version)}</span>` : ''}
+            ${it.state !== 'pending' ? stateChip(it.state) : ''}</p>
+          <h2 class="sc-focus-title">${esc(it.heading)}</h2>
+          <div class="sc-expected">
+            <span class="sc-label">Expected result</span>
+            ${d.canManage && run
+              ? `<textarea class="input" rows="2" data-sc-expected placeholder="What should happen (kept for every run)" maxlength="2000">${esc(it.expected)}</textarea>`
+              : `<p>${esc(it.expected) || '<span class="text-slate-400">Not written yet</span>'}</p>`}
+          </div>
+          <div class="sc-focus-acts">${caseActions(it, run, true)}</div>
+          ${caseDetail(d, it, run, true)}
+        </article>
+      </div>
+      <div class="sc-focus-nav">
+        <button class="btn-secondary" data-sc-focus-go="-1" ${at <= 0 ? 'disabled' : ''}>${icon('left', 14)} Previous</button>
+        <span class="sc-keys"><kbd>P</kbd> pass <kbd>F</kbd> fail <kbd>B</kbd> blocked <kbd>N</kbd> not tested · <kbd>←</kbd><kbd>→</kbd> move · <kbd>Esc</kbd> exit</span>
+        <button class="btn-secondary" data-sc-focus-go="1" ${at >= queue.length - 1 ? 'disabled' : ''}>Next ${icon('right', 14)}</button>
+      </div>
+    </div>`;
+  }
+
+  function focusMove(step) {
+    const d = sanity;
+    const queue = sanityQueue(d);
+    const at = queue.findIndex((it) => it.id === d.focus);
+    const to = queue[Math.min(queue.length - 1, Math.max(0, at + step))];
+    if (to) { d.focus = to.id; d.ui.cursor = to.id; renderSanity(); }
+  }
+  // after a result: the next case not run, looking forward and then from the top
+  function focusNextPending() {
+    const d = sanity;
+    const queue = sanityQueue(d);
+    const at = queue.findIndex((it) => it.id === d.focus);
+    const next = [...queue.slice(at + 1), ...queue.slice(0, Math.max(0, at))].find((it) => it.state === 'pending');
+    if (next) { d.focus = next.id; d.ui.cursor = next.id; renderSanity(); }
+    else { toast('Every case has a result'); renderSanity(); }
+  }
+  function openFocus(id) {
+    const d = sanity;
+    const queue = sanityQueue(d);
+    if (!queue.length) { toast('No case matches these filters'); return; }
+    const start = (id && queue.find((it) => it.id === id)) || queue.find((it) => it.id === d.ui.cursor) || queue.find((it) => it.state === 'pending') || queue[0];
+    d.focus = start.id;
+    d.review = false;
+    renderSanity();
+  }
+
+  // ---- review & submit: everything a tester checks before the report goes out
+
+  function teamsPreview({ title, facts, lines, mentions, where }) {
+    const md = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+    return `<div class="tp" aria-label="Teams message preview">
+      <div class="tp-head"><span class="tp-app">FT</span><b>FlowTrace</b><span>${esc(where || 'App channel')}</span></div>
+      <div class="tp-card">
+        <p class="tp-title">${esc(title)}</p>
+        ${lines.filter(Boolean).slice(0, 8).map((l) => `<p class="tp-line">${md(l)}</p>`).join('')}
+        ${lines.length > 8 ? `<p class="tp-line muted">… and ${lines.length - 8} more</p>` : ''}
+        <dl class="tp-facts">${facts.filter(([, v]) => v).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
+        ${mentions.length ? `<p class="tp-at">${mentions.map((n) => `<span>@${esc(n)}</span>`).join(' ')}</p>` : ''}
+        <span class="tp-btn">Open report</span>
+      </div>
+    </div>`;
+  }
+
+  function sanityReviewHtml(d) {
+    const p = products.find((x) => x.id === d.productId);
+    const count = (st) => d.items.filter((it) => it.state === st).length;
+    const pending = d.items.filter((it) => it.state === 'pending');
+    const bad = d.items.filter((it) => isBad(it.state));
+    const version = d.run ? d.run.version : '';
+    const retest = d.retest ? d.items.filter((it) => retestOf(d, it)) : [];
+    const fixed = retest.filter((it) => it.state === 'pass');
+    const still = retest.filter((it) => isBad(it.state));
+    const names = d.recipients.map(sanityPerson).filter(Boolean);
+    const tile = (st, label) => `<div class="sc-tile st-${st}"><b>${count(st)}</b><span>${label}</span></div>`;
+    const ready = !pending.length && version;
+    return `<div class="sc-review" role="dialog" aria-modal="true" aria-label="Review and submit">
+      <div class="sc-review-card">
+        <div class="sc-review-head">
+          <div class="min-w-0 flex-1">
+            <h3 class="text-lg font-semibold text-slate-900">Review &amp; submit</h3>
+            <p class="text-xs text-slate-500">${esc(p ? p.name : '')} · ${fmtDate(d.date)} · check the run, then the report is saved and sent</p>
+          </div>
+          <button class="icon-btn" data-sc-review-close title="Back to the checklist (Esc)">${icon('close', 18)}</button>
+        </div>
+        <div class="sc-review-body">
+          <div class="sc-tiles">${tile('pass', 'Passed')}${tile('fail', 'Failed')}${tile('blocked', 'Blocked')}${tile('skipped', 'Not tested')}${tile('pending', 'Not run')}</div>
+
+          ${pending.length ? `
+          <div class="sc-note warn">${icon('clock', 14)}<div class="flex-1">
+            <b>${pending.length} case${pending.length === 1 ? '' : 's'} not run yet.</b> Every case needs a result — pass, fail, blocked or not tested.
+            <div class="sc-review-list">${pending.map((it) => `<button class="sc-link" data-sc-review-locate="${it.id}">${esc(it.heading)}</button>`).join('')}</div>
+          </div><button class="btn-secondary" data-sc-focus-pending>${icon('focus', 14)} Test them in focus mode</button></div>`
+          : `<div class="sc-note ok">${icon('check', 14)} Every case has a result.</div>`}
+
+          ${retest.length ? `
+          <div class="sc-note retest">${icon('flip', 14)}<span>Retest of ${esc(d.retest.log.version)}: <b>${fixed.length} fixed</b>, <b>${still.length} still failing</b>${retest.length - fixed.length - still.length ? `, ${retest.length - fixed.length - still.length} other` : ''}.</span></div>` : ''}
+
+          <section>
+            <h4 class="sc-review-title">Failed &amp; blocked <span>${bad.length}</span></h4>
+            ${bad.map((it) => `<div class="sc-review-case st-${it.state}">
+              <div class="flex flex-wrap items-center gap-2">${stateChip(it.state)}<b class="text-sm text-slate-900">${esc(it.heading)}</b>
+                <span class="text-xs text-slate-500">${esc(caseGroup(it).name)}${it.ownerId ? ` · ${esc(sanityPerson(it.ownerId))}` : ''}</span>
+                ${it.state === 'fail' ? notifyBadge(it) : ''}
+                <button class="sc-link ml-auto" data-sc-review-locate="${it.id}">Edit</button></div>
+              <dl class="sc-review-dl">
+                ${it.expected ? `<dt>Expected</dt><dd>${esc(it.expected)}</dd>` : ''}
+                <dt>Actual</dt><dd>${esc(it.actual) || '<span class="sc-missing">Not written — developers will ask</span>'}</dd>
+                ${it.repro ? `<dt>Steps</dt><dd>${esc(it.repro)}</dd>` : ''}
+                ${it.review ? `<dt>Remarks</dt><dd>${esc(it.review)}</dd>` : ''}
+                <dt>Evidence</dt><dd>${it.evidence.length ? it.evidence.map((e) => `<a class="sc-link" href="${esc(e.url)}" target="_blank" rel="noopener">${icon(e.kind === 'video' ? 'play' : 'clip', 11)} ${esc(e.name)}</a>`).join(' ') : '<span class="text-slate-400">none</span>'}</dd>
+              </dl>
+            </div>`).join('') || '<p class="text-sm text-slate-500">Nothing failed or blocked.</p>'}
+          </section>
+
+          <section>
+            <h4 class="sc-review-title">Report</h4>
+            <div class="sc-review-report">
+              <div class="space-y-3">
+                <label class="block"><span class="field-label">Version you tested</span>
+                  <input class="input w-full ${version ? '' : 'invalid'}" data-sc-version value="${esc(version)}" placeholder="e.g. 1.12.0 (245)" maxlength="60"></label>
+                <div><span class="field-label">What happens</span>
+                  <ul class="sc-review-steps">
+                    <li>The log is saved for good in Sanity logs.</li>
+                    <li>“Sanity done on ${esc(version || 'this version')}” is added to your Done today.</li>
+                    <li>${d.teams ? `The report is posted on the app’s Teams channel${names.length ? `, @mentioning ${esc(names.join(', '))}` : ''}.` : 'No Teams channel for this app: nothing is posted.'}</li>
+                  </ul>
+                </div>
+              </div>
+              ${d.teams ? teamsPreview({
+                title: `${count('fail') || count('blocked') ? '⚠️' : '✅'} Sanity report: ${p ? p.name : ''} — ${d.date}`,
+                lines: bad.map((it) => `${it.state === 'fail' ? '❌' : '⛔'} **${it.heading}**${it.ownerId ? ` (${sanityPerson(it.ownerId)})` : ''}${it.review ? ` — ${it.review}` : ''}`),
+                facts: [['Version', version || '—'], ['Date', d.date], ['Passed', `${count('pass')} / ${d.items.length}`], ['Failed', String(count('fail'))],
+                  ['Blocked', count('blocked') ? String(count('blocked')) : ''], ['Not tested', count('skipped') ? String(count('skipped')) : '']],
+                mentions: names,
+              }) : ''}
+            </div>
+          </section>
+        </div>
+        <div class="sc-review-foot">
+          <span class="text-sm text-slate-500">${ready ? `${count('pass')} passed, ${count('fail')} failed, ${count('blocked')} blocked, ${count('skipped')} not tested` : pending.length ? `${pending.length} not run` : 'Enter the version'}</span>
+          <button class="btn-secondary" data-sc-review-close>Back</button>
+          <button class="btn-primary" data-sc-submit ${ready ? '' : 'disabled'}>${icon('check', 14)} Submit sanity</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  function sanityHelpHtml() {
+    const row = (keys, what) => `<li><span>${keys.map((k) => `<kbd>${k}</kbd>`).join(' ')}</span>${what}</li>`;
+    return `<div class="sc-help" role="dialog" aria-label="Keyboard shortcuts">
+      <div class="sc-help-card">
+        <div class="flex items-center gap-2"><b class="flex-1 text-slate-900">Keyboard shortcuts</b><button class="icon-btn" data-sc-help title="Close">${icon('close', 16)}</button></div>
+        <ul>
+          ${row(['J', '↓'], 'Next case')}${row(['K', '↑'], 'Previous case')}
+          ${row(['P'], 'Pass')}${row(['F'], 'Fail (opens the details)')}${row(['B'], 'Blocked')}${row(['N'], 'Not tested')}
+          ${row(['Enter'], 'Open / close details')}${row(['X'], 'Select for bulk')}${row(['/'], 'Search')}
+          ${row(['Shift', 'F'], 'Focus mode')}${row(['R'], 'Review & submit')}${row(['Esc'], 'Close / leave a field')}
+          ${row(['Ctrl', 'V'], 'Paste a screenshot into the open case')}
+        </ul>
+      </div>
+    </div>`;
+  }
+
+  // ---- logs: reports, failures across versions, and comparing two reports
+
+  const logBar = (l) => `<span class="sc-bar small">${[['pass', l.passed], ['fail', l.failed], ['blocked', l.blocked], ['skipped', l.skipped]]
+    .map(([st, n]) => (n && l.total ? `<i class="st-${st}" style="width:${(n / l.total) * 100}%"></i>` : '')).join('')}</span>`;
+  const badCases = (l) => l.cases.filter((c) => isBad(c.state));
+
+  // how the report went out on Teams
+  function shareSummary(l) {
+    const last = l.shares[l.shares.length - 1];
+    if (!last) return l.sharedAt ? `<span class="sc-badge sent">${icon('share', 11)} On Teams</span>` : '<span class="text-xs text-slate-400">Not shared</span>';
+    const ok = last.status === 'sent';
+    const where = { channel: 'channel', direct: 'direct', mine: 'channel' }[last.target] || 'Teams';
+    return `<span class="sc-badge ${ok ? 'sent' : 'error'}" title="${esc(last.status)}">${icon('share', 11)} ${ok ? `Sent · ${where}` : 'Not sent'}${l.shares.length > 1 ? ` · ${l.shares.length}×` : ''}</span>`;
+  }
 
   const shownLogs = (d) => {
     const q = d.logFilter.q.trim().toLowerCase();
     return d.logs.filter((l) => (!d.logFilter.date || l.date === d.logFilter.date)
-      && (!q || [l.version, l.submittedBy, ...l.testers].join(' ').toLowerCase().includes(q)));
+      && (!d.logFilter.bad || badCases(l).length)
+      && (!q || [l.version, l.submittedBy, ...l.testers, ...badCases(l).map((c) => c.heading)].join(' ').toLowerCase().includes(q)));
   };
 
   function sanityLogRows(list) {
-    return list.map((l) => `
-      <tr>
-        <td class="whitespace-nowrap font-medium text-slate-900">${fmtDate(l.date)}</td>
+    const d = sanity;
+    const run = sanityRuns(d);
+    return list.map((l) => {
+      const bad = badCases(l);
+      return `<tr>
+        <td class="whitespace-nowrap"><b class="text-slate-900">${fmtDate(l.date)}</b><div class="text-xs text-slate-500">${new Date(l.submittedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div></td>
         <td class="font-mono text-xs">${esc(l.version)}</td>
-        <td><div class="flex items-center gap-2">
-          <span class="log-bar"><i class="pass" style="width:${l.total ? (l.passed / l.total) * 100 : 0}%"></i><i class="fail" style="width:${l.total ? (l.failed / l.total) * 100 : 0}%"></i></span>
-          <span class="chip pass">${l.passed} passed</span>${l.failed ? `<span class="chip fail">${l.failed} failed</span>` : ''}
-        </div></td>
+        <td><div class="flex items-center gap-2">${logBar(l)}<span class="text-xs text-slate-600">${l.passed}/${l.total}</span></div></td>
+        <td>${bad.length ? `<div class="sc-fails">${bad.slice(0, 3).map((c) => `<span class="sc-chip st-${c.state}" title="${esc(c.module)}">${esc(c.heading)}</span>`).join('')}${bad.length > 3 ? `<span class="text-xs text-slate-500">+${bad.length - 3}</span>` : ''}</div>` : '<span class="sc-chip st-pass">All passed</span>'}</td>
         <td class="text-sm">${esc(l.testers.join(', ') || l.submittedBy)}</td>
-        <td class="whitespace-nowrap text-xs text-slate-500">${esc(l.submittedBy)} · ${new Date(l.submittedAt).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}${l.sharedAt ? ` · <span class="text-indigo-600">on Teams</span>` : ''}</td>
+        <td>${shareSummary(l)}</td>
         <td class="whitespace-nowrap text-right">
+          ${bad.length && run ? `<button class="btn-secondary px-2 py-1 text-xs" data-sc-retest-log="${l.id}" title="Mark these cases to retest in today's checklist">${icon('flip', 12)} Retest</button>` : ''}
           <a class="btn-secondary px-2 py-1 text-xs" href="/api/sanity/logs/${l.id}/export" title="Download this report">${icon('download', 12)}</a>
-          <button class="btn-secondary px-2 py-1 text-xs" data-sanity-log="${l.id}">View</button>
+          <button class="btn-secondary px-2 py-1 text-xs" data-sanity-log="${l.id}">Open</button>
         </td>
-      </tr>`).join('') || '<tr><td colspan="6" class="py-10 text-center text-sm text-slate-400">No sanity matches this filter.</td></tr>';
+      </tr>`;
+    }).join('') || '<tr><td colspan="7" class="py-10 text-center text-sm text-slate-400">No sanity matches this filter.</td></tr>';
+  }
+
+  // each case's results over the last reports (oldest → newest), the ones that failed at least once
+  function failureHistory(d) {
+    const logs = d.logs.slice(0, 10).reverse();
+    const byCase = new Map();
+    logs.forEach((l, i) => l.cases.forEach((c) => {
+      if (!byCase.has(c.heading)) byCase.set(c.heading, { heading: c.heading, module: c.module, states: new Array(logs.length).fill(null) });
+      byCase.get(c.heading).states[i] = c.state;
+    }));
+    const rows = [...byCase.values()].filter((r) => r.states.some(isBad)).map((r) => {
+      const last = [...r.states].reverse().find(Boolean);
+      return { ...r, last, fails: r.states.filter(isBad).length, today: d.items.find((it) => it.heading === r.heading) };
+    }).sort((a, b) => (isBad(b.last) - isBad(a.last)) || (b.fails - a.fails));
+    const run = sanityRuns(d);
+    return `<p class="sc-tab-note">Cases that failed or were blocked in the last ${logs.length} report${logs.length === 1 ? '' : 's'}, oldest to newest. Repeat failures first.</p>
+      <div class="sanity-logs-page"><table class="sanity-log-table">
+        <thead><tr><th>Case</th><th>History</th><th>Failed</th><th>Last report</th><th>Today</th><th></th></tr></thead>
+        <tbody>${rows.map((r) => `<tr>
+          <td><b class="text-slate-900">${esc(r.heading)}</b><div class="text-xs text-slate-500">${esc(r.module || 'Other checks')}</div></td>
+          <td><div class="sc-history">${r.states.map((st, i) => `<i class="st-${st || 'none'}" title="${esc(logs[i].version)} · ${fmtDate(logs[i].date)}: ${st ? stateLabel(st) : 'not in this report'}"></i>`).join('')}</div></td>
+          <td class="text-sm">${r.fails} of ${r.states.filter(Boolean).length}</td>
+          <td>${stateChip(r.last)}</td>
+          <td>${r.today ? stateChip(r.today.state) : '<span class="text-xs text-slate-400">not on the list</span>'}</td>
+          <td class="text-right">${r.today ? `<button class="btn-secondary px-2 py-1 text-xs" data-sc-open-case="${r.today.id}">${run ? `${icon('flip', 12)} Retest` : 'Open'}</button>` : ''}</td>
+        </tr>`).join('') || '<tr><td colspan="6" class="py-10 text-center text-sm text-slate-400">No failures in these reports.</td></tr>'}</tbody>
+      </table></div>`;
+  }
+
+  function compareLogs(d) {
+    if (d.logs.length < 2) return '<p class="sc-empty">Submit at least two sanity reports to compare versions.</p>';
+    const [aId, bId] = d.compare && d.logs.some((l) => l.id === d.compare[0]) && d.logs.some((l) => l.id === d.compare[1]) ? d.compare : [d.logs[1].id, d.logs[0].id];
+    const a = d.logs.find((l) => l.id === aId);
+    const b = d.logs.find((l) => l.id === bId);
+    const option = (l, sel) => `<option value="${l.id}" ${l.id === sel ? 'selected' : ''}>${esc(l.version)} · ${logWhen(l)}</option>`;
+    const names = [...new Set([...a.cases, ...b.cases].map((c) => c.heading))];
+    const st = (l, h) => (l.cases.find((c) => c.heading === h) || {}).state || null;
+    const kind = (x, y) => {
+      if (isBad(x) && y === 'pass') return 'fixed';
+      if (isBad(y) && !isBad(x)) return 'broke';
+      if (isBad(x) && isBad(y)) return 'still';
+      return x === y ? 'same' : 'changed';
+    };
+    const rows = names.map((h) => ({ h, x: st(a, h), y: st(b, h), module: ([...a.cases, ...b.cases].find((c) => c.heading === h) || {}).module }))
+      .map((r) => ({ ...r, k: kind(r.x, r.y) }));
+    const LABEL = { fixed: 'Fixed', broke: 'New failure', still: 'Still failing', changed: 'Changed', same: 'Same' };
+    const order = ['broke', 'still', 'fixed', 'changed', 'same'];
+    const shown = rows.filter((r) => d.allChanges || r.k !== 'same').sort((p, q) => order.indexOf(p.k) - order.indexOf(q.k));
+    const n = (k) => rows.filter((r) => r.k === k).length;
+    return `<div class="sc-compare-pick">
+        <label><span class="field-label">From</span><select class="input" data-sc-compare="0">${d.logs.map((l) => option(l, aId)).join('')}</select></label>
+        ${icon('right', 16)}
+        <label><span class="field-label">To</span><select class="input" data-sc-compare="1">${d.logs.map((l) => option(l, bId)).join('')}</select></label>
+        <div class="sc-compare-sum">
+          <span class="sc-chip k-broke">${n('broke')} new failure${n('broke') === 1 ? '' : 's'}</span>
+          <span class="sc-chip k-still">${n('still')} still failing</span>
+          <span class="sc-chip k-fixed">${n('fixed')} fixed</span>
+          <span class="sc-chip">${n('changed')} changed · ${n('same')} same</span>
+        </div>
+      </div>
+      <div class="sanity-logs-page"><table class="sanity-log-table">
+        <thead><tr><th>Case</th><th>${esc(a.version)}</th><th>${esc(b.version)}</th><th>Change</th></tr></thead>
+        <tbody>${shown.map((r) => `<tr class="k-${r.k}">
+          <td><b class="text-slate-900">${esc(r.h)}</b><div class="text-xs text-slate-500">${esc(r.module || 'Other checks')}</div></td>
+          <td>${r.x ? stateChip(r.x) : '<span class="text-xs text-slate-400">—</span>'}</td>
+          <td>${r.y ? stateChip(r.y) : '<span class="text-xs text-slate-400">—</span>'}</td>
+          <td><span class="sc-chip k-${r.k}">${LABEL[r.k]}</span></td>
+        </tr>`).join('') || '<tr><td colspan="4" class="py-8 text-center text-sm text-slate-400">No differences.</td></tr>'}</tbody>
+      </table></div>
+      <label class="sc-tab-note flex items-center gap-2"><input type="checkbox" class="h-4 w-4 accent-indigo-600" data-sc-all-changes ${d.allChanges ? 'checked' : ''}> Show unchanged cases too</label>`;
   }
 
   function renderSanityLogs() {
     const d = sanity;
-    const p = products.find((x) => x.id === d.productId);
     const latest = d.logs[0];
     const passRate = d.logs.length ? Math.round((d.logs.reduce((n, l) => n + l.passed, 0) / Math.max(1, d.logs.reduce((n, l) => n + l.total, 0))) * 100) : 0;
-    $('#sanityPage').html(`<div class="sanity-page">
-      <div class="flex flex-wrap items-center gap-3 border-b border-slate-200 px-5 py-3">
-        <button class="btn-secondary text-sm" data-close-sanity title="Back to the board">${icon('left', 14)} Board</button>
-        <div class="min-w-0 flex-1">
-          <h3 class="text-lg font-semibold text-slate-900">Sanity logs <span class="font-normal text-slate-400">· ${esc(p ? p.name : '')}</span></h3>
-          <p class="text-xs text-slate-500">Every submitted sanity, kept for good. The checklist itself resets every day.</p>
-        </div>
-        ${sanityViews(d)}
-      </div>
-
+    const tab = d.logsTab;
+    const tabBtn = (k, label) => `<button data-sc-logs-tab="${k}" class="${tab === k ? 'on' : ''}">${label}</button>`;
+    $('#sanityPage').html(`<div class="sanity-page sc-page">
+      ${sanityHeader(d, 'Sanity logs', 'Every submitted sanity, kept for good. Find failures, compare versions and retest fixes.')}
       ${d.logs.length ? `
       <div class="sanity-log-stats">
-        <div><span>Last tested version</span><b class="font-mono">${esc(latest.version)}</b><small>${fmtDate(latest.date)}</small></div>
-        <div><span>Submitted</span><b>${d.logs.length}</b><small>report${d.logs.length === 1 ? '' : 's'}</small></div>
-        <div><span>Last result</span><b>${latest.passed} / ${latest.total}</b><small>${latest.failed ? `${latest.failed} failed` : 'all passed'}</small></div>
-        <div><span>Pass rate</span><b>${passRate}%</b><small>of every heading checked</small></div>
+        <div><span>Last tested version</span><b class="font-mono">${esc(latest.version)}</b><small>${logWhen(latest)}</small></div>
+        <div><span>Last result</span><b>${latest.passed} / ${latest.total}</b><small>${badCases(latest).length ? `${latest.failed} failed${latest.blocked ? `, ${latest.blocked} blocked` : ''}` : 'all passed'}</small></div>
+        <div><span>Open failures</span><b>${badCases(latest).length}</b><small>${badCases(latest).length ? 'from the last report' : 'none'}</small></div>
+        <div><span>Pass rate</span><b>${passRate}%</b><small>over ${d.logs.length} report${d.logs.length === 1 ? '' : 's'}</small></div>
       </div>` : ''}
-
+      <div class="sc-logs-tabs">
+        <div class="seg">${tabBtn('reports', `${icon('note', 12)} Reports`)}${tabBtn('failures', `${icon('close', 12)} Failures`)}${tabBtn('compare', `${icon('compare', 12)} Compare versions`)}</div>
+      </div>
+      ${!d.logs.length ? '<p class="sc-empty">No sanity submitted yet. Run the checklist and submit it to start the log.</p>'
+        : tab === 'failures' ? failureHistory(d)
+          : tab === 'compare' ? compareLogs(d)
+            : `
       <div class="flex flex-wrap items-center gap-2 px-5 pt-4">
-        <input class="input min-w-0 flex-1 py-1 text-sm" data-log-search value="${esc(d.logFilter.q)}" placeholder="Search version or person" autocomplete="off">
+        <label class="sc-search flex-1">${icon('search', 14)}<input class="input" data-log-search value="${esc(d.logFilter.q)}" placeholder="Search version, person or a failed case" autocomplete="off"></label>
         <input type="date" class="input py-1 text-sm" data-log-date value="${d.logFilter.date}" max="${d.today}" title="Only this day">
-        ${d.logFilter.date || d.logFilter.q ? '<button class="btn-secondary text-sm" data-log-clear>Clear</button>' : ''}
+        <button class="sc-filter st-fail ${d.logFilter.bad ? 'on' : ''}" data-log-bad>With failures</button>
+        ${d.logFilter.date || d.logFilter.q || d.logFilter.bad ? '<button class="sc-link" data-log-clear>Clear</button>' : ''}
       </div>
       <div class="sanity-logs-page">
         <table class="sanity-log-table">
-          <thead><tr><th>Date</th><th>Version</th><th>Result</th><th>Done by</th><th>Submitted</th><th></th></tr></thead>
-          <tbody id="sanityLogRows">${d.logs.length ? sanityLogRows(shownLogs(d)) : '<tr><td colspan="6" class="py-10 text-center text-sm text-slate-400">No sanity submitted yet.</td></tr>'}</tbody>
+          <thead><tr><th>Date</th><th>Version</th><th>Result</th><th>Failed / blocked</th><th>Done by</th><th>Teams</th><th></th></tr></thead>
+          <tbody id="sanityLogRows">${sanityLogRows(shownLogs(d))}</tbody>
         </table>
-      </div>
+      </div>`}
     </div>`);
   }
 
   const sanityItemOf = (el) => sanity.items.find((it) => it.id === $(el).closest('[data-item]').data('item'));
-  const saveResult = (it, body) => api('PUT', `/api/sanity/items/${it.id}/result`, body)
-    .done((r) => { teamsResult(r.teams, 'Failure posted on Teams'); reloadSanity(); });
 
   // the Sanity button opens the page, and goes back to the board when it is already open
   $doc.on('click', '[data-action="sanity"]', () => (sanity ? closeSanity() : openSanity(productId, null, 'sheet')));
@@ -4463,8 +5127,40 @@ $(function () {
     $('#sanityLogRows').html(sanityLogRows(shownLogs(sanity)));
   };
   $doc.on('input', '[data-log-search]', function () { filterLogs({ q: this.value }); });
-  $doc.on('change', '[data-log-date]', function () { filterLogs({ date: this.value }); renderSanityLogs(); });
-  $doc.on('click', '[data-log-clear]', () => { filterLogs({ q: '', date: '' }); renderSanityLogs(); });
+  $doc.on('change', '[data-log-date]', function () { filterLogs({ date: this.value }); renderSanity(); });
+  $doc.on('click', '[data-log-bad]', () => { sanity.logFilter.bad = !sanity.logFilter.bad; renderSanity(); });
+  $doc.on('click', '[data-log-clear]', () => { Object.assign(sanity.logFilter, { q: '', date: '', bad: false }); renderSanity(); });
+  $doc.on('click', '[data-sc-logs-tab]', function () { sanity.logsTab = $(this).data('sc-logs-tab'); renderSanity(); });
+  $doc.on('change', '[data-sc-compare]', function () {
+    const d = sanity;
+    const pair = d.compare || [d.logs[1].id, d.logs[0].id];
+    pair[Number($(this).data('sc-compare'))] = this.value;
+    d.compare = pair;
+    renderSanity();
+  });
+  $doc.on('change', '[data-sc-all-changes]', function () { sanity.allChanges = this.checked; renderSanity(); });
+  // retest the failures of a report: today's checklist with those cases flagged and shown
+  function retestFromLog(id) {
+    if (sanityLog) closeSanityLog();
+    Object.assign(sanity, { retestLog: id, view: 'sheet', focus: null, review: false });
+    Object.assign(sanity.ui, { status: 'retest', q: '', module: '' });
+    openSanity(sanity.productId, null, 'sheet');
+  }
+  $doc.on('click', '[data-sc-retest-log]', function () { retestFromLog($(this).data('sc-retest-log')); });
+  $doc.on('click', '[data-sc-retest-clear]', () => { sanity.retestLog = null; renderSanity(); });
+  // a case from the logs: today's checklist, that case open
+  $doc.on('click', '[data-sc-open-case]', function () {
+    const id = $(this).data('sc-open-case');
+    Object.assign(sanity, { view: 'sheet', focus: null, review: false });
+    Object.assign(sanity.ui, { status: 'all', q: '', module: '', cursor: id });
+    sanity.ui.open.add(id);
+    sanity.ui.shut.delete(caseGroup(sanity.items.find((it) => it.id === id)).key);
+    openSanity(sanity.productId, null, 'sheet').done(() => {
+      const $row = $(`#sanityPage .sc-row[data-item="${id}"]`);
+      if ($row.length) $row[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  });
+
   $doc.on('change', '[data-sanity-date]', function () { if (this.value) openSanity(sanity.productId, this.value); });
   $doc.on('click', '[data-sanity-today]', () => openSanity(sanity.productId));
   $doc.on('submit', '#sanityRun', function (e) {
@@ -4473,80 +5169,233 @@ $(function () {
     // load(): the header shows the new present version
     api('PUT', '/api/sanity/run', { productId: sanity.productId, version: v.version, time: v.time }).done(() => { toast('Saved'); reloadSanity(); load(); });
   });
-  $doc.on('click', '[data-sanity-state]', function () {
+
+  // filters, search, groups
+  $doc.on('click', '[data-sc-status]', function () { sanity.ui.status = $(this).data('sc-status'); sanity.ui.selected.clear(); renderSanity(); });
+  $doc.on('input', '[data-sc-search]', function () { sanity.ui.q = this.value; renderSanity(); });
+  $doc.on('change', '[data-sc-module]', function () { sanity.ui.module = this.value; renderSanity(); });
+  $doc.on('click', '[data-sc-clear-filters]', () => { Object.assign(sanity.ui, { q: '', module: '', status: 'all' }); renderSanity(); });
+  $doc.on('click', '[data-sc-group]', function () {
+    const k = $(this).data('sc-group');
+    if (sanity.ui.shut.has(k)) sanity.ui.shut.delete(k); else sanity.ui.shut.add(k);
+    renderSanity();
+  });
+  $doc.on('click', '[data-sc-expand]', function () {
+    const all = $(this).data('sc-expand') === 'all';
+    sanityVisible(sanity).forEach((it) => (all ? sanity.ui.open.add(it.id) : sanity.ui.open.delete(it.id)));
+    renderSanity();
+  });
+  $doc.on('click', '[data-sc-toggle]', function () {
     const it = sanityItemOf(this);
-    const state = $(this).data('sanity-state');
-    const review = $(this).closest('.sanity-row').find('[data-sanity-review]').val().trim();
-    saveResult(it, { state: it.state === state ? 'pending' : state, review });
+    if (sanity.ui.open.has(it.id)) sanity.ui.open.delete(it.id); else sanity.ui.open.add(it.id);
+    sanity.ui.cursor = it.id;
+    renderSanity();
   });
-  $doc.on('change', '[data-sanity-review]', function () { saveResult(sanityItemOf(this), { review: this.value.trim() }); });
-  $doc.on('input', '[data-sanity-review]', function () { autoGrow(this); });
-  $doc.on('change', '[data-sanity-cell]', function () {
-    saveResult(sanityItemOf(this), { cells: { [$(this).data('sanity-cell')]: this.value.trim() } });
+  $doc.on('click', '[data-sc-help]', () => { sanity.help = !sanity.help; renderSanity(); });
+
+  // marking, one or many
+  $doc.on('click', '[data-sc-state]', function () {
+    const it = sanityItemOf(this);
+    sanity.ui.cursor = it.id;
+    const was = it.state;
+    setSanityState([it.id], $(this).data('sc-state'));
+    if (sanity.focus && autoNext() && it.state !== 'fail' && it.state !== 'pending' && was !== it.state) setTimeout(focusNextPending, 250);
   });
+  $doc.on('change', '[data-sc-select]', function () {
+    const it = sanityItemOf(this);
+    if (this.checked) sanity.ui.selected.add(it.id); else sanity.ui.selected.delete(it.id);
+    renderSanity();
+  });
+  $doc.on('change', '[data-sc-select-all]', function () {
+    const ids = sanityVisible(sanity).map((it) => it.id);
+    sanity.ui.selected = this.checked ? new Set(ids) : new Set();
+    renderSanity();
+  });
+  $doc.on('click', '[data-sc-select-none]', () => { sanity.ui.selected.clear(); renderSanity(); });
+  $doc.on('click', '[data-sc-bulk]', function () {
+    const ids = [...sanity.ui.selected];
+    const state = $(this).data('sc-bulk');
+    const go = () => { setSanityState(ids, state); sanity.ui.selected.clear(); renderSanity(); };
+    if (state === 'fail' && ids.length > 1) {
+      dialog.confirm({ title: `Mark ${ids.length} cases failed?`, message: sanity.teams ? 'One message lists them on Teams, @mentioning their developers.' : 'Write what happened on each of them afterwards.', confirmText: 'Mark failed', danger: true, onConfirm: go });
+    } else go();
+  });
+
+  // details: saved as they are typed
+  $doc.on('input', '[data-sc-field]', function () { saveCaseField(sanityItemOf(this), $(this).data('sc-field'), this.value); autoGrow(this); });
+  $doc.on('input', '[data-sc-cell]', function () { saveCaseCell(sanityItemOf(this), $(this).data('sc-cell'), this.value); });
+  $doc.on('input', '[data-sc-expected]', function () { saveExpected(sanityItemOf(this), this.value); autoGrow(this); });
+  $doc.on('change', '[data-sc-owner]', function () {
+    const it = sanityItemOf(this);
+    const ownerId = this.value || null;
+    api('PATCH', `/api/sanity/items/${it.id}`, { ownerId: ownerId || '' }, null, QUIET)
+      .done(() => { it.ownerId = ownerId; scSavedAt = new Date(); renderSanity(); })
+      .fail((xhr) => dialog.alert(errorText(xhr), 'Not saved'));
+  });
+  $doc.on('change', '[data-sc-evidence]', function () { const it = sanityItemOf(this); const files = [...this.files]; this.value = ''; uploadEvidence(it, files); });
+  $doc.on('click', '[data-sc-evidence-remove]', function () {
+    const it = sanityItemOf(this);
+    const id = $(this).data('sc-evidence-remove');
+    dialog.confirm({
+      title: 'Remove this file?', message: 'It is taken off the case and deleted.', confirmText: 'Remove', danger: true,
+      onConfirm: () => api('DELETE', `/api/sanity/items/${it.id}/evidence/${id}`, null, null, QUIET).done((r) => { it.evidence = r.evidence; renderSanity(); }),
+    });
+  });
+  // a screenshot pasted while a case is open (focus mode, the case being typed in, or the one the cursor is on)
+  document.addEventListener('paste', (e) => {
+    const d = sanity;
+    if (!d || d.view !== 'sheet' || d.review || !sanityRuns(d) || !d.evidence) return;
+    const files = [...((e.clipboardData && e.clipboardData.files) || [])].filter((f) => /^(image|video)\//.test(f.type));
+    if (!files.length) return;
+    const inCase = $(e.target).closest('[data-item]').data('item');
+    const id = d.focus || inCase || (d.ui.open.has(d.ui.cursor) ? d.ui.cursor : null);
+    const it = id && d.items.find((x) => x.id === id);
+    if (!it) { toast('Open a case first, then paste'); return; }
+    e.preventDefault();
+    uploadEvidence(it, files.map((f) => (f.name && f.name !== 'image.png' ? f : new File([f], `Screenshot ${timeText(new Date())}.png`, { type: f.type }))));
+  });
+
+  // focus mode
+  $doc.on('click', '[data-sc-focus]', () => openFocus());
+  $doc.on('click', '[data-sc-focus-exit]', () => { sanity.ui.cursor = sanity.focus; sanity.focus = null; renderSanity(); });
+  $doc.on('click', '[data-sc-focus-go]', function () { focusMove(Number($(this).data('sc-focus-go'))); });
+  $doc.on('change', '[data-sc-auto]', function () { storage('set', 'sanityAutoNext', this.checked ? 'on' : 'off'); });
+
+  // review & submit
+  $doc.on('click', '[data-sc-review]', () => { flushSanitySaves(); Object.assign(sanity, { review: true, focus: null, help: false }); renderSanity(); });
+  $doc.on('click', '[data-sc-review-close]', () => { sanity.review = false; renderSanity(); });
+  $doc.on('click', '[data-sc-review-locate]', function () {
+    const id = $(this).data('sc-review-locate');
+    Object.assign(sanity, { review: false });
+    Object.assign(sanity.ui, { status: 'all', q: '', module: '', cursor: id });
+    sanity.ui.open.add(id);
+    renderSanity();
+    const $row = $(`#sanityPage .sc-row[data-item="${id}"]`);
+    if ($row.length) $row[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+  $doc.on('click', '[data-sc-focus-pending]', () => {
+    Object.assign(sanity.ui, { status: 'pending', q: '', module: '' });
+    sanity.review = false;
+    openFocus();
+  });
+  $doc.on('input', '[data-sc-version]', function () {
+    const d = sanity;
+    d.run = { ...(d.run || {}), version: this.value.trim() };
+    $(this).toggleClass('invalid', !this.value.trim());
+    $('#sanityRun [name=version]').val(this.value);
+    sanityAutosave('run:version', () => api('PUT', '/api/sanity/run', { productId: d.productId, version: d.run.version, time: d.run.time || '' }, null, QUIET));
+    // the button and summary follow (the field keeps focus through the redraw)
+    renderSanity();
+  });
+  // Submit: checked here, then by the server, which saves the log, adds the submitter's "done today" and sends the report
+  $doc.on('click', '[data-sc-submit]', function () {
+    const d = sanity;
+    const version = (d.run && d.run.version || '').trim();
+    const unchecked = d.items.filter((it) => it.state === 'pending');
+    if (!version || unchecked.length) { d.missing = new Set(unchecked.map((it) => it.id)); renderSanity(); return; }
+    flushSanitySaves().always(() => api('POST', '/api/sanity/submit', { productId: d.productId, version }, this, QUIET)
+      .done((r) => {
+        d.missing = new Set();
+        d.review = false;
+        d.retestLog = null;
+        toast('Sanity submitted: log saved');
+        teamsResult(r.teams, 'Sanity submitted: report sent on Teams');
+        reloadSanity();
+        load();
+      })
+      .fail((xhr) => {
+        const missing = xhr.responseJSON && xhr.responseJSON.missing;
+        if (missing) d.missing = new Set(missing);
+        renderSanity();
+        dialog.alert(errorText(xhr), 'Sanity is not complete');
+      }));
+  });
+
+  // keyboard: moving, marking, opening, selecting; focus mode has its own few keys
+  $doc.on('keydown', (e) => {
+    const d = sanity;
+    if (!d || d.view !== 'sheet' || dialog.isOpen() || teamsSend || sanityLog || e.metaKey || e.ctrlKey || e.altKey) return;
+    if ($(e.target).is('input, textarea, select, [contenteditable]')) {
+      if (e.key === 'Escape') e.target.blur(); // the first Esc only leaves the field
+      return;
+    }
+    if (d.review) return;
+    const run = sanityRuns(d);
+    const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    const mark = { p: 'pass', f: 'fail', b: 'blocked', n: 'skipped' }[key];
+    if (e.key === '?') { e.preventDefault(); d.help = !d.help; renderSanity(); return; }
+    if (d.help) return;
+    if (d.focus) {
+      if (mark && run && !e.shiftKey) { e.preventDefault(); $(`#sanityPage .sc-focus [data-sc-state="${mark}"]`).trigger('click'); }
+      else if (key === 'ArrowRight' || key === 'j') { e.preventDefault(); focusMove(1); }
+      else if (key === 'ArrowLeft' || key === 'k') { e.preventDefault(); focusMove(-1); }
+      return;
+    }
+    const ids = $('#sanityPage .sc-row').map((i, el) => $(el).data('item')).get();
+    const at = ids.indexOf(d.ui.cursor);
+    const moveTo = (i) => {
+      const id = ids[Math.min(ids.length - 1, Math.max(0, i))];
+      if (!id) return;
+      d.ui.cursor = id;
+      $('#sanityPage .sc-row.cursor').removeClass('cursor');
+      const $row = $(`#sanityPage .sc-row[data-item="${id}"]`).addClass('cursor');
+      $row[0].scrollIntoView({ block: 'nearest' });
+    };
+    if (key === 'j' || key === 'ArrowDown') { e.preventDefault(); moveTo(at + 1); }
+    else if (key === 'k' || key === 'ArrowUp') { e.preventDefault(); moveTo(at < 0 ? 0 : at - 1); }
+    else if (key === '/') { e.preventDefault(); $('#sanityPage [data-sc-search]').trigger('focus'); }
+    else if (key === 'f' && e.shiftKey) { if (run) { e.preventDefault(); openFocus(); } }
+    else if (key === 'r' && run) { e.preventDefault(); $('#sanityPage [data-sc-review]').first().trigger('click'); }
+    else if (at < 0) { /* the rest needs a case under the cursor */ }
+    else if (key === 'Enter' || key === 'o') {
+      e.preventDefault();
+      if (d.ui.open.has(d.ui.cursor)) d.ui.open.delete(d.ui.cursor); else d.ui.open.add(d.ui.cursor);
+      renderSanity();
+    } else if (key === 'x' && run) {
+      e.preventDefault();
+      if (d.ui.selected.has(d.ui.cursor)) d.ui.selected.delete(d.ui.cursor); else d.ui.selected.add(d.ui.cursor);
+      renderSanity();
+    } else if (mark && run) {
+      e.preventDefault();
+      const id = d.ui.cursor;
+      setSanityState([id], mark);
+      // on to the next case, except after a failure (its details come first)
+      if (mark !== 'fail') { const next = ids[at + 1]; if (next) { d.ui.cursor = next; renderSanity(); } }
+    }
+  });
+  // Esc: help, then focus mode, then review (called from the page-wide Esc handler)
+  function sanityEscape() {
+    if (sanity.help) sanity.help = false;
+    else if (sanity.focus) { sanity.ui.cursor = sanity.focus; sanity.focus = null; }
+    else sanity.review = false;
+    renderSanity();
+  }
+
+  // the list itself: extra fields, sharing a failure again, recipients, adding / removing cases, Teams channel
   $doc.on('click', '[data-col-add]', () => ask({
-    title: 'New column', fields: [{ name: 'name', label: 'Column name', placeholder: 'e.g. Device, Build no., Tested on', required: true, max: 60 }],
-    confirmText: 'Add column',
+    title: 'New field on every case', fields: [{ name: 'name', label: 'Field name', placeholder: 'e.g. Device, Build no., Tested on', required: true, max: 60 }],
+    confirmText: 'Add field',
     save: (v) => api('POST', '/api/sanity/columns', { productId: sanity.productId, name: v.name }, null, QUIET).done(reloadSanity),
   }));
   $doc.on('click', '[data-col-rename]', function () {
     const c = sanity.columns.find((x) => x.id === $(this).data('col-rename'));
     ask({
-      title: 'Rename column', fields: [{ name: 'name', label: 'Column name', value: c.name, required: true, max: 60 }],
+      title: 'Rename field', fields: [{ name: 'name', label: 'Field name', value: c.name, required: true, max: 60 }],
       save: (v) => api('PATCH', `/api/sanity/columns/${c.id}`, v, null, QUIET).done(reloadSanity),
     });
   });
   $doc.on('click', '[data-col-delete]', function () {
     const c = sanity.columns.find((x) => x.id === $(this).data('col-delete'));
     dialog.confirm({
-      title: `Delete column “${c.name}”?`, message: 'It disappears from the sheet and the Excel download.', confirmText: 'Delete', danger: true,
+      title: `Delete field “${c.name}”?`, message: 'It disappears from every case and the Excel download.', confirmText: 'Delete', danger: true,
       onConfirm: () => api('DELETE', `/api/sanity/columns/${c.id}`, null, null, QUIET).done(reloadSanity),
     });
   });
   $doc.on('click', '[data-sanity-share]', function () {
-    api('POST', '/api/sanity/share', { productId: sanity.productId, itemId: $(this).data('sanity-share') })
-      .done((r) => { teamsResult(r.teams, 'Shared on Teams'); reloadSanity(); });
+    const it = sanity.items.find((x) => x.id === $(this).data('sanity-share'));
+    flushSanitySaves().always(() => api('POST', '/api/sanity/share', { productId: sanity.productId, itemId: it.id }, this)
+      .done((r) => { it.notifyStatus = r.teams; if (r.teams === 'sent') it.sharedAt = new Date().toISOString(); teamsResult(r.teams, 'Shared on Teams'); renderSanity(); }));
   });
-  // Submit: checked here first (rows to fix are outlined), then by the server, which saves the log,
-  // adds the submitter's "done today" and sends the report
-  $doc.on('click', '[data-sanity-submit]', () => {
-    const d = sanity;
-    const version = $('#sanityRun [name=version]').val().trim();
-    const unchecked = d.items.filter((it) => it.state === 'pending');
-    const problems = [
-      !version && 'Enter the version you tested.',
-      unchecked.length && `Mark Done or Failed on ${unchecked.length} heading${unchecked.length === 1 ? '' : 's'}.`,
-    ].filter(Boolean);
-    if (problems.length) {
-      d.missing = new Set(unchecked.map((it) => it.id));
-      renderSanity();
-      const $first = $('#sanityList .missing').first();
-      if ($first.length) $first[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
-      if (!version) $('#sanityRun [name=version]').addClass('invalid').trigger('focus');
-      dialog.alert(problems.join(' '), 'Sanity is not complete');
-      return;
-    }
-    const passed = d.items.filter((it) => it.state === 'pass').length;
-    const to = d.recipients.map((id) => (d.people.find((x) => x.id === id) || {}).name).filter(Boolean);
-    dialog.confirm({
-      title: `Submit sanity for version ${version}?`,
-      message: `${fmtDate(d.date)} · ${passed} passed, ${d.items.length - passed} failed of ${d.items.length}. The log is saved, it is added to your Done today${d.teams ? `, and the report goes to Teams${to.length ? ` for ${to.join(', ')}` : ''}` : ''}.`,
-      confirmText: 'Submit',
-      onConfirm: () => api('POST', '/api/sanity/submit', { productId: d.productId, version }, null, QUIET)
-        .done((r) => {
-          d.missing = new Set();
-          toast('Sanity submitted: log saved');
-          teamsResult(r.teams, 'Sanity submitted: report sent on Teams');
-          reloadSanity();
-          load();
-        })
-        .fail((xhr) => {
-          const missing = xhr.responseJSON && xhr.responseJSON.missing;
-          if (missing) { d.missing = new Set(missing); renderSanity(); }
-        }),
-    });
-  });
-  $doc.on('input', '#sanityRun [name=version]', function () { $(this).removeClass('invalid'); });
   $doc.on('change', '[data-sanity-recipient]', () => {
     const userIds = $('[data-sanity-recipient]:checked').map((i, el) => el.value).get();
     api('PUT', '/api/sanity/recipients', { productId: sanity.productId, userIds }).done(() => { sanity.recipients = userIds; toast('Saved'); });
@@ -4555,7 +5404,7 @@ $(function () {
   $doc.on('click', '[data-sanity-delete]', function () {
     const it = sanity.items.find((x) => x.id === $(this).data('sanity-delete'));
     dialog.confirm({
-      title: 'Remove this heading?', message: 'It leaves the sanity list (earlier days keep their result). The flow itself stays.', confirmText: 'Remove', danger: true,
+      title: `Remove “${it.heading}”?`, message: 'It leaves the sanity list (earlier days keep their result). The flow itself stays.', confirmText: 'Remove', danger: true,
       onConfirm: () => api('DELETE', `/api/sanity/items/${it.id}`, null, null, QUIET).done(reloadSanity),
     });
   });
@@ -5496,13 +6345,17 @@ $(function () {
     });
   });
 
-  // ---------------------------------------------------------------- a submitted sanity (log): the sheet as it was, Excel, share with anyone
+  // ---------------------------------------------------------------- a submitted sanity (log): the report as it was, with every case's details;
+  // retest its failures, compare it with the report before, and send it on Teams (whole, failed cases only, or to the
+  // cases' developers), with each share kept and shown
 
   let sanityLog = null;
+  let sanityLogFilter = 'all'; // 'all' | 'bad'
 
   function openSanityLog(id) {
     api('GET', `/api/sanity/logs/${id}`).done((log) => {
       sanityLog = log;
+      sanityLogFilter = log.rows.some((r) => isBad(r.state)) ? 'bad' : 'all';
       renderSanityLog();
       $('#sanityLogModal').removeClass('hidden');
       $('body').addClass('overflow-hidden');
@@ -5514,57 +6367,140 @@ $(function () {
     unlockScroll();
   }
 
+  const LOG_TEAMS_COLUMNS = [['heading', 'Case'], ['module', 'Module'], ['state', 'Result'], ['review', 'Remarks'], ['expected', 'Expected'],
+    ['actual', 'Actual'], ['repro', 'Steps to reproduce'], ['evidence', 'Evidence'], ['owner', 'Developer'], ['by', 'Checked by']];
+  const LOG_TEAMS_ON = { failed: ['heading', 'module', 'state', 'review', 'actual', 'repro', 'evidence', 'owner'], all: ['heading', 'module', 'state', 'review'] };
+
+  // scope 'failed' (only failed / blocked cases) or 'all'; devs: tick the developers of those cases and message them directly
+  function sendLogOnTeams(scope, devs) {
+    const l = sanityLog;
+    const bad = l.rows.filter((r) => isBad(r.state));
+    api('GET', `/api/products/${encodeURIComponent(l.productId)}/people`).done((p) => {
+      const owners = new Set(bad.map((r) => r.ownerId).filter(Boolean));
+      if (devs && !owners.size) { dialog.alert('None of the failed cases has a developer yet. Pick one under “Developer” on the case in the checklist.', 'No developers'); return; }
+      const product = products.find((x) => x.id === l.productId);
+      openTeamsSend({
+        title: devs ? `Tell developers about ${bad.length} failed case${bad.length === 1 ? '' : 's'}` : scope === 'failed' ? `Send ${bad.length} failed case${bad.length === 1 ? '' : 's'}` : 'Send the sanity report',
+        count: scope === 'failed' ? bad.length : l.rows.length,
+        columns: LOG_TEAMS_COLUMNS.map(([id, label]) => ({ id, label, on: LOG_TEAMS_ON[scope].includes(id) })),
+        people: p.people.filter((u) => u.id !== me.id).map((u) => ({ ...u, on: devs && owners.has(u.id) })),
+        webhook: p.teams,
+        target: devs ? 'direct' : null,
+        preview: teamsPreview({
+          title: scope === 'failed' ? `❌ Failed cases · ${product ? product.name : ''} ${l.version} (${l.date})` : `🧪 Sanity report · ${product ? product.name : ''} ${l.version} (${l.date})`,
+          lines: (scope === 'failed' ? bad : l.rows).map((r) => `${{ pass: '✅', fail: '❌', blocked: '⛔' }[r.state] || '➖'} **${r.heading}**${r.owner ? ` (${r.owner})` : ''}${r.review ? ` — ${r.review}` : ''}`),
+          facts: [['Version', l.version], ['Passed', `${l.passed} / ${l.total}`], ['Failed', String(l.failed)], ['Blocked', l.blocked ? String(l.blocked) : '']],
+          mentions: [], where: 'Preview',
+        }),
+        send: (val) => api('POST', `/api/sanity/logs/${l.id}/teams`, { scope, columns: val.columns, userIds: val.userIds, note: val.note, mode: val.mode }, val.button, QUIET),
+        // the channel post is kept by the server; what went from the person's own Teams is kept here
+        after: ({ target, results }) => {
+          const record = target === 'app' ? $.Deferred().resolve().promise() : api('POST', `/api/sanity/logs/${l.id}/shares`, {
+            scope, target,
+            to: (results || []).filter((x) => x.ok).map((x) => x.name),
+            failed: (results || []).filter((x) => !x.ok).map((x) => `${x.name} (${x.error})`),
+            status: (results || []).some((x) => !x.ok) ? ((results || []).some((x) => x.ok) ? 'partly sent' : 'not sent') : 'sent',
+          }, null, QUIET);
+          record.always(() => {
+            if (sanityLog && sanityLog.id === l.id) openSanityLog(l.id);
+            if (sanity) reloadSanity();
+          });
+        },
+      });
+    });
+  }
+
   function renderSanityLog() {
     const l = sanityLog;
-    const people = sanity ? sanity.people : [];
     const link = `${location.origin}/#sanity=${encodeURIComponent(l.productId)}&log=${l.id}`;
+    const bad = l.rows.filter((r) => isBad(r.state));
+    const rows = sanityLogFilter === 'bad' ? l.rows.filter((r) => isBad(r.state)) : l.rows;
+    const list = sanity && sanity.productId === l.productId ? sanity.logs : [];
+    const at = list.findIndex((x) => x.id === l.id);
+    const previous = at >= 0 ? list[at + 1] : null;
+    const canRetest = sanity && sanity.productId === l.productId && sanityRuns(sanity) && bad.length;
+    const detail = (r) => [
+      r.expected && `<dt>Expected</dt><dd>${esc(r.expected)}</dd>`,
+      r.actual && `<dt>Actual</dt><dd>${esc(r.actual)}</dd>`,
+      r.repro && `<dt>Steps</dt><dd>${esc(r.repro)}</dd>`,
+      (r.evidence || []).length && `<dt>Evidence</dt><dd>${r.evidence.map((e) => `<a class="sc-link" href="${esc(e.url)}" target="_blank" rel="noopener">${icon(e.kind === 'video' ? 'play' : 'clip', 11)} ${esc(e.name || e.kind)}</a>`).join(' ')}</dd>`,
+      ...l.columns.filter((c) => r.cells[c]).map((c) => `<dt>${esc(c)}</dt><dd>${esc(r.cells[c])}</dd>`),
+    ].filter(Boolean).join('');
     $('#sanityLogBody').html(`
-      <div class="flex flex-wrap items-center gap-3 border-b border-slate-200 px-5 py-3">
+      <div class="sc-log-head">
         <div class="min-w-0 flex-1">
-          <h3 class="text-lg font-semibold text-slate-900">Sanity report · ${fmtDate(l.date)} <span class="font-mono text-sm font-normal text-slate-500">v${esc(l.version)}</span></h3>
+          <h3 class="text-lg font-semibold text-slate-900">Sanity report · ${fmtDate(l.date)} <span class="font-mono text-sm font-normal text-slate-500">${esc(l.version)}</span></h3>
           <p class="text-xs text-slate-500">Done by ${esc(l.testers.join(', ') || l.submittedBy)} · submitted by ${esc(l.submittedBy)}, ${new Date(l.submittedAt).toLocaleString([], { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+          <div class="mt-2 flex flex-wrap items-center gap-1.5">
+            ${logBar(l)}
+            <span class="sc-chip st-pass">${l.passed} passed</span>
+            ${l.failed ? `<span class="sc-chip st-fail">${l.failed} failed</span>` : ''}
+            ${l.blocked ? `<span class="sc-chip st-blocked">${l.blocked} blocked</span>` : ''}
+            ${l.skipped ? `<span class="sc-chip st-skipped">${l.skipped} not tested</span>` : ''}
+            <span class="text-xs text-slate-500">of ${l.total}</span>
+          </div>
         </div>
-        <span class="chip pass">${l.passed} / ${l.total} passed</span>
-        ${l.failed ? `<span class="chip fail">${l.failed} failed</span>` : ''}
         <a class="btn-secondary text-sm" href="/api/sanity/logs/${l.id}/export">${icon('download', 14)} Excel</a>
         <button class="icon-btn" data-close-sanity-log title="Close">${icon('close', 18)}</button>
       </div>
-      <div class="sanity-sheet-wrap">
-        <table class="sanity-sheet">
-          <thead><tr><th>#</th><th>Heading</th><th>Status</th><th>Remarks</th>${l.columns.map((c) => `<th>${esc(c)}</th>`).join('')}<th>Checked by</th></tr></thead>
-          <tbody>${l.rows.map((r, i) => `
-            <tr class="sanity-row ${r.state}">
-              <td><span class="sanity-no">${i + 1}</span></td>
-              <td><span class="sanity-heading">${esc(r.heading)}</span>${r.module ? `<div class="sanity-meta"><span>${esc(r.module)}</span></div>` : ''}</td>
-              <td>${r.state === 'pass' ? `<span class="chip pass">${icon('check', 12)} Done</span>` : `<span class="chip fail">${icon('close', 12)} Failed</span>`}</td>
-              <td class="whitespace-pre-wrap text-sm">${esc(r.review)}</td>
-              ${l.columns.map((c) => `<td class="text-sm">${esc(r.cells[c] || '')}</td>`).join('')}
-              <td class="whitespace-nowrap text-sm text-slate-600">${esc(r.checkedBy)}</td>
-            </tr>`).join('')}</tbody>
-        </table>
+      <div class="sc-log-tools">
+        <div class="seg">
+          <button data-log-filter="bad" class="${sanityLogFilter === 'bad' ? 'on' : ''}">Failed &amp; blocked <span class="text-slate-400">${bad.length}</span></button>
+          <button data-log-filter="all" class="${sanityLogFilter === 'all' ? 'on' : ''}">All cases <span class="text-slate-400">${l.rows.length}</span></button>
+        </div>
+        <span class="flex-1"></span>
+        ${canRetest ? `<button class="btn-secondary text-sm" data-sc-retest-log="${l.id}" title="Flag these cases in today's checklist">${icon('flip', 14)} Retest failures</button>` : ''}
+        ${previous ? `<button class="btn-secondary text-sm" data-log-compare="${previous.id}" title="What changed since ${esc(previous.version)}">${icon('compare', 14)} Compare with ${esc(previous.version)}</button>` : ''}
+        <button class="btn-secondary text-sm" data-copy-link="${esc(link)}">${icon('link', 14)} Copy link</button>
+      </div>
+      <div class="sc-log-cases">
+        ${rows.map((r) => `<div class="sc-log-case st-${r.state}">
+          <div class="sc-log-case-head">
+            <span class="sc-no">${l.rows.indexOf(r) + 1}</span>
+            <div class="min-w-0 flex-1"><b class="text-sm text-slate-900">${esc(r.heading)}</b>
+              <div class="sc-meta">${r.module ? `<span>${esc(r.module)}</span>` : ''}${r.owner ? `<span>${icon('user', 11)} ${esc(r.owner)}</span>` : ''}${r.checkedBy ? `<span>by ${esc(r.checkedBy)}</span>` : ''}</div></div>
+            ${stateChip(r.state)}
+          </div>
+          ${r.review ? `<p class="sc-log-remark">${esc(r.review)}</p>` : ''}
+          ${detail(r) ? `<dl class="sc-review-dl">${detail(r)}</dl>` : ''}
+        </div>`).join('') || '<p class="sc-empty">Nothing failed or was blocked in this report.</p>'}
       </div>
       ${can('edit') ? `
-      <form id="sanityLogShare" class="border-t border-slate-200 px-5 py-4">
-        <p class="text-sm font-semibold text-slate-900">Share this report</p>
-        <p class="mb-2 text-xs text-slate-500">Posts it on the app's Teams channel and @mentions the people you pick. Or copy the link and send it anywhere.</p>
-        <div class="flex max-h-36 flex-wrap gap-x-4 gap-y-1 overflow-y-auto">${people.map((x) => `
-          <label class="flex items-center gap-2 text-sm"><input type="checkbox" class="h-4 w-4 accent-indigo-600" name="userIds" value="${x.id}"> ${esc(x.name)}</label>`).join('')}</div>
-        <div class="mt-3 flex flex-wrap gap-2">
-          <button class="btn-primary" ${sanity && sanity.teams ? '' : 'disabled title="This app has no Teams channel yet"'}>${icon('share', 14)} Send on Teams</button>
-          <button type="button" class="btn-secondary" data-copy-link="${esc(link)}">${icon('link', 14)} Copy link</button>
+      <div class="sc-log-teams">
+        <div class="min-w-0 flex-1">
+          <p class="text-sm font-semibold text-slate-900">Share on Teams</p>
+          <p class="text-xs text-slate-500">Post on the app's channel, message people directly or post in a channel of yours. You see the message before it goes.</p>
+          <div class="mt-3 flex flex-wrap gap-2">
+            ${bad.length ? `<button class="btn-primary" data-log-send="failed">${icon('share', 14)} Send failed cases (${bad.length})</button>
+              <button class="btn-secondary" data-log-send="devs" title="Message the developers of the failed cases">${icon('user', 14)} Notify developers</button>` : ''}
+            <button class="${bad.length ? 'btn-secondary' : 'btn-primary'}" data-log-send="all">${icon('share', 14)} Send full report</button>
+          </div>
         </div>
-      </form>` : ''}`);
+        <div class="sc-log-history">
+          <p class="field-label">Sent</p>
+          ${l.shares.length ? `<ul>${l.shares.slice().reverse().map((x) => `<li class="${x.status === 'sent' ? 'ok' : 'bad'}">
+            ${icon(x.status === 'sent' ? 'check' : 'close', 12)}
+            <span><b>${x.scope === 'failed' ? 'Failed cases' : 'Full report'}</b> · ${{ channel: 'app channel', direct: 'direct message', mine: 'your channel' }[x.target] || x.target}
+              ${x.to && x.to.length ? `to ${esc(x.to.join(', '))}` : ''}
+              <small>${esc(x.by)} · ${new Date(x.at).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}${x.status === 'sent' ? '' : ` · ${esc(x.status)}`}${x.failed && x.failed.length ? ` · not reached: ${esc(x.failed.join(', '))}` : ''}</small></span>
+          </li>`).join('')}</ul>` : `<p class="text-xs text-slate-400">${l.sharedAt ? `Posted on Teams ${new Date(l.sharedAt).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}` : 'Not shared yet.'}</p>`}
+        </div>
+      </div>` : ''}`);
   }
 
   $doc.on('click', '[data-close-sanity-log]', closeSanityLog);
   $('#sanityLogModal').on('mousedown', function (e) { if (e.target === this) closeSanityLog(); });
-  $doc.on('submit', '#sanityLogShare', function (e) {
-    e.preventDefault();
-    const userIds = $(this).find('[name=userIds]:checked').map((i, el) => el.value).get();
-    api('POST', `/api/sanity/logs/${sanityLog.id}/share`, { userIds }).done(() => {
-      toast('Report sent on Teams');
-      if (sanity) reloadSanity();
-    });
+  $doc.on('click', '[data-log-filter]', function () { sanityLogFilter = $(this).data('log-filter'); renderSanityLog(); });
+  $doc.on('click', '[data-log-send]', function () {
+    const kind = $(this).data('log-send');
+    sendLogOnTeams(kind === 'all' ? 'all' : 'failed', kind === 'devs');
+  });
+  $doc.on('click', '[data-log-compare]', function () {
+    const older = $(this).data('log-compare');
+    const newer = sanityLog.id;
+    closeSanityLog();
+    Object.assign(sanity, { view: 'logs', logsTab: 'compare', compare: [older, newer] });
+    openSanity(sanity.productId, sanity.date, 'logs');
   });
   $doc.on('click', '[data-copy-link]', function () {
     const url = $(this).data('copy-link');
