@@ -2348,7 +2348,10 @@ const ISSUE_SELECT = `SELECT c.*, s.name AS screen_name, f.name AS flow_name, m.
 app.get('/api/products/:id/people', route(async (req, res) => {
   const product = await productFor(req, req.params.id, 'edit');
   const { rows } = await peopleOf(product.id);
-  res.json({ people: rows.map((u) => ({ id: u.id, name: personName(u), teams: Boolean(u.teams_email) })), teams: Boolean(product.teams_webhook) });
+  res.json({
+    people: rows.map((u) => ({ id: u.id, name: personName(u), username: u.username, access: u.access, teams: Boolean(u.teams_email) })),
+    teams: Boolean(product.teams_webhook),
+  });
 }));
 
 app.post('/api/issues/teams', route(async (req, res) => {

@@ -19,7 +19,10 @@ if (!process.env.DATABASE_URL) {
 // Neon hands out "sslmode=require"; pg already treats it as full certificate verification,
 // so say so explicitly (silences pg's deprecation warning, same security).
 const connectionString = process.env.DATABASE_URL.replace(/sslmode=(prefer|require|verify-ca)\b/, 'sslmode=verify-full');
-const pool = new Pool({ connectionString, max: 5 });
+const pool = new Pool({ connectionString, max: 5, connectionTimeoutMillis: 15000 });
+// A connection lying idle in the pool can drop (Neon scales to zero, Wi-Fi changes …): pg then emits 'error' on the
+// pool, which would end the process if nobody listens. The pool opens a fresh one for the next query.
+pool.on('error', (err) => console.error('Database connection dropped:', err.message));
 
 const SCHEMA = `
 -- A product, e.g. Finzoom, Findost, IPO
@@ -398,6 +401,25 @@ async function tx(fn) {
   }
 }
 
-const init = () => pool.query(SCHEMA);
+// Errors that mean "the network or the database isn't reachable right now", not "something is wrong"
+const TRANSIENT = ['ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT', 'ECONNREFUSED', 'ECONNRESET', 'ENETUNREACH', 'EHOSTUNREACH', '57P03'];
+const transient = (err) => TRANSIENT.includes(err && err.code) || /timeout|terminated unexpectedly/i.test(String(err && err.message));
+
+// The schema, once the database answers: a short network blip (DNS, Wi-Fi, VPN, Neon waking up) is waited out,
+// trying again after 2, 4, 8 … up to 30 seconds; any other error stops at once.
+async function init() {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await pool.query(SCHEMA);
+      if (attempt > 1) console.log('Database connected.');
+      return;
+    } catch (err) {
+      if (!transient(err)) throw err;
+      const wait = Math.min(30, 2 ** attempt);
+      console.error(`Database not reachable (${err.code || err.message}). Trying again in ${wait} s …`);
+      await new Promise((ok) => setTimeout(ok, wait * 1000));
+    }
+  }
+}
 
 module.exports = { pool, query, tx, init };

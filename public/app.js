@@ -556,7 +556,7 @@ $(function () {
   const peopleBox = (names, commentId = '', extra = '') => `
     <div class="people ${extra}" data-people="${commentId}">
       ${(names || []).map(chip).join('')}
-      <input class="people-input" list="people" placeholder="${names && names.length ? 'Add person' : commentId ? 'Unassigned' : 'Assign to'}" maxlength="60" autocomplete="off">
+      <input class="people-input" placeholder="${names && names.length ? 'Add person' : commentId ? 'Unassigned' : 'Assign to'}" maxlength="60" autocomplete="off">
     </div>`;
   const chipsOf = ($box) => $box.find('.person').map((i, el) => $(el).text().trim()).get();
   // chips plus anything typed but not yet added
@@ -1225,8 +1225,7 @@ $(function () {
       $(rows).find('textarea').each((i, el) => autoGrow(el));
     }
 
-    const people = [...new Set(allIssues().flatMap((c) => c.assignees || []))].sort();
-    $('#people').html(people.map((n) => `<option value="${esc(n)}"></option>`).join(''));
+    if (productId && can('edit')) peopleOfApp(productId); // ready before anyone opens "Assign to"
 
     if (refocus) {
       const input = $(refocus.where).find(`.add-comment[data-screen="${refocus.screen}"] input[name=text]`)[0];
@@ -5133,14 +5132,95 @@ $(function () {
     input.placeholder = 'Add person';
     savePeople($box);
   }
+  // "Assign to": a list of the people who can open the issue's app (their logins, Users & access), filtered as you
+  // type. ↑ ↓ and Enter pick; a name that is not a login can still be added (Enter on "Add …").
+  const appPeople = new Map(); // app id → [{ id, name, username, access }]
+  function peopleOfApp(pid) {
+    if (!pid) return [];
+    if (!appPeople.has(pid)) {
+      appPeople.set(pid, []);
+      api('GET', `/api/products/${encodeURIComponent(pid)}/people`, null, null, QUIET)
+        .done((d) => { appPeople.set(pid, d.people); if ($('#peopleMenu').length) peopleMenu(peopleMenuFor); })
+        .fail(() => appPeople.delete(pid));
+    }
+    return appPeople.get(pid);
+  }
+  // the app an assignee box belongs to: the writer's row picks one, everywhere else it is the app on screen
+  const boxApp = (input) => $(input).closest('[data-product]').data('product') || productId;
+  let peopleMenuFor = null;
+  function closePeopleMenu() { $('#peopleMenu').remove(); peopleMenuFor = null; }
+  function peopleMenu(input) {
+    if (!input || !document.body.contains(input)) { closePeopleMenu(); return; }
+    peopleMenuFor = input;
+    const $box = $(input).closest('.people');
+    const taken = chipsOf($box).map((x) => x.toLowerCase());
+    const q = input.value.trim().toLowerCase();
+    const list = peopleOfApp(boxApp(input))
+      .filter((u) => !taken.includes(u.name.toLowerCase()) && (!q || u.name.toLowerCase().includes(q) || (u.username || '').toLowerCase().includes(q)))
+      .slice(0, 50);
+    const exact = list.some((u) => u.name.toLowerCase() === q);
+    const opts = list.map((u) => `<button type="button" class="pm-opt" data-pm-pick="${esc(u.name)}">
+        <span class="pm-av">${esc(appInitials(u.name))}</span>
+        <span class="min-w-0 flex-1"><span class="block truncate text-sm font-medium text-slate-900">${esc(u.name)}</span>
+          ${u.username ? `<span class="block truncate font-mono text-xs text-slate-500">@${esc(u.username)}</span>` : ''}</span>
+        ${u.access && ACCESS[u.access] ? `<span class="access-tag access-${u.access}">${ACCESS[u.access].label}</span>` : ''}
+      </button>`).join('');
+    const add = q && !exact ? `<button type="button" class="pm-opt pm-add" data-pm-pick="${esc(input.value.trim())}">${icon('plus', 14)}<span class="text-sm">Add “${esc(input.value.trim())}”</span></button>` : '';
+    const app = products.find((p) => p.id === boxApp(input));
+    let $m = $('#peopleMenu');
+    if (!$m.length) $m = $('<div id="peopleMenu" class="pm" role="listbox"></div>').appendTo('body');
+    $m.html(`<p class="pm-head">People in ${esc(app ? app.name : 'this app')}</p>${opts}${add}${opts || add ? '' : `<p class="pm-empty">${appPeople.get(boxApp(input)) && appPeople.get(boxApp(input)).length ? 'Everyone is added' : 'Loading people…'}</p>`}`);
+    $m.find('.pm-opt').first().addClass('on');
+    placePeopleMenu();
+  }
+  // under the box, or above it when there is no room below; it follows the box when the page or a popup scrolls
+  function placePeopleMenu() {
+    const $m = $('#peopleMenu');
+    if (!$m.length || !peopleMenuFor || !document.body.contains(peopleMenuFor)) { closePeopleMenu(); return; }
+    const $box = $(peopleMenuFor).closest('.people');
+    const r = $box[0].getBoundingClientRect();
+    const h = Math.min($m.outerHeight(), 300);
+    const below = window.innerHeight - r.bottom > h + 12 || r.top < h + 12;
+    $m.css({ left: Math.max(8, Math.min(r.left, window.innerWidth - Math.max(r.width, 260) - 8)), width: Math.max(r.width, 260), top: below ? r.bottom + 4 : r.top - h - 4 });
+  }
+  $doc.on('focus input', '.people-input', function () { peopleMenu(this); });
+  $doc.on('blur', '.people-input', function () {
+    setTimeout(() => {
+      if (document.activeElement === this) return;
+      if (peopleMenuFor === this) closePeopleMenu();
+      if (this.value.trim()) addPeople(this); // typed and left without picking: added as written
+    }, 150);
+  });
+  $doc.on('mousedown', '[data-pm-pick]', function (e) {
+    e.preventDefault(); // keep typing in the box
+    const input = peopleMenuFor;
+    if (!input) return;
+    input.value = String($(this).data('pm-pick'));
+    addPeople(input);
+    peopleMenu(input);
+  });
+  $(window).on('resize', placePeopleMenu);
+  document.addEventListener('scroll', (e) => { if (peopleMenuFor && !$(e.target).closest('#peopleMenu').length) placePeopleMenu(); }, true);
+
   $doc.on('keydown', '.people-input', function (e) {
+    const $opts = $('#peopleMenu .pm-opt');
+    const at = $opts.index($opts.filter('.on'));
+    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && $opts.length) {
+      e.preventDefault();
+      const next = $opts.eq(Math.max(0, Math.min($opts.length - 1, at + (e.key === 'ArrowDown' ? 1 : -1))));
+      $opts.removeClass('on');
+      next.addClass('on')[0].scrollIntoView({ block: 'nearest' });
+      return;
+    }
+    if (e.key === 'Escape' && peopleMenuFor) { e.stopImmediatePropagation(); closePeopleMenu(); return; }
+    if (e.key === 'Enter' && this.value.trim() && at >= 0) { e.preventDefault(); $opts.eq(at).trigger('mousedown'); return; }
     if ((e.key === 'Enter' || e.key === ',') && this.value.trim()) { e.preventDefault(); addPeople(this); }
     else if (e.key === 'Backspace' && !this.value) {
       const $last = $(this).prevAll('.person').first();
       if ($last.length) { $last.remove(); savePeople($(this).closest('.people')); }
     }
   });
-  $doc.on('change', '.people-input', function () { if (this.value.trim()) addPeople(this); });
+
   $doc.on('click', '[data-remove-person]', function () {
     const $box = $(this).closest('.people');
     $(this).closest('.person').remove();
