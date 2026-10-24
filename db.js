@@ -349,6 +349,13 @@ CREATE TABLE IF NOT EXISTS teams_shares (
 );
 CREATE INDEX IF NOT EXISTS teams_shares_issues_idx ON teams_shares USING gin (issue_ids);
 
+-- When each login was last here (an open tab of FlowTrace, presence.js); a table of its own so a heartbeat does not
+-- touch the user row (its updated_at)
+CREATE TABLE IF NOT EXISTS presence (
+  user_id      text PRIMARY KEY REFERENCES users(id),
+  last_seen_at timestamptz NOT NULL DEFAULT now()
+);
+
 -- Audit columns on every table: who created / last changed a row and when. created_by / updated_by are the
 -- signed-in user (NULL for rows made by the server itself, e.g. the seeded statuses or the first super admin).
 -- updated_at starts as created_at for old rows and is kept current by a trigger on every UPDATE.

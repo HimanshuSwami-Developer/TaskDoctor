@@ -6,6 +6,7 @@ const db = require('./db');
 const cloud = require('./cloud');
 const auth = require('./auth');
 const teams = require('./teams');
+const presence = require('./presence');
 const excel = require('./excel');
 const formula = require('./public/formula');
 const ExcelJS = require('exceljs');
@@ -262,14 +263,20 @@ function password(value) {
   return value.slice(0, 200);
 }
 
-// with when each login last signed in and whether it is signed in now (Admin page)
+// who is online (presence.js), set once the server listens
+let online = null;
+
+// with when each login last signed in, whether it is signed in now, and whether it is online now (Admin page)
 app.get('/api/users', route(async (req, res) => {
   need(req, 'super');
   const { rows } = await db.query(
     `SELECT u.*, (SELECT max(s.created_at) FROM sessions s WHERE s.user_id = u.id) AS last_sign_in,
             (SELECT count(*)::int FROM sessions s WHERE s.user_id = u.id AND s.expires_at > now()) AS active_sessions
      FROM users u WHERE NOT u.is_deleted ORDER BY u.created_at`);
-  res.json(rows.map((r) => ({ ...toUser(r), lastSignIn: r.last_sign_in, signedIn: r.active_sessions > 0 })));
+  res.json(rows.map((r) => ({
+    ...toUser(r), lastSignIn: r.last_sign_in, signedIn: r.active_sessions > 0,
+    presence: online ? online.of(r.id) : { status: 'offline', lastSeen: null },
+  })));
 }));
 
 // Sign a login out on every device (not you: that would be Sign out)
@@ -2541,12 +2548,16 @@ async function ensureSuperAdmin() {
 
 db.init()
   .then(ensureSuperAdmin)
-  .then(() => app.listen(PORT, () => {
+  .then(() => {
+    const server = app.listen(PORT, () => {
     console.log(`FlowTrace running at http://localhost:${PORT}`);
     if (!cloud.configured()) console.log('Image uploads are off: add the Cloudinary keys to .env to turn them on.');
     if (!process.env.APP_URL) console.log('APP_URL is not set: Teams reminders will have no "Start sanity" link.');
     setInterval(() => sanityReminders().catch((err) => console.error('Sanity reminders:', err.message)), 60 * 1000);
-  }))
+    });
+    // who is online: a WebSocket on the same port (/ws)
+    online = presence.attach(server, { db, auth });
+  })
   .catch((err) => {
     console.error('Could not connect to the database:', err.message);
     process.exit(1);

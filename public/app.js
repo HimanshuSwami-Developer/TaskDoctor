@@ -643,6 +643,7 @@ $(function () {
         if (bugsView) { renderBugs(); applyAccess(); }
         if (diagram.flowId) renderDiagram();
         if (!routed) { routed = true; openFromHash(); }
+        connectPresence();
       })
       .fail((xhr) => {
         if (loaded || xhr.status === 401) return;
@@ -3887,6 +3888,74 @@ $(function () {
   });
   $doc.on('click', '[data-action="logout"]', () => api('POST', '/api/logout').always(() => location.reload()));
 
+  // ---------------------------------------------------------------- who is online (presence.js, a WebSocket)
+  // Every tab keeps a socket open and says every 30 s whether you used it (key, click, mouse, scroll) in the last
+  // 2 minutes with the tab in front. Super admins get everyone's state pushed back: online (used in the last 2 min),
+  // away (a tab open, not used for 2 min) or offline (with when they were last here), shown live on Users & access.
+  // The socket comes back by itself after a drop (waiting a little longer each time, up to 30 s).
+
+  const PRESENCE_ACTIVE = 2 * 60 * 1000;
+  const live = { ws: null, tries: 0, used: Date.now(), users: new Map(), beat: null };
+  const markUsed = () => { live.used = Date.now(); };
+  ['pointerdown', 'keydown', 'mousemove', 'wheel', 'touchstart'].forEach((ev) => window.addEventListener(ev, markUsed, { passive: true }));
+  const inUse = () => document.visibilityState === 'visible' && Date.now() - live.used < PRESENCE_ACTIVE;
+  const sendBeat = () => { if (live.ws && live.ws.readyState === 1) live.ws.send(JSON.stringify({ type: 'beat', active: inUse() })); };
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') markUsed(); sendBeat(); });
+
+  function connectPresence() {
+    if (live.ws || !me || !window.WebSocket) return;
+    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+    live.ws = ws;
+    ws.onopen = () => {
+      live.tries = 0;
+      sendBeat();
+      clearInterval(live.beat);
+      live.beat = setInterval(sendBeat, 30000);
+    };
+    ws.onmessage = (e) => {
+      let m;
+      try { m = JSON.parse(e.data); } catch (err) { return; }
+      if (m.type !== 'presence') return;
+      live.users = new Map(m.users.map((u) => [u.id, u]));
+      paintPresence();
+    };
+    ws.onclose = (e) => {
+      clearInterval(live.beat);
+      live.ws = null;
+      if (e.code === 4401 || e.code === 4403) return; // signed out, or not this app: no point trying again
+      live.tries += 1;
+      setTimeout(connectPresence, Math.min(30000, 1000 * 2 ** live.tries));
+    };
+  }
+
+  // a login's state: from the socket when it has spoken, else from when the users list was loaded
+  const presenceOf = (u) => live.users.get(u.id) || u.presence || { status: 'offline', lastSeen: null };
+  function presenceText(u) {
+    const p = presenceOf(u);
+    if (p.status === 'online') return '<span class="pr pr-online"><i></i>Online</span>';
+    if (p.status === 'away') return '<span class="pr pr-away"><i></i>Away</span> <span class="text-slate-400">· idle</span>';
+    if (p.lastSeen && Date.now() - new Date(p.lastSeen).getTime() < PRESENCE_ACTIVE) return '<span class="pr pr-recent"><i></i>Just left</span>';
+    return `<span class="pr pr-off"><i></i>Offline</span> <span class="text-slate-400">· ${p.lastSeen ? `last seen ${esc(ago(p.lastSeen))}` : 'never seen'}</span>`;
+  }
+  function presenceStat() {
+    const states = users.map((u) => presenceOf(u).status);
+    const on = states.filter((x) => x === 'online').length;
+    const away = states.filter((x) => x === 'away').length;
+    return `<div class="adm-stat green"><p class="adm-stat-n">${on}</p><p class="adm-stat-l">Online now</p>
+      <p class="adm-stat-h">${away ? `${away} away · ` : ''}live, active in the last 2 min</p></div>`;
+  }
+  // only the state parts of the Users & access page, so an open form keeps what is typed
+  function paintPresence() {
+    if (!adminView) return;
+    users.forEach((u) => {
+      $(`[data-presence="${u.id}"]`).html(presenceText(u));
+      $(`[data-presence-dot="${u.id}"]`).attr('class', `adm-online pr-${presenceOf(u).status}`).attr('title', presenceOf(u).status);
+    });
+    $('[data-presence-stat]').html(presenceStat());
+  }
+  // "last seen 3 min ago" and "Just left" move on by themselves
+  setInterval(paintPresence, 30000);
+
   // ---------------------------------------------------------------- admin (super admins): its own page, like Sheets
   // People with a login: who they are, what they can do (access) and which apps they open. Summary cards on top, a
   // list to search and filter, and a panel from the right to make or change a login. A new login (or a new password)
@@ -3966,7 +4035,7 @@ $(function () {
       </div>
       <div class="adm-stats">
         ${stat('Logins', users.length, `${count('super')} super admin${count('super') === 1 ? '' : 's'}`, 'indigo')}
-        ${stat('Signed in now', users.filter((x) => x.signedIn).length, 'on at least one device', 'green')}
+        <div data-presence-stat>${presenceStat()}</div>
         ${stat('Sanity testers', users.filter((x) => x.sanityTester || ['tester', 'developer', 'super'].includes(x.access)).length, 'can run the daily sanity', 'amber')}
         ${stat('No Teams email', users.filter((x) => !x.teamsEmail).length, 'cannot be @mentioned', 'slate')}
       </div>
@@ -3981,18 +4050,18 @@ $(function () {
         </div>
         <div class="overflow-x-auto">
           <table class="adm-table">
-            <thead><tr><th>User</th><th>Access</th><th>Apps</th><th>Teams email</th><th>Last sign-in</th><th></th></tr></thead>
+            <thead><tr><th>User</th><th>Access</th><th>Apps</th><th>Teams email</th><th>Status</th><th></th></tr></thead>
             <tbody>${list.map((x) => {
               const apps = appNamesOf(x);
               return `<tr class="${v.panel && v.panel.id === x.id ? 'on' : ''}">
                 <td><div class="flex items-center gap-3">
-                  <span class="adm-avatar">${esc(appInitials(x.name || x.username))}${x.signedIn ? '<i class="adm-online" title="Signed in now"></i>' : ''}</span>
+                  <span class="adm-avatar">${esc(appInitials(x.name || x.username))}<i class="adm-online" data-presence-dot="${x.id}"></i></span>
                   <div class="min-w-0"><p class="truncate font-semibold text-slate-900">${esc(x.name || x.username)}${x.id === me.id ? ' <span class="text-xs font-normal text-slate-400">(you)</span>' : ''}</p>
                     <p class="truncate font-mono text-xs text-slate-500">${esc(x.username)}</p></div></div></td>
                 <td><span class="access-tag access-${x.access}" title="${esc(ACCESS[x.access].hint)}">${ACCESS[x.access].label}</span>${x.sanityTester ? ' <span class="access-tag sanity-tag">Sanity</span>' : ''}</td>
                 <td><div class="adm-apps">${apps.slice(0, 3).map((n) => `<span class="adm-app">${esc(n)}</span>`).join('')}${apps.length > 3 ? `<span class="adm-app more" title="${esc(apps.slice(3).join(', '))}">+${apps.length - 3}</span>` : ''}${apps.length ? '' : '<span class="text-xs text-slate-400">No apps</span>'}</div></td>
                 <td class="text-xs">${x.teamsEmail ? esc(x.teamsEmail) : '<span class="text-slate-400">—</span>'}</td>
-                <td class="whitespace-nowrap text-xs text-slate-500">${x.signedIn ? '<span class="adm-on">● Online</span> · ' : ''}${x.lastSignIn ? esc(ago(x.lastSignIn)) : 'Never'}</td>
+                <td class="whitespace-nowrap text-xs" data-presence="${x.id}" title="Last sign-in: ${x.lastSignIn ? esc(ago(x.lastSignIn)) : 'never'}"></td>
                 <td><div class="adm-actions">
                   <button class="icon-btn" data-admin-edit="${x.id}" title="Edit">${icon('edit', 14)}</button>
                   <button class="icon-btn" data-admin-reset="${x.id}" title="Reset password">${icon('lock', 14)}</button>
@@ -4009,6 +4078,7 @@ $(function () {
       <aside class="adm-panel ${v.panel ? 'show' : ''}">${v.panel ? adminPanel() : ''}</aside>
     </div>`);
     if (v.panel) syncAppBoxes();
+    paintPresence();
   }
 
   // the panel: a login's form, or the credentials of one just made (or given a new password)

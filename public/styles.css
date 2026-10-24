@@ -1271,3 +1271,23 @@ body { padding-left: var(--sb-w); transition: padding-left .2s ease; }
 html.theme-fade, html.theme-fade *, html.theme-fade *::before, html.theme-fade *::after {
   transition: background-color .4s ease, color .4s ease, border-color .4s ease, fill .4s ease, stroke .4s ease, box-shadow .4s ease !important;
 }
+
+/* who is online (Users & access): a dot and a word; the avatar's dot the same colour */
+[data-presence-stat] { display: contents; }
+.pr { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.pr i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.pr-online { color: #16a34a; }
+.pr-online i { box-shadow: 0 0 0 0 rgba(22, 163, 74, .5); animation: prPulse 2s ease-out infinite; }
+.pr-away { color: #d97706; }
+.pr-recent { color: #0284c7; }
+.pr-off { color: #94a3b8; font-weight: 500; }
+@keyframes prPulse { 0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, .5); } 70% { box-shadow: 0 0 0 6px rgba(22, 163, 74, 0); } 100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); } }
+.adm-online { display: none; }
+.adm-online.pr-online { display: block; background: #16a34a; }
+.adm-online.pr-away { display: block; background: #d97706; }
+@media (prefers-reduced-motion: reduce) { .pr-online i { animation: none; } }
+
+/* no scrollbars on the page and the sidebar (they still scroll: wheel, touch, keys) */
+html, body, .sb-scroll { scrollbar-width: none; -ms-overflow-style: none; }
+html::-webkit-scrollbar, body::-webkit-scrollbar, .sb-scroll::-webkit-scrollbar,
+html.dark::-webkit-scrollbar, html.dark body::-webkit-scrollbar, html.dark .sb-scroll::-webkit-scrollbar { display: none; width: 0; height: 0; }

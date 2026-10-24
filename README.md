@@ -27,6 +27,7 @@ Everyone signs in. The super admin opens **Users & access** in the sidebar: a pa
 - cards on top: logins, who is signed in now, sanity testers, logins without a Teams email
 - the list of logins: name, username, access, apps, Teams email and last sign-in (a green dot = signed in now), with search, a filter per access level and per app
 - **New user** opens a panel from the right: account (username, name, Teams email), a password (**Generate** makes a strong one), access as cards, *Sanity tester*, *All apps* or the apps one by one. After saving it shows the **login details** (address, username, password) to copy and send; the password is shown only then
+- **who is online, live** (a WebSocket, `/ws`, on the same port): every open tab says every 30 s whether someone used it in the last 2 minutes. *Online* = used in the last 2 min, *Away* = a tab is open but idle, *Just left* = closed in the last 2 min, *Offline · last seen …* otherwise (kept in the `presence` table). Only super admins receive the list; it updates on the page by itself. Behind a proxy (nginx …), let `/ws` through with the WebSocket upgrade headers
 - per login: **Edit**, **Reset password** (a new generated password, shown once; their other devices are signed out), **Sign out everywhere**, **Delete** (deleted logins are only flagged, and signed out)
 
 Each login has an **access level** and the **apps** (products) it can open: a list of apps, or *All apps* (includes apps added later).

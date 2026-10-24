@@ -17,7 +17,8 @@
     "express": "^4.21.2",
     "jszip": "^3.10.2",
     "nodemon": "^3.1.14",
-    "pg": "^8.23.0"
+    "pg": "^8.23.0",
+    "ws": "^8.22.0"
   },
   "author": "Himanshu Swami (FinDevelopers, prompting)",
   "contributors": [
