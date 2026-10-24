@@ -275,6 +275,17 @@ CREATE INDEX IF NOT EXISTS sheet_rows_sheet_idx ON sheet_rows(sheet_id);
 ALTER TABLE sheet_columns ADD COLUMN IF NOT EXISTS fonts jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE sheet_rows ADD COLUMN IF NOT EXISTS styles jsonb NOT NULL DEFAULT '{}'::jsonb;
 
+-- Formula columns: worked out from the other cells of the row (formula keeps columns by id: {id} * {id}, so a
+-- renamed column keeps working); format says how a result shows: { kind: number | percent | currency | date, decimals, symbol }
+ALTER TABLE sheet_columns DROP CONSTRAINT IF EXISTS sheet_columns_type_check;
+ALTER TABLE sheet_columns ADD CONSTRAINT sheet_columns_type_check
+  CHECK (type IN ('text', 'number', 'date', 'select', 'checkbox', 'person', 'flow', 'screen', 'formula'));
+ALTER TABLE sheet_columns ADD COLUMN IF NOT EXISTS formula text NOT NULL DEFAULT '';
+ALTER TABLE sheet_columns ADD COLUMN IF NOT EXISTS format jsonb NOT NULL DEFAULT '{}'::jsonb;
+
+-- People a sheet is shared with to view only (a private sheet is then seen by the owner, editors and viewers)
+ALTER TABLE sheets ADD COLUMN IF NOT EXISTS viewers text[] NOT NULL DEFAULT '{}';
+
 -- A submitted sanity: kept for good (the checklist itself resets every day). rows is a copy of the sheet as it was
 -- submitted: [{ heading, module, state, review, cells: { columnName: value }, checkedBy }]; testers = who ticked rows.
 CREATE TABLE IF NOT EXISTS sanity_logs (
@@ -319,6 +330,32 @@ ALTER TABLE done_items ADD COLUMN IF NOT EXISTS closed_at timestamptz;
 ALTER TABLE done_items ADD COLUMN IF NOT EXISTS closed_by text REFERENCES users(id);
 CREATE INDEX IF NOT EXISTS done_items_shared_idx ON done_items USING gin (shared_with);
 
+-- Issues sent on Teams: where to ('app' = the app's webhook channel, 'mine' = one of the sender's own chats, a person
+-- or a group chat, 'direct' = chats with people) and how it went. A chat is kept by its Graph id (names can repeat);
+-- destination is the name shown, e.g. "Development Team". Messages sent from the browser (Graph) are reported back
+-- by it, so message_id is Teams' own id for the message.
+CREATE TABLE IF NOT EXISTS teams_shares (
+  id           text PRIMARY KEY,
+  product_id   text NOT NULL REFERENCES products(id),
+  issue_ids    text[] NOT NULL DEFAULT '{}',
+  target       text NOT NULL CHECK (target IN ('app', 'mine', 'direct')),
+  chat_id      text NOT NULL DEFAULT '',
+  destination  text NOT NULL DEFAULT '',
+  note         text NOT NULL DEFAULT '',
+  message_id   text NOT NULL DEFAULT '',
+  ok           boolean NOT NULL,
+  error        text NOT NULL DEFAULT '',
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS teams_shares_issues_idx ON teams_shares USING gin (issue_ids);
+
+-- When each login was last here (an open tab of FlowTrace, presence.js); a table of its own so a heartbeat does not
+-- touch the user row (its updated_at)
+CREATE TABLE IF NOT EXISTS presence (
+  user_id      text PRIMARY KEY REFERENCES users(id),
+  last_seen_at timestamptz NOT NULL DEFAULT now()
+);
+
 -- Audit columns on every table: who created / last changed a row and when. created_by / updated_by are the
 -- signed-in user (NULL for rows made by the server itself, e.g. the seeded statuses or the first super admin).
 -- updated_at starts as created_at for old rows and is kept current by a trigger on every UPDATE.
@@ -333,7 +370,7 @@ DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['products', 'modules', 'flows', 'screens', 'comments', 'statuses', 'users', 'sessions',
                           'sanity_items', 'sanity_runs', 'sanity_results', 'sanity_columns', 'sanity_logs', 'done_items',
-                          'sheets', 'sheet_columns', 'sheet_rows'] LOOP
+                          'sheets', 'sheet_columns', 'sheet_rows', 'teams_shares'] LOOP
     EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS created_by text REFERENCES users(id)', t);
     EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS updated_by text REFERENCES users(id)', t);
     EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS updated_at timestamptz', t);

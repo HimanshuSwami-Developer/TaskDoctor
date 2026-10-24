@@ -60,6 +60,14 @@ $(function () {
     filter: 'M3 4h18l-7 8.5V19l-4 2v-8.5z',
     panel: 'M3 3h18v18H3zM9 3v18',
     chat: 'M21 11.5a8.4 8.4 0 0 1-9 8.4 8.6 8.6 0 0 1-3.8-.9L3 21l1.9-5.2A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z',
+    home: 'M3 10.5 12 3l9 7.5M5 9v11h5v-6h4v6h5V9',
+    shield: 'M12 2 4 5v6c0 5 3.4 9.3 8 11 4.6-1.7 8-6 8-11V5z',
+    logout: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9',
+    menu: 'M3 6h18M3 12h18M3 18h18',
+    sidebar: 'M3 3h18v18H3zM9 3v18M16 10l-2 2 2 2',
+    tag: 'M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8zM7.5 7.5h.01',
+    fork: 'M12 3v6M12 9l-6 6v5M12 9l6 6v5M3.5 17.5 6 20l2.5-2.5M15.5 17.5 18 20l2.5-2.5',
+    clock: 'M12 7v5l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z',
   };
   const icon = (name, size = 16) =>
     `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${PATHS[name]}"/></svg>`;
@@ -159,7 +167,7 @@ $(function () {
     view: { label: 'View only', hint: 'Can see screens and flow videos in their apps. Cannot see issues or change anything.' },
     edit: { label: 'Update tasks', hint: 'Can add and update issues (status, priority, assignees, remarks). Cannot change screens, images or videos.' },
     tester: { label: 'Tester', hint: 'Can add and update issues and move them to any status (Pending, Release for Testing, Complete …). Cannot change screens, images or videos.' },
-    developer: { label: 'Developer', hint: 'Update tasks, plus add, rename and delete modules, flows, screens, popups and conditions (with their branch paths), drag screens into a new order, and upload screen images. Can only move an issue between Pending and Release for Testing.' },
+    developer: { label: 'Developer', hint: 'Update tasks, plus add, rename and delete modules, flows, screens, popups and conditions (with their branch paths), extend a new flow from a screen, drag screens into a new order, and upload screen images. Can only move an issue between Pending and Release for Testing.' },
     full: { label: 'Full', hint: 'Can do everything inside their apps: create, edit and delete modules, flows, screens and issues.' },
     super: { label: 'Super admin', hint: 'Everything in every app, plus this admin dashboard and the status tags.' },
   };
@@ -173,15 +181,15 @@ $(function () {
   // full adds videos, copying, screen paths and flow order. View-only logins don't see issues at all.
   const NEEDS = {
     super: '[data-action="add-product"], [data-rename-product], [data-delete-product], [data-action="manage-statuses"], [data-action="admin"]',
-    full: `[data-move-flow], [data-copy-screen], [data-delete-comment], [data-remove-video], [data-extend-screen], [data-move-path]`,
+    full: `[data-move-flow], [data-copy-screen], [data-delete-comment], [data-remove-video], [data-move-path]`,
     developer: `[data-action="add-module"], [data-rename-module], [data-delete-module], [data-remove-image], [data-action="add-flow"], [data-rename-flow], [data-delete-flow],
       .add-screen, .dg-add-end, .dg-plus, [data-edit-screen], [data-delete-screen],
-      [data-add-condition], [data-insert-condition], [data-rename-condition], [data-cond-tool], [data-add-branch], [data-remove-branch], [data-extend-path],
+      [data-add-condition], [data-insert-condition], [data-rename-condition], [data-cond-tool], [data-add-branch], [data-remove-branch], [data-extend-path], [data-extend-screen],
       [data-dg-new="condition"], [data-dg-branch-add], [data-dg-branch-remove], [data-mark-nav], [data-remove-link], [data-sketch-module], [data-sketch-flow]`,
     edit: '.add-comment, [data-pen], [data-action="writer"], [data-remove-person], [data-bugs], [data-flip], [data-open-sheet], .issues-panel',
   };
   function applyAccess() {
-    const $root = $('#products, #summary, #account, #tabs, #board, #popupBody, #sheetBody, #bugsBody, #videoBody, #diagramBody');
+    const $root = $('#products, #summary, #account, #sbNav, #tabs, #board, #popupBody, #sheetBody, #bugsBody, #videoBody, #diagramBody');
     Object.entries(NEEDS).forEach(([level, selector]) => { if (!can(level)) $root.find(selector).remove(); });
     if (!can('developer')) {
       $root.find('[data-upload]').closest('label').remove();
@@ -635,6 +643,7 @@ $(function () {
         if (bugsView) { renderBugs(); applyAccess(); }
         if (diagram.flowId) renderDiagram();
         if (!routed) { routed = true; openFromHash(); }
+        connectPresence();
       })
       .fail((xhr) => {
         if (loaded || xhr.status === 401) return;
@@ -655,16 +664,56 @@ $(function () {
     if (!modules.some((m) => m.id === activeId)) activeId = modules[0] ? modules[0].id : null;
   }
 
+  // ---------------------------------------------------------------- the sidebar
+  // Apps (each with its own colour and initials), pages, issue counts and your account. The arrow at the top folds it
+  // into an icon rail (kept in this browser, set before the page shows: index.html); on a phone it is a drawer.
+
+  const APP_COLORS = ['#4f46e5', '#0891b2', '#db2777', '#ea580c', '#16a34a', '#7c3aed', '#0d9488', '#ca8a04'];
+  const appColor = (p) => APP_COLORS[[...p.id].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 0) % APP_COLORS.length];
+  const appInitials = (name) => (String(name).trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join('') || '?').toUpperCase();
+  const sbItem = ({ attrs = '', ico, label, on = false, extra = '', cls = '', title = label }) => `<button class="sb-item ${on ? 'on' : ''} ${cls}" ${attrs} title="${esc(title)}">
+      <span class="sb-ico">${ico}</span><span class="sb-label">${label}</span>${extra}</button>`;
+
   function renderProducts() {
-    const current = products.find((p) => p.id === productId);
-    $('#products').html(
-      products.map((p) =>
-        `<button class="product ${p.id === productId ? 'active' : ''}" data-product="${p.id}">${esc(p.name)}</button>`).join('') +
-      (current ? `
-        <button class="icon-btn" data-rename-product="${current.id}" title="Rename product">${icon('edit', 14)}</button>
-        <button class="icon-btn danger" data-delete-product="${current.id}" title="Delete product">${icon('trash', 14)}</button>` : '') +
-      '<button class="tab-add" data-action="add-product">+ Add product</button>');
+    $('#products').html(products.map((p) => `
+      <div class="sb-row ${p.id === productId ? 'on' : ''}">
+        <button class="sb-item app ${p.id === productId ? 'on' : ''}" data-product="${p.id}" title="${esc(p.name)}">
+          <span class="sb-app" style="--app:${appColor(p)}">${esc(appInitials(p.name))}</span><span class="sb-label">${esc(p.name)}</span>
+          ${p.version ? `<span class="sb-count mono">${esc(p.version.replace(/^v(?=\d)/i, ''))}</span>` : ''}</button>
+        ${p.id === productId ? `<span class="sb-tools">
+          <button class="icon-btn sm" data-rename-product="${p.id}" title="Rename ${esc(p.name)}">${icon('edit', 12)}</button>
+          <button class="icon-btn sm danger" data-delete-product="${p.id}" title="Delete ${esc(p.name)}">${icon('trash', 12)}</button></span>` : ''}
+      </div>`).join('')
+      + sbItem({ attrs: 'data-action="add-product"', ico: icon('plus', 15), label: 'Add product', cls: 'muted' }));
   }
+
+  const sbCollapsed = () => document.documentElement.classList.contains('sb-collapsed');
+  function showSidebarToggle() {
+    const folded = sbCollapsed();
+    $('[data-sidebar-toggle]').html(icon(folded ? 'right' : 'left', 16)).attr('title', folded ? 'Expand the sidebar' : 'Collapse the sidebar')
+      .attr('aria-label', folded ? 'Expand the sidebar' : 'Collapse the sidebar');
+    $('[data-sidebar-open]').html(icon('menu', 18));
+  }
+  showSidebarToggle();
+  $doc.on('click', '[data-sidebar-toggle]', () => {
+    document.documentElement.classList.toggle('sb-collapsed');
+    storage('set', 'sidebar', sbCollapsed() ? 'collapsed' : 'open');
+    $('#sidebar details[open]').prop('open', false);
+    showSidebarToggle();
+  });
+  // phone: a drawer over the page, closed by the backdrop, Escape or going somewhere
+  const closeDrawer = () => $('body').removeClass('sb-open');
+  $doc.on('click', '[data-sidebar-open]', () => $('body').addClass('sb-open'));
+  $doc.on('click', '[data-sidebar-close]', closeDrawer);
+  $doc.on('click', '#sidebar .sb-item:not([data-teams-summary]), #sidebar a.sb-item', () => { if (window.innerWidth < 900) closeDrawer(); });
+  $doc.on('keydown', (e) => { if (e.key === 'Escape' && $('body').hasClass('sb-open')) closeDrawer(); });
+  // which page is open: the board, Sheets or Sanity
+  const markNav = () => {
+    $('[data-action="home"].sb-item').toggleClass('on', !sheetsView && !sanity && !adminView);
+    $('[data-action="admin"]').toggleClass('on', Boolean(adminView));
+    $('[data-action="sheets"]').toggleClass('on', Boolean(sheetsView));
+    $('[data-action="sanity"]').toggleClass('on', Boolean(sanity));
+  };
 
   function render(opts = {}) {
     const saved = captureScroll();
@@ -678,10 +727,11 @@ $(function () {
     const count = (st) => issues.filter((c) => c.status === st).length;
     const openIssues = issues.filter((c) => !c.resolved).length;
     const shown = statuses.filter((x) => !x.deleted || count(x.id));
+    const badge = (n) => `<span class="sb-count ${n ? 'has' : ''}">${n}</span>`;
     $('#summary').html(
-      shown.map((x) => `<button class="stat" data-bugs="${esc(x.id)}" title="${esc(x.label)} issues"><span class="dot st st-${x.color}"></span>${esc(x.label)} <b>${count(x.id)}</b></button>`).join('') +
-      `<button class="stat" data-bugs="" title="All open issues"><span class="dot dot-issues"></span>Open issues <b>${openIssues}</b></button>` +
-      '<button class="tab-add" data-action="manage-statuses">Statuses</button>');
+      sbItem({ attrs: 'data-bugs=""', ico: '<span class="sb-dot dot-issues"></span>', label: 'Open issues', extra: badge(openIssues), cls: 'strong', title: `Open issues: ${openIssues}` })
+      + shown.map((x) => sbItem({ attrs: `data-bugs="${esc(x.id)}"`, ico: `<span class="sb-dot dot st st-${x.color}"></span>`, label: esc(x.label), extra: badge(count(x.id)), title: `${x.label}: ${count(x.id)}` })).join('')
+      + sbItem({ attrs: 'data-action="manage-statuses"', ico: icon('tag', 15), label: 'Statuses', cls: 'muted', title: 'Manage statuses' }));
 
     $('#tabs').html(productId ? modules.map((m) =>
       `<button class="tab ${m.id === activeId ? 'active' : ''}" data-tab="${m.id}">${esc(m.name)}<span class="count">${onlyScreens(allScreens([m])).length}</span></button>`
@@ -769,7 +819,13 @@ $(function () {
     return `
       <section class="flow ${from ? 'path' : ''} ${fromScreen ? 'from-screen' : ''}" data-flow-id="${f.id}"
         ${fromScreen ? `data-from-screen="${fromScreen.id}"` : ''} style="${depth ? `--depth:${depth}` : ''}">
-        ${fromScreen ? `<svg class="elbow" aria-hidden="true"><path class="line"/><path class="head"/></svg>
+        ${fromScreen ? `<svg class="elbow" aria-hidden="true">
+            <path class="glow-bg"/>
+            <path class="line"/>
+            <path class="flow"/>
+            <circle class="port" r="4.5"/>
+            <path class="head"/>
+          </svg>
           <button class="elbow-grip" data-move-path="${f.id}" title="Drag onto another screen to start this flow from there"></button>` : ''}
         <div class="flow-head">
           <span class="flow-no ${from ? 'path' : ''}">${no}</span>
@@ -815,44 +871,196 @@ $(function () {
       `<optgroup label="${esc(f.name)}">${onlyScreens(f.screens).map((x) =>
         `<option value="${x.id}" ${x.id === selected ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</optgroup>`).join('');
 
+    const branches = c.branches || [];
+    const steps = findFlow(c.flowId).screens;
+    const next = steps[steps.findIndex((x) => x.id === c.id) + 1];
+    // a branch wired to the next card takes the place of the dashed arrow to it
+    const wiredNext = Boolean(next) && branches.some((b) => b.targetId === next.id);
     return `
-      <div class="card cond" data-id="${c.id}">
+      <div class="card cond ${wiredNext ? 'wired-next' : ''}" data-id="${c.id}">
         ${arrowAdd(c)}
-        <div class="flex items-center gap-2">
-          <span class="cond-diamond"></span>
+        <div class="cond-head">
+          <span class="cond-badge">${icon('fork', 18)}</span>
           <div class="min-w-0 flex-1">
-            <p class="text-[11px] font-semibold uppercase tracking-wide text-indigo-600">Condition</p>
-            <h4 class="truncate text-sm font-semibold text-slate-900">${esc(c.name)}</h4>
+            <h4 class="cond-name" title="${esc(c.name)}">${esc(c.name)}</h4>
+            <p class="cond-kind">Decision · ${branches.length} outcome${branches.length === 1 ? '' : 's'}</p>
           </div>
           <button class="icon-btn" data-copy-screen="${c.id}" title="Copy condition and its paths to other flows">${icon('copy', 14)}</button>
           <button class="icon-btn" data-rename-condition="${c.id}" title="Rename">${icon('edit', 14)}</button>
           <button class="icon-btn danger" data-cond-tool data-delete-screen="${c.id}" title="Delete condition">${icon('trash', 14)}</button>
         </div>
-        <ul class="mt-3 space-y-2">
-          ${(c.branches || []).map((b) => `
-            <li class="branch tone-${tone(b.label)}" data-branch="${b.id}">
-              <div class="flex items-center gap-2">
-                <span class="text-xs font-medium text-slate-500">If</span>
-                <input class="input min-w-0 flex-1 py-1 text-sm" value="${esc(b.label)}" placeholder="e.g. Success" data-branch-label>
+        <ul class="cond-branches">
+          ${branches.map((b) => `
+            <li class="cond-branch tone-${tone(b.label)}" data-branch="${b.id}">
+              <div class="cb-line">
+                <span class="cb-ico" title="If">${icon(TONE_ICON[tone(b.label)], 12)}</span>
+                <input class="cb-input cb-label" value="${esc(b.label)}" placeholder="If… e.g. Success" title="If" data-branch-label>
                 <button class="icon-btn sm danger" data-remove-branch="${b.id}" title="Remove branch">${icon('close', 12)}</button>
               </div>
-              <div class="flex items-center gap-2">
-                <span class="text-xs font-medium text-slate-500">Show</span>
-                <select class="input min-w-0 flex-1 py-1 text-sm" data-branch-target>${targetOptions(b.targetId)}</select>
+              <div class="cb-line">
+                <span class="cb-show" title="Show">${icon('right', 14)}</span>
+                <select class="cb-input cb-target" title="Show" data-branch-target>${targetOptions(b.targetId)}</select>
                 ${b.targetId ? `<button class="icon-btn sm" data-locate="${b.targetId}" title="Go to screen">${icon('locate', 14)}</button>` : ''}
               </div>
               ${pathsOf(c.id, b.id).map((path) => `
-                <div class="flex items-center gap-2 text-xs">
-                  <span class="font-medium text-slate-500">Path</span>
+                <div class="cb-line cb-path">
+                  <span class="cb-show">${icon('extend', 12)}</span>
                   <button class="min-w-0 flex-1 truncate text-left font-medium text-indigo-600 hover:underline" data-goto-flow="${path.id}">${esc(path.name)}</button>
                   <span class="shrink-0 text-slate-400">${onlyScreens(path.screens).length} screens</span>
                 </div>`).join('') || `
-                <button class="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:underline" data-extend-path="${c.id}" data-branch-id="${b.id}">${icon('plus', 12)} Extend path</button>`}
+                <button class="cb-extend" data-extend-path="${c.id}" data-branch-id="${b.id}">${icon('plus', 12)} Extend path</button>`}
+              <span class="cb-port" data-port="${b.id}"></span>
             </li>`).join('')}
         </ul>
-        <button class="mt-2 inline-flex items-center gap-1 text-sm font-medium text-indigo-600 hover:underline" data-add-branch="${c.id}">${icon('plus', 14)} Add branch</button>
+        <button class="cb-add" data-add-branch="${c.id}">${icon('plus', 14)} Add branch</button>
       </div>`;
   }
+
+  // ---------------------------------------------------------------- condition wires: each branch drawn to the screen it shows
+  //
+  // One SVG behind the board's cards (it only shows in the gaps) with a line from each branch's port to its target card,
+  // in the branch colour. The next card in the row is reached straight across the gap; a card further along the
+  // row by a lane under the row, rising into the card; a card in another flow (a path) by the lane under the row, then
+  // down the gap left of the card and in from its side. A card scrolled out of its row is wired to the row's edge.
+  // Every wire is always there, faint; hovering a condition (or one branch) makes its wires glow, and tapping keeps
+  // that glow until another condition or branch is tapped. Redrawn with the "L" elbows (render, resize, row scroll).
+  const TONE_ICON = { success: 'check', pending: 'clock', fail: 'close', other: 'fork' };
+  const WIRE_COLOR = { success: '#16a34a', pending: '#ea580c', fail: '#dc2626', other: '#64748b' };
+
+  // a path through points with rounded corners, ending in an arrowhead
+  function wirePath(pts) {
+    const p = pts.filter((q, i) => !i || q[0] !== pts[i - 1][0] || q[1] !== pts[i - 1][1]);
+    let d = `M${p[0][0]} ${p[0][1]}`;
+    for (let i = 1; i < p.length - 1; i += 1) {
+      const [a, b, c] = [p[i - 1], p[i], p[i + 1]];
+      const r = Math.min(8, Math.hypot(b[0] - a[0], b[1] - a[1]) / 2, Math.hypot(c[0] - b[0], c[1] - b[1]) / 2);
+      const s = (q, t) => [b[0] + Math.sign(q[0] - b[0]) * t, b[1] + Math.sign(q[1] - b[1]) * t];
+      const [x1, y1] = s(a, r);
+      const [x2, y2] = s(c, r);
+      d += `L${x1} ${y1}Q${b[0]} ${b[1]} ${x2} ${y2}`;
+    }
+    const [ex, ey] = p[p.length - 1];
+    const [fx, fy] = p[p.length - 2] || p[0];
+    d += `L${ex} ${ey}`;
+    const ang = Math.atan2(ey - fy, ex - fx);
+    const head = (t) => `${ex - 7 * Math.cos(ang + t)} ${ey - 7 * Math.sin(ang + t)}`;
+    return { d, head: `M${head(0.5)}L${ex} ${ey}L${head(-0.5)}` };
+  }
+
+  function placeWires() {
+    const board = document.getElementById('board');
+    if (!board) return;
+    let svg = board.querySelector(':scope > .cond-wires');
+    const conds = board.querySelectorAll('.card.cond');
+    if (!conds.length) { if (svg) svg.remove(); return; }
+    if (!svg) {
+      svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('class', 'cond-wires');
+      svg.setAttribute('aria-hidden', 'true');
+      board.prepend(svg); // first, so the cards are drawn over it
+    }
+    const base = board.getBoundingClientRect();
+    const rel = (x, y) => [Math.round(x - base.left), Math.round(y - base.top)];
+    const lanes = new Map(); // row → lanes used under it
+    const out = [];
+    conds.forEach((card) => {
+      const row = card.closest('.screens');
+      const rr = row.getBoundingClientRect();
+      const cr = card.getBoundingClientRect();
+      if (cr.right < rr.left || cr.right > rr.right) return; // condition scrolled out of its row
+      const s = findScreen($(card).data('id'));
+      (s && s.branches || []).forEach((b, i) => {
+        const target = b.targetId && board.querySelector(`.card[data-id="${b.targetId}"]`);
+        const port = card.querySelector(`[data-port="${b.id}"]`);
+        if (!b.targetId || !port) return;
+        const pr = port.getBoundingClientRect();
+        const color = WIRE_COLOR[tone(b.label)];
+        const tag = `class="wire" data-wire="${b.id}" data-cond="${s.id}" data-target="${b.targetId}" style="--wire:${color}"`;
+        if (!target) { // a screen not on this board (another module): a short dashed stub
+          const [sx, sy] = rel(pr.left + pr.width / 2, pr.top + pr.height / 2);
+          const stub = wirePath([[sx, sy], [sx + 24, sy]]);
+          out.push(`<g ${tag}><path class="wire-line stub" d="${stub.d}"/><path class="wire-head" d="${stub.head}"/></g>`);
+          return;
+        }
+        const tr = target.getBoundingClientRect();
+        const tRow = target.closest('.screens');
+        const trr = tRow.getBoundingClientRect();
+        const [px, py] = rel(pr.left + pr.width / 2, pr.top + pr.height / 2);
+        const right = rel(cr.right, 0)[0];
+        const mid = right + 12 + (i % 4) * 7;
+        const next = tRow === row && tr.left >= cr.right && tr.left - cr.right < 80; // the card right after
+        // a lane under the row, one per wire that uses it
+        const lane = () => {
+          const n = lanes.get(row) || 0;
+          lanes.set(row, n + 1);
+          return rel(0, rr.bottom)[1] + 4 + (n % 5) * 6;
+        };
+        const tIn = Math.min(Math.max(tr.left, trr.left), trr.right); // the target's left edge, kept inside its row
+        const [tx, ty] = rel(tIn, tr.top + 107); // card arrow height
+        let pts;
+        if (next) {
+          pts = [[px, py], [Math.min(mid, tx - 10), py], [Math.min(mid, tx - 10), ty], [tx - 2, ty]]; // the next card
+        } else if (tRow === row && tr.left >= cr.right) {
+          const y = lane();
+          const cx = Math.min(rel(tr.left + tr.width / 2, 0)[0], rel(rr.right, 0)[0] - 12);
+          const seen = tr.left + tr.width / 2 < rr.right;
+          pts = [[px, py], [mid, py], [mid, y], seen ? [cx, y] : [cx + 8, y]];
+          if (seen) pts.push([cx, rel(0, tr.bottom)[1] + 2]);
+        } else {
+          const y = lane();
+          const gx = tx - 20;
+          pts = [[px, py], [mid, py], [mid, y], [gx, y], [gx, ty], [tx - 2, ty]];
+        }
+        const { d, head } = wirePath(pts);
+        // wire-flow: light running along the wire towards the screen while it glows
+        out.push(`<g ${tag}><path class="wire-line" d="${d}"/><path class="wire-flow" d="${d}"/><path class="wire-head" d="${head}"/></g>`);
+      });
+    });
+    svg.setAttribute('width', board.scrollWidth);
+    svg.setAttribute('height', board.scrollHeight);
+    svg.innerHTML = out.join('');
+    glowWires();
+  }
+
+  // Glow: { cond, branch } (branch null = every wire of the condition). Hovering shows one for a moment; tapping
+  // keeps one until another condition or branch is tapped (tapping the glowing one again lets it go).
+  let wireHover = null;
+  let wirePinned = null;
+  const sameGlow = (a, b) => Boolean(a && b) && a.cond === b.cond && a.branch === b.branch;
+  const glowOf = (el) => {
+    const $el = $(el);
+    return { cond: $el.closest('.card.cond').data('id'), branch: $el.closest('[data-branch]').data('branch') || null };
+  };
+  function glowWires() {
+    const lit = [wirePinned, wireHover].filter(Boolean);
+    const on = (g) => lit.some((x) => g.dataset.cond === x.cond && (!x.branch || g.dataset.wire === x.branch));
+    $('#board .wire-target').removeClass('wire-target');
+    $('#board .cond-branch.lit').removeClass('lit');
+    $('#board .cond-wires .wire').each((i, g) => {
+      g.classList.toggle('on', on(g));
+      if (on(g)) {
+        $(`#board .card[data-id="${g.dataset.target}"]`).addClass('wire-target').css('--wire', g.style.getPropertyValue('--wire'));
+        $(`#board .cond-branch[data-branch="${g.dataset.wire}"]`).addClass('lit');
+      }
+    });
+    $('#board .card.cond').each((i, el) => el.classList.toggle('pinned', Boolean(wirePinned) && $(el).data('id') === wirePinned.cond));
+  }
+  $doc.on('mouseover', '.card.cond', function (e) {
+    // the gaps between branch rows keep what is glowing, so moving from one branch to the next doesn't flash them all
+    if ($(e.target).closest('.cond-branches').length && !$(e.target).closest('[data-branch]').length) return;
+    const g = glowOf(e.target);
+    if (sameGlow(g, wireHover)) return;
+    wireHover = g;
+    glowWires();
+  });
+  $doc.on('mouseleave', '.card.cond', () => { wireHover = null; glowWires(); });
+  $doc.on('click', '.card.cond', function (e) {
+    const g = glowOf(e.target);
+    // a tap on a field or button (editing a branch) keeps the glow on; a tap elsewhere toggles it
+    const editing = $(e.target).closest('input, select, button, label').length;
+    wirePinned = sameGlow(g, wirePinned) && !editing ? null : g;
+    glowWires();
+  });
 
   // "+" on the arrow after a card: put a new condition between it and the next card
   const arrowAdd = (s) => `<button class="arrow-add" data-insert-condition="${s.id}" title="Add a condition here">${icon('plus', 12)}</button>`;
@@ -903,8 +1111,41 @@ $(function () {
 
   // ---------------------------------------------------------------- screen paths: the "L" from a card down into its new flow
 
-  // Each screen path starts at the left, like the main row, and is joined to its source card by a dashed line:
-  // down from the card, left along the gutter, down again, then right into the path's first card.
+  function elbowPath(pts, radius = 16) {
+    let p = pts.filter((q, i) => !i || q[0] !== pts[i - 1][0] || q[1] !== pts[i - 1][1]);
+    p = p.filter((q, i) => {
+      if (i === 0 || i === p.length - 1) return true;
+      const prev = p[i - 1], next = p[i + 1];
+      if ((prev[0] === q[0] && q[0] === next[0]) || (prev[1] === q[1] && q[1] === next[1])) return false;
+      return true;
+    });
+    if (p.length < 2) return { d: '', head: '' };
+    let d = `M${p[0][0]} ${p[0][1]}`;
+    for (let i = 1; i < p.length - 1; i += 1) {
+      const [a, b, c] = [p[i - 1], p[i], p[i + 1]];
+      const r = Math.min(radius, Math.hypot(b[0] - a[0], b[1] - a[1]) / 2, Math.hypot(c[0] - b[0], c[1] - b[1]) / 2);
+      const s = (q, t) => [b[0] + Math.sign(q[0] - b[0]) * t, b[1] + Math.sign(q[1] - b[1]) * t];
+      const [x1, y1] = s(a, r);
+      const [x2, y2] = s(c, r);
+      d += `L${x1} ${y1}Q${b[0]} ${b[1]} ${x2} ${y2}`;
+    }
+    const [ex, ey] = p[p.length - 1];
+    const [fx, fy] = p[p.length - 2] || p[0];
+    d += `L${ex} ${ey}`;
+    const ang = Math.atan2(ey - fy, ex - fx);
+    const len = 9, w = 5.5;
+    const p1x = Math.round((ex - len * Math.cos(ang) + w * Math.sin(ang)) * 10) / 10;
+    const p1y = Math.round((ey - len * Math.sin(ang) - w * Math.cos(ang)) * 10) / 10;
+    const p2x = Math.round((ex - len * Math.cos(ang) - w * Math.sin(ang)) * 10) / 10;
+    const p2y = Math.round((ey - len * Math.sin(ang) + w * Math.cos(ang)) * 10) / 10;
+    const notchX = Math.round((ex - (len - 2.5) * Math.cos(ang)) * 10) / 10;
+    const notchY = Math.round((ey - (len - 2.5) * Math.sin(ang)) * 10) / 10;
+    const head = `M${ex} ${ey}L${p1x} ${p1y}L${notchX} ${notchY}L${p2x} ${p2y}Z`;
+    return { d, head };
+  }
+
+  // Each screen path starts at the left, like the main row, and is joined to its source card by a curved flowing wire:
+  // down from the card, smoothly curving along the gutter, down again, then entering the path's first card.
   function placeElbows() {
     $('#board .flow.from-screen').each((i, sec) => {
       const card = document.querySelector(`#board .card[data-id="${$(sec).data('from-screen')}"]`);
@@ -919,14 +1160,37 @@ $(function () {
       const x = Math.min(Math.max(c.left + c.width / 2, row.left + 16), row.right - 16) - base.left;
       const top = c.bottom - base.top;
       const turn = top + 14; // run left through the gap under the parent row
-      const gutter = -12; // board padding, left of both rows
-      const y = f.top - base.top + 107; // card arrow height
+      const gutter = -14; // board padding, left of both rows
+      const y = f.top - base.top + 107; // card connector height
       const end = f.left - base.left - 4;
-      elbow.querySelector('.line').setAttribute('d', `M${x} ${top}V${turn}H${gutter}V${y}H${end}`);
-      elbow.querySelector('.head').setAttribute('d', `M${end - 6} ${y - 5}L${end} ${y}L${end - 6} ${y + 5}`);
+
+      const pts = [
+        [x, top],
+        [x, turn],
+        [gutter, turn],
+        [gutter, y],
+        [end, y],
+      ];
+      const { d, head } = elbowPath(pts, 16);
+
+      const glow = elbow.querySelector('.glow-bg');
+      if (glow) glow.setAttribute('d', d);
+      const line = elbow.querySelector('.line');
+      if (line) line.setAttribute('d', d);
+      const flow = elbow.querySelector('.flow');
+      if (flow) flow.setAttribute('d', d);
+      const port = elbow.querySelector('.port');
+      if (port) {
+        port.setAttribute('cx', x);
+        port.setAttribute('cy', top);
+      }
+      const headEl = elbow.querySelector('.head');
+      if (headEl) headEl.setAttribute('d', head);
+
       const grip = sec.querySelector('.elbow-grip');
       if (grip) Object.assign(grip.style, { left: `${x}px`, top: `${top}px` });
     });
+    placeWires();
   }
   let elbowFrame = 0;
   const queueElbows = () => { cancelAnimationFrame(elbowFrame); elbowFrame = requestAnimationFrame(placeElbows); };
@@ -1478,7 +1742,7 @@ $(function () {
   // "Create" reads the drawing (sketchPlan) and makes everything in one call:
   // - the one box no arrow points into is the first screen; following the arrows gives the order of the flow
   // - a screen with more than one arrow out continues along the unlabelled arrow that points most to the right;
-  //   each other arrow starts a new flow from that screen, named after the arrow's text (Full access)
+  //   each other arrow starts a new flow from that screen, named after the arrow's text
   // - every arrow out of a condition is a branch named after its text: to a box not placed yet it becomes the
   //   branch's path (1.1, 1.2 … on the board); to a screen already placed it points back at that screen
   // The drawing is kept in this browser (per module, or per flow when drawing into one) until it is created.
@@ -1573,6 +1837,372 @@ $(function () {
   }
   const skShapeAt = (p, not) => sketch.els.slice().reverse().find((e) => SK_SHAPES.includes(e.type) && e.id !== not && skInside(e, p, 10 / sketch.zoom));
 
+  // ---- quick create, FigJam style: a selected box shows a dot on each side; hovering a dot turns it into an
+  // arrow button and previews the next box (grey, fading in); a click makes it, joined by an arrow, ready to name.
+
+  const SK_SIDES = [[1, 0], [0, 1], [-1, 0], [0, -1]]; // right, below, left, above
+  const SK_GAP = 80;
+  // the box the dots show on: the one selected (alone)
+  function skPlusTarget() {
+    if (sketch.drag || sketch.editing || sketch.tool !== 'select' || sketch.space || sketch.insertMenu) return null;
+    const one = sketch.sel.size === 1 && skFind([...sketch.sel][0]);
+    return one && SK_SHAPES.includes(one.type) ? one : null;
+  }
+  function skPlusPoints(e) {
+    const off = 28 / sketch.zoom;
+    const [cx, cy] = skCenter(e);
+    return [[e.x + e.w + off, cy], [cx, e.y + e.h + off], [e.x - off, cy], [cx, e.y - off]];
+  }
+  function skPlusAt(p) {
+    const e = skPlusTarget();
+    if (!e) return null;
+    const side = skPlusPoints(e).findIndex((q) => Math.hypot(p[0] - q[0], p[1] - q[1]) <= 14 / sketch.zoom);
+    return side >= 0 ? { id: e.id, side } : null;
+  }
+  // after a condition comes a screen; otherwise the same kind (and size) as the box it grows from
+  const skQuickType = (from) => (from.type === 'condition' ? 'screen' : from.type);
+  const skSizeOf = (type) => (type === 'condition' ? { w: SK.condW, h: SK.condH } : { w: SK.w, h: SK.h });
+  function skQuickSize(from) {
+    const type = skQuickType(from);
+    return type === from.type ? { w: from.w, h: from.h } : skSizeOf(type);
+  }
+  // where the next box on `side` of `from` goes: SK_GAP away, or beside a box already there
+  function skQuickSpot(from, side) {
+    const type = skQuickType(from);
+    const { w, h } = skQuickSize(from);
+    const [dx, dy] = SK_SIDES[side];
+    const [fx, fy] = skCenter(from);
+    const c = [fx + dx * (from.w / 2 + SK_GAP + w / 2), fy + dy * (from.h / 2 + SK_GAP + h / 2)];
+    const busy = ([x, y]) => sketch.els.some((o) => o.type !== 'arrow'
+      && x - w / 2 < o.x + o.w + 20 && x + w / 2 > o.x - 20 && y - h / 2 < o.y + o.h + 20 && y + h / 2 > o.y - 20);
+    const step = dx ? h + 40 : w + 40;
+    const tries = [0, 1, -1, 2, -2, 3, -3].map((k) => [c[0] + (dx ? 0 : k * step), c[1] + (dx ? k * step : 0)]);
+    return { type, w, h, c: tries.find((q) => !busy(q)) || c };
+  }
+  // a new box next to `from` on `side` (or centred at `at`), joined to it, then its name is written
+  function skQuick(id, side, at) {
+    const from = skFind(id);
+    if (!from) return;
+    const spot = skQuickSpot(from, side);
+    const { type, w, h } = spot;
+    const c = at || spot.c;
+    skRemember();
+    const el = { id: skId(), type, x: c[0] - w / 2, y: c[1] - h / 2, w, h, text: '', ...(from.color && type === from.type ? { color: from.color } : {}) };
+    sketch.els.push(el);
+    const [fx, fy] = skCenter(from);
+    const a = { id: skId(), type: 'arrow', from: from.id, to: el.id, text: '', x1: fx, y1: fy, x2: c[0], y2: c[1] };
+    skAutoBend(a);
+    sketch.els.push(a);
+    skBorn(el.id);
+    sketch.sel = new Set([el.id]);
+    skChanged();
+    // out of a condition the arrow is a branch: name it first (Enter goes on to the new box)
+    if (from.type === 'condition') skEdit(a.id, true, () => skEdit(el.id, true));
+    else skEdit(el.id, true);
+  }
+  // a box just made pops in (only while it is new: the canvas is redrawn on every change)
+  function skBorn(id) { sketch.born = { id, t: Date.now() }; }
+  const skIsBorn = (id) => sketch.born && sketch.born.id === id && Date.now() - sketch.born.t < 350;
+
+  // ---- a step between two boxes: hover an arrow, click its + and pick Screen / Condition / Popup, or drop a box
+  // that is not joined to anything onto an arrow. A → B becomes A → new → B; A's branch name stays on the first arrow.
+
+  const skJoined = (a) => a && a.type === 'arrow' && a.from && a.to && skFind(a.from) && skFind(a.to);
+  function skInsertTarget() {
+    if (sketch.drag || sketch.editing || sketch.tool !== 'select' || sketch.space) return null;
+    if (sketch.insertMenu) return skFind(sketch.insertMenu);
+    const hover = sketch.hoverArrow && skFind(sketch.hoverArrow);
+    if (skJoined(hover)) return hover;
+    const one = sketch.sel.size === 1 && skFind([...sketch.sel][0]);
+    return skJoined(one) ? one : null;
+  }
+  const skInsertPoint = (a) => skCurve(a)[a.text ? 12 : 8]; // beside the branch name, when there is one
+  function skInsertAt(p) {
+    const a = skInsertTarget();
+    if (!a) return null;
+    const [x, y] = skInsertPoint(a);
+    return Math.hypot(p[0] - x, p[1] - y) <= 13 / sketch.zoom ? a : null;
+  }
+  // boxes after `start` (following the arrows), but none that lead back to `stop`: they move to make room
+  function skDownstream(start, stop) {
+    const arrows = sketch.els.filter((x) => x.type === 'arrow' && x.from && x.to);
+    const before = new Set();
+    for (const q = [stop]; q.length;) {
+      const id = q.pop();
+      if (before.has(id)) continue;
+      before.add(id);
+      arrows.forEach((x) => { if (x.to === id) q.push(x.from); });
+    }
+    const after = new Set();
+    for (const q = [start]; q.length;) {
+      const id = q.pop();
+      if (after.has(id) || before.has(id)) continue;
+      after.add(id);
+      arrows.forEach((x) => { if (x.from === id) q.push(x.to); });
+    }
+    return sketch.els.filter((x) => after.has(x.id));
+  }
+  // A → B becomes A → el → B (el is already on the canvas)
+  function skSplit(a, el) {
+    const to = a.to;
+    a.to = el.id;
+    a.bend = 0;
+    skAutoBend(a);
+    const [x1, y1] = skCenter(el);
+    const [x2, y2] = skCenter(skFind(to));
+    const b = { id: skId(), type: 'arrow', from: el.id, to, text: el.type === 'condition' ? 'Success' : '', x1, y1, x2, y2 };
+    skAutoBend(b);
+    sketch.els.push(b);
+  }
+  // room for a w × h box on arrow a, with a gap on both sides (if there is none, its end box and what follows it
+  // move along) → the centre for the box
+  function skMakeRoom(a, w, h) {
+    const A = skFind(a.from);
+    const B = skFind(a.to);
+    const [ax, ay] = skCenter(A);
+    const [bx, by] = skCenter(B);
+    const len = Math.hypot(bx - ax, by - ay) || 1;
+    const d = [(bx - ax) / len, (by - ay) / len];
+    const need = Math.abs(d[0]) * w + Math.abs(d[1]) * h + 2 * 56;
+    const [e1, e2] = [skEdge(A, [bx, by]), skEdge(B, [ax, ay])];
+    const gap = Math.hypot(e2[0] - e1[0], e2[1] - e1[1]);
+    if (gap < need) skDownstream(B.id, A.id).forEach((x) => { x.x += d[0] * (need - gap); x.y += d[1] * (need - gap); });
+    const p1 = skEdge(A, skCenter(B));
+    const p2 = skEdge(B, [ax, ay]);
+    return [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2];
+  }
+  function skInsert(arrowId, type) {
+    const a = skFind(arrowId);
+    if (!skJoined(a)) return;
+    skRemember();
+    const { w, h } = skSizeOf(type);
+    const mid = skMakeRoom(a, w, h);
+    const el = { id: skId(), type, x: mid[0] - w / 2, y: mid[1] - h / 2, w, h, text: '' };
+    sketch.els.push(el);
+    skSplit(a, el);
+    sketch.insertMenu = null;
+    sketch.hoverArrow = null;
+    skBorn(el.id);
+    sketch.sel = new Set([el.id]);
+    skChanged();
+    skEdit(el.id, true);
+  }
+  // the arrow a dragged box would drop into: the box alone, joined to nothing, over a joined arrow
+  function skWireUnder(el) {
+    if (!el || !SK_SHAPES.includes(el.type) || sketch.els.some((x) => x.type === 'arrow' && (x.from === el.id || x.to === el.id))) return null;
+    return sketch.els.find((x) => skJoined(x) && skCurve(x).slice(3, 14).some((q) => skInside(el, q))) || null;
+  }
+
+  // ---- the layer over the drawing: dots, the next-box preview and the + on an arrow. It is only redrawn when it
+  // changes, so its animations play once (the drawing under it is redrawn on every move).
+  function skOverlay() {
+    const z = sketch.zoom;
+    const px = 1 / z;
+    const box = skPlusTarget();
+    const wire = skInsertTarget();
+    const key = JSON.stringify([z, box && [box.id, box.x, box.y, box.w, box.h, box.type], sketch.hoverPlus,
+      wire && [wire.id, skInsertPoint(wire)], sketch.insertMenu, sketch.hoverInsert]);
+    const $g = $('#sketchBody .sk-over').attr('transform', `translate(${sketch.panX} ${sketch.panY}) scale(${z})`);
+    skInsertMenu(wire);
+    if (key === sketch.overlayKey) return;
+    sketch.overlayKey = key;
+    const out = [];
+    if (box) {
+      const hovered = sketch.hoverPlus;
+      if (hovered >= 0) {
+        // the next box, in grey, with its arrow
+        const { type, w, h, c } = skQuickSpot(box, hovered);
+        const ghost = { type, x: c[0] - w / 2, y: c[1] - h / 2, w, h };
+        const p1 = skEdge(box, c);
+        const p2 = skEdge(ghost, skCenter(box));
+        const ang = Math.atan2(p2[1] - p1[1], p2[0] - p1[0]);
+        const head = (sgn) => `${p2[0] - 11 * Math.cos(ang + sgn * 0.5)} ${p2[1] - 11 * Math.sin(ang + sgn * 0.5)}`;
+        out.push(`<g class="sk-preview">
+          <path d="M${p1[0]} ${p1[1]}L${p2[0]} ${p2[1]}M${head(1)}L${p2[0]} ${p2[1]}L${head(-1)}" style="stroke-width:${2.5 * px}"/>
+          ${type === 'condition'
+    ? `<path class="box" d="M${c[0]} ${ghost.y}L${ghost.x + w} ${c[1]}L${c[0]} ${ghost.y + h}L${ghost.x} ${c[1]}Z" style="stroke-width:${1.5 * px}"/>`
+    : `<rect class="box" x="${ghost.x}" y="${ghost.y}" width="${w}" height="${h}" rx="10" style="stroke-width:${1.5 * px}"/>`}
+        </g>`);
+      }
+      skPlusPoints(box).forEach(([x, y], i) => {
+        if (i === hovered) {
+          // the dot grows into a blue button with an arrow pointing where the box goes
+          const deg = [-90, 0, 90, 180][i];
+          out.push(`<g transform="translate(${x} ${y}) scale(${px})"><g class="sk-dot-btn">
+            <circle r="15"/><path d="M0 -6V6M-5 1.5L0 6L5 1.5" transform="rotate(${deg})"/></g></g>`);
+        } else {
+          out.push(`<g transform="translate(${x} ${y}) scale(${px})"><circle class="sk-dot" r="5.5"/></g>`);
+        }
+      });
+    }
+    if (wire) {
+      const [x, y] = skInsertPoint(wire);
+      const on = sketch.hoverInsert || sketch.insertMenu === wire.id;
+      out.push(`<g transform="translate(${x} ${y}) scale(${px})"><g class="sk-wire-btn ${on ? 'on' : ''}">
+        <circle r="${on ? 12 : 10}"/><path d="M-4.5 0H4.5M0 -4.5V4.5"/></g></g>`);
+    }
+    $g.html(out.join(''));
+  }
+  // the little menu under an arrow's +: what to put between its two boxes
+  function skInsertMenu(wire) {
+    const $m = $('#sketchBody .sk-insert-menu');
+    if (!sketch.insertMenu || !wire || wire.id !== sketch.insertMenu) { $m.addClass('hidden'); return; }
+    const [x, y] = skInsertPoint(wire);
+    $m.removeClass('hidden').css({ left: x * sketch.zoom + sketch.panX, top: y * sketch.zoom + sketch.panY + 20 });
+  }
+
+  // ---- smart guides: moving boxes snap to the edges and centres of the others (pink lines show it)
+  function skSnap(boxes, dx, dy) {
+    const tol = 6 / sketch.zoom;
+    const b = {
+      x: Math.min(...boxes.map((o) => o.x)) + dx, y: Math.min(...boxes.map((o) => o.y)) + dy,
+      x2: Math.max(...boxes.map((o) => o.x + o.w)) + dx, y2: Math.max(...boxes.map((o) => o.y + o.h)) + dy,
+    };
+    const others = sketch.els.filter((o) => o.type !== 'arrow' && !sketch.sel.has(o.id));
+    const lines = (o, axis) => (axis === 'x' ? [o.x, o.x + o.w / 2, o.x + o.w] : [o.y, o.y + o.h / 2, o.y + o.h]);
+    const mine = { x: [b.x, (b.x + b.x2) / 2, b.x2], y: [b.y, (b.y + b.y2) / 2, b.y2] };
+    const best = { x: null, y: null };
+    ['x', 'y'].forEach((axis) => others.forEach((o) => lines(o, axis).forEach((at) => mine[axis].forEach((m) => {
+      const d = at - m;
+      if (Math.abs(d) <= tol && (!best[axis] || Math.abs(d) < Math.abs(best[axis].d))) best[axis] = { d, at };
+    }))));
+    const sx = best.x ? best.x.d : 0;
+    const sy = best.y ? best.y.d : 0;
+    const guides = [];
+    const moved = { x: b.x + sx, y: b.y + sy, w: b.x2 - b.x, h: b.y2 - b.y };
+    ['x', 'y'].forEach((axis) => {
+      if (!best[axis]) return;
+      const { at } = best[axis];
+      const hits = [moved, ...others.filter((o) => lines(o, axis).some((v) => Math.abs(v - at) < 0.5))];
+      if (axis === 'x') guides.push([at, Math.min(...hits.map((o) => o.y)), at, Math.max(...hits.map((o) => o.y + o.h))]);
+      else guides.push([Math.min(...hits.map((o) => o.x)), at, Math.max(...hits.map((o) => o.x + o.w)), at]);
+    });
+    return { dx: dx + sx, dy: dy + sy, guides };
+  }
+
+
+  // ---- convert existing flow into sketch diagram elements
+  function flowToSketch(root) {
+    if (!root || !root.screens || !root.screens.length) return [];
+    const { lanes, nodes } = diagramLayout(root);
+    const els = [];
+    const idMap = new Map();
+    const colW = 380;
+    const rowH = 260;
+
+    lanes.forEach((lane) => {
+      lane.flow.screens.forEach((s) => {
+        const id = 'sk_' + s.id;
+        idMap.set(s.id, id);
+        const node = nodes.get(s.id);
+        const isCond = isCondition(s);
+        const isPop = isPopup(s);
+        const type = isCond ? 'condition' : isPop ? 'popup' : 'screen';
+        const w = isCond ? SK.condW : SK.w;
+        const h = isCond ? SK.condH : SK.h;
+        const col = node ? node.col : 0;
+        const row = node ? node.row : lane.row;
+        const x = 100 + col * colW;
+        const y = 140 + row * rowH + (isCond ? -(SK.condH - SK.h) / 2 : 0);
+        els.push({
+          id,
+          type,
+          x,
+          y,
+          w,
+          h,
+          text: s.name,
+          color: isPop ? 'violet' : isCond ? 'yellow' : 'blue',
+          existing: true,
+          existingId: s.id,
+          stepNo: lane.no ? `${lane.no}.${col - lane.col + 1}` : '',
+        });
+      });
+    });
+
+    let arcIndex = 0;
+    lanes.forEach((lane) => {
+      lane.flow.screens.forEach((s, i) => {
+        const isCond = isCondition(s);
+        const next = lane.flow.screens[i + 1];
+
+        if (!isCond) {
+          if (next) {
+            els.push({
+              id: skId(),
+              type: 'arrow',
+              from: idMap.get(s.id),
+              to: idMap.get(next.id),
+              text: '',
+              existing: true,
+              bend: 0,
+            });
+          }
+        } else {
+          const branches = Array.isArray(s.branches) && s.branches.length ? s.branches : [{ label: 'Next' }];
+          let usedNext = false;
+          branches.forEach((b) => {
+            let targetId = b.targetId;
+            if (!targetId && !usedNext && next) {
+              targetId = next.id;
+              usedNext = true;
+            }
+            if (targetId && idMap.has(targetId)) {
+              const targetNode = nodes.get(targetId);
+              const thisNode = nodes.get(s.id);
+              const span = targetNode && thisNode ? Math.abs(targetNode.col - thisNode.col) : 1;
+              let bend = 0;
+              if (targetNode && thisNode && targetNode.row === thisNode.row && span > 1) {
+                bend = -150 - (arcIndex++ * 85) - Math.min(span, 5) * 15;
+              } else if (targetNode && thisNode && targetNode.row === thisNode.row && targetNode.col < thisNode.col) {
+                bend = -150 - (arcIndex++ * 85);
+              }
+              els.push({
+                id: skId(),
+                type: 'arrow',
+                from: idMap.get(s.id),
+                to: idMap.get(targetId),
+                text: b.label || '',
+                existing: true,
+                bend,
+              });
+            }
+          });
+          if (next && !usedNext) {
+            els.push({
+              id: skId(),
+              type: 'arrow',
+              from: idMap.get(s.id),
+              to: idMap.get(next.id),
+              text: 'Continue',
+              existing: true,
+              bend: 0,
+            });
+          }
+        }
+      });
+
+      // 3. Arrow from parent step into child lane
+      if (lane.from && lane.from.stepId && lane.flow.screens.length) {
+        const fromElId = idMap.get(lane.from.stepId);
+        const toElId = idMap.get(lane.flow.screens[0].id);
+        if (fromElId && toElId) {
+          const label = lane.from.branch ? (lane.from.branch.label || '') : '';
+          els.push({
+            id: skId(),
+            type: 'arrow',
+            from: fromElId,
+            to: toElId,
+            text: label,
+            existing: true,
+            bend: 0,
+          });
+        }
+      }
+    });
+
+    return els;
+  }
 
   // ---- reading the drawing
 
@@ -1588,11 +2218,14 @@ $(function () {
     let loose = 0;
     sketch.els.filter((e) => e.type === 'arrow').forEach((a) => {
       if (byId.has(a.from) && byId.has(a.to) && a.from !== a.to) arrows.push(a);
-      else { loose += 1; skipped.add(a.id); }
+      else {
+        skipped.add(a.id);
+        if (!a.existing) loose += 1;
+      }
     });
     if (!shapes.length) return { steps: [], errors, warnings, bad, skipped, empty: true };
     if (loose) warnings.push(`${loose} arrow${loose === 1 ? ' is' : 's are'} not joined to a box at both ends, so ${loose === 1 ? 'it is' : 'they are'} skipped.`);
-    const unnamed = shapes.filter((e) => !skName(e));
+    const unnamed = shapes.filter((e) => !e.existing && !skName(e));
     unnamed.forEach((e) => bad.add(e.id));
     if (unnamed.length) errors.push(`${unnamed.length} box${unnamed.length === 1 ? ' has' : 'es have'} no name. Double-click a box to write its name.`);
 
@@ -1601,9 +2234,10 @@ $(function () {
     arrows.forEach((a) => { outs.get(a.from).push(a); ins.set(a.to, ins.get(a.to) + 1); });
     const leftTop = (p, q) => (p.x - q.x) || (p.y - q.y);
     const starts = shapes.filter((e) => !ins.get(e.id)).sort(leftTop);
-    if (starts.length > 1) {
-      starts.forEach((e) => bad.add(e.id));
-      errors.push(`Only the first screen can have no arrow coming in, but ${starts.length} boxes have none: ${starts.map(quote).join(', ')}. Join them with arrows, or delete the ones you don't need.`);
+    const newStarts = starts.filter((e) => !e.existing);
+    if (newStarts.length > 1 || (starts.length > 1 && newStarts.length > 0)) {
+      newStarts.forEach((e) => bad.add(e.id));
+      errors.push(`Only the first screen can have no arrow coming in, but ${newStarts.length} new boxes have none: ${newStarts.map(quote).join(', ')}. Join them with arrows, or delete the ones you don't need.`);
     }
     const start = starts[0] || shapes.slice().sort(leftTop)[0]; // all in a loop: start top-left
 
@@ -1613,6 +2247,8 @@ $(function () {
       const steps = [];
       for (let cur = first; cur && !placed.has(cur.id);) {
         const step = { key: cur.id, type: cur.type, name: skName(cur) };
+        if (cur.existingId) step.existingId = cur.existingId;
+        if (cur.existing) step.existing = true;
         placed.set(cur.id, step);
         steps.push(step);
         const out = outs.get(cur.id);
@@ -1625,7 +2261,9 @@ $(function () {
         if (rest.length) later.push({ step, screen: cur, out: rest, laneName });
         if (placed.has(next.to)) {
           skipped.add(next.id);
-          warnings.push(`The arrow ${quote(cur)} → ${quote(byId.get(next.to))} is skipped: a screen can only be in one place. To go back to a screen, point a condition's branch at it.`);
+          if (!cur.existing && !next.existing) {
+            warnings.push(`The arrow ${quote(cur)} → ${quote(byId.get(next.to))} is skipped: a screen can only be in one place. To go back to a screen, point a condition's branch at it.`);
+          }
           break;
         }
         cur = byId.get(next.to);
@@ -1636,7 +2274,7 @@ $(function () {
     while (later.length) {
       const item = later.shift();
       if (item.cond) {
-        if (item.out.some((a) => !skName(a))) warnings.push(`Name every arrow out of ${quote(item.cond)}: its text is the branch (e.g. Success). Double-click an arrow to write on it.`);
+        if (!item.cond.existing && item.out.some((a) => !skName(a))) warnings.push(`Name every arrow out of ${quote(item.cond)}: its text is the branch (e.g. Success). Double-click an arrow to write on it.`);
         const y = (a) => skCenter(byId.get(a.to))[1];
         item.step.branches = item.out.slice().sort((p, q) => y(p) - y(q)).map((a) => {
           const label = skName(a);
@@ -1647,7 +2285,7 @@ $(function () {
           }
           if (to.type === 'condition') {
             skipped.add(a.id);
-            warnings.push(`Branch “${label || '—'}” of ${quote(item.cond)} points at a condition, but a branch can only show a screen. It is left empty.`);
+            if (!item.cond.existing) warnings.push(`Branch “${label || '—'}” of ${quote(item.cond)} points at a condition, but a branch can only show a screen. It is left empty.`);
             return { label };
           }
           return { label, target: to.id };
@@ -1657,19 +2295,15 @@ $(function () {
           const to = byId.get(a.to);
           if (placed.has(to.id)) {
             skipped.add(a.id);
-            warnings.push(`The arrow ${quote(item.screen)} → ${quote(to)} is skipped: ${quote(to)} is already in the flow.`);
+            if (!item.screen.existing) warnings.push(`The arrow ${quote(item.screen)} → ${quote(to)} is skipped: ${quote(to)} is already in the flow.`);
             return null;
           }
           const name = skName(a) || `${item.laneName} › ${item.step.name}`;
           return { name, steps: walk(to, name).steps };
         }).filter(Boolean);
-        if (item.step.extends.length && !can('full')) {
-          bad.add(item.screen.id);
-          errors.push(`${quote(item.screen)} has more than one arrow out. Starting a new flow from a screen needs Full access: put a condition (diamond) after it instead.`);
-        }
       }
     }
-    const lost = shapes.filter((e) => !placed.has(e.id) && !bad.has(e.id));
+    const lost = shapes.filter((e) => !placed.has(e.id) && !bad.has(e.id) && !e.existing);
     lost.forEach((e) => skipped.add(e.id));
     if (lost.length) warnings.push(`Not joined to the flow, so skipped: ${lost.map(quote).join(', ')}.`);
     return { steps: root.steps, errors, warnings, bad, skipped, startId: start.id, placed };
@@ -1717,8 +2351,11 @@ $(function () {
       return `<foreignObject x="${x - 110}" y="${y - 13}" width="220" height="26"><div class="sk-pill"><span style="--tone:${skArrowColor(e)}">${esc(skName(e))}</span></div></foreignObject>`;
     }
     const inset = e.type === 'condition' ? { x: e.w / 4, y: e.h / 4 } : e.type === 'text' ? { x: 12, y: 10 } : { x: 8, y: 6 };
-    return `<foreignObject x="${e.x + inset.x}" y="${e.y + inset.y}" width="${Math.max(1, e.w - inset.x * 2)}" height="${Math.max(1, e.h - inset.y * 2)}">
-      <div class="sk-label ${e.type}">${esc(e.text)}</div></foreignObject>`;
+    const badge = e.existing && e.stepNo ? `<span class="sk-step-badge">${esc(e.stepNo)}</span>` : '';
+    const content = e.type === 'condition'
+      ? `<div class="sk-label condition">${badge}<span>${esc(e.text)}</span></div>`
+      : `<div class="sk-label ${e.type}">${badge}${esc(e.text)}</div>`;
+    return `<foreignObject x="${e.x + inset.x}" y="${e.y + inset.y}" width="${Math.max(1, e.w - inset.x * 2)}" height="${Math.max(1, e.h - inset.y * 2)}">${content}</foreignObject>`;
   }
 
   // the colour bar above what is selected (boxes and stickies)
@@ -1732,8 +2369,9 @@ $(function () {
     const y0 = Math.min(...picked.map((e) => e.y));
     const y1 = Math.max(...picked.map((e) => e.y + e.h));
     const same = new Set(picked.map((e) => e.color || SK_DEFAULT[e.type])).size === 1 && (picked[0].color || SK_DEFAULT[picked[0].type]);
-    const top = y0 * z + sketch.panY - 52;
-    $bar.removeClass('hidden').css({ left: ((x0 + x1) / 2) * z + sketch.panX, top: top < 8 ? y1 * z + sketch.panY + 14 : top })
+    const dots = skPlusTarget() ? 30 : 0; // clear of the dots on a selected box
+    const top = y0 * z + sketch.panY - 52 - dots;
+    $bar.removeClass('hidden').css({ left: ((x0 + x1) / 2) * z + sketch.panX, top: top < 8 ? y1 * z + sketch.panY + 14 + dots : top })
       .html(Object.entries(SK_COLORS).map(([key, [fill, line]]) =>
         `<button class="sk-swatch ${same === key ? 'on' : ''}" data-sk-color="${key}" title="${key[0].toUpperCase()}${key.slice(1)}" style="background:${fill};border-color:${line}"></button>`).join(''));
   }
@@ -1745,7 +2383,7 @@ $(function () {
     const px = 1 / z; // one screen pixel, in canvas units
     const out = [];
     sketch.els.forEach((e) => {
-      const cls = plan.skipped.has(e.id) ? 'sk-skipped' : '';
+      const cls = `${plan.skipped.has(e.id) ? 'sk-skipped' : ''} ${skIsBorn(e.id) ? 'sk-born' : ''}`;
       out.push(`<g class="${cls}">${skElementSvg(e)}${skLabelSvg(e)}</g>`);
       if (plan.bad.has(e.id)) {
         const b = skBox(e);
@@ -1770,6 +2408,10 @@ $(function () {
         skCorners(e).forEach(([x, y]) => out.push(`<rect class="sk-handle" x="${x - 4 * px}" y="${y - 4 * px}" width="${8 * px}" height="${8 * px}" style="stroke-width:${1.5 * px}"/>`));
       }
     });
+    // a box dragged over an arrow: it goes in between
+    const wire = drag && drag.wire && skFind(drag.wire);
+    if (wire) out.push(`<polyline class="sk-wire" points="${skCurve(wire).map((q) => q.join(',')).join(' ')}" style="stroke-width:${6 * px}"/>`);
+    if (drag && drag.guides) drag.guides.forEach(([x1, y1, x2, y2]) => out.push(`<line class="sk-guide" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" style="stroke-width:${px}"/>`));
     // what is being drawn right now
     if (drag && drag.kind === 'create') {
       const b = skDragBox(drag);
@@ -1783,6 +2425,14 @@ $(function () {
       const end = target ? skEdge(target, from ? skCenter(from) : drag.start) : drag.cur;
       const a = from ? skEdge(from, end) : drag.start;
       out.push(`<line class="sk-ghost" x1="${a[0]}" y1="${a[1]}" x2="${end[0]}" y2="${end[1]}" style="stroke-width:${1.5 * px}"/>`);
+      // from a + handle onto empty canvas: the box that will be made there
+      if (from && drag.quick !== undefined && !target) {
+        const { w, h } = skQuickSize(from);
+        const [x, y] = drag.cur;
+        out.push(skQuickType(from) === 'condition'
+          ? `<path class="sk-ghost" d="M${x} ${y - h / 2}L${x + w / 2} ${y}L${x} ${y + h / 2}L${x - w / 2} ${y}Z" style="stroke-width:${1.5 * px}"/>`
+          : `<rect class="sk-ghost" x="${x - w / 2}" y="${y - h / 2}" width="${w}" height="${h}" rx="12" style="stroke-width:${1.5 * px}"/>`);
+      }
     }
     if (drag && drag.over) {
       const t = skFind(drag.over);
@@ -1801,6 +2451,7 @@ $(function () {
     $('#sketchBody .sk-empty').toggleClass('hidden', sketch.els.length > 0);
     $('#sketchBody .sk-stage').attr('data-tool', sketch.space ? 'hand' : sketch.tool);
     skColorBar();
+    skOverlay();
   }
 
   const skArrowHandles = (a) => { const [p1, p2] = skEnds(a); return [p1, p2, skArrowMid(a)]; }; // ends, then the bend
@@ -1836,23 +2487,41 @@ $(function () {
     const f = skFlow();
     const plan = sketchPlan(skFlowName());
     const all = [...plan.placed ? plan.placed.values() : []];
-    const screens = all.filter((s) => s.type !== 'condition').length;
-    const conds = all.length - screens;
-    const paths = all.reduce((n, s) => n + (s.branches || []).filter((b) => b.path).length + (s.extends || []).length, 0);
+    const newShapes = sketch.els.filter((e) => SK_SHAPES.includes(e.type) && !e.existing);
+    const existingShapes = sketch.els.filter((e) => SK_SHAPES.includes(e.type) && e.existing);
+
+    const screens = (f ? newShapes : all).filter((s) => s.type !== 'condition').length;
+    const conds = (f ? newShapes.length : all.length) - screens;
+    const paths = (f ? all.filter((s) => !s.existing) : all).reduce((n, s) => n + (s.branches || []).filter((b) => b.path).length + (s.extends || []).length, 0);
     const list = (items, cls) => (items.length ? `<ul class="sk-notes ${cls}">${items.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : '');
     const focused = document.activeElement && document.activeElement.matches('[data-sk-name]');
+
+    const isCreateDisabled = plan.errors.length > 0 || (f ? newShapes.length === 0 : plan.empty);
+    const createBtnText = f
+      ? (newShapes.length ? `Add ${newShapes.length} step${newShapes.length === 1 ? '' : 's'} to flow` : 'Add to flow')
+      : 'Create flow';
+
+    const newStepsToOutline = f ? plan.steps.filter((s) => !s.existing) : plan.steps;
+
     $('#sketchBody .sk-side').html(`
-      ${f ? `<p class="text-sm text-slate-600">The steps are added after the last step of <b class="text-slate-900">${esc(f.name)}</b>.</p>`
+      ${f ? (existingShapes.length ? `
+        <div class="sk-flow-banner">
+          <div class="flex items-center gap-1.5 mb-1">
+            <span class="inline-block w-2 h-2 rounded-full bg-indigo-500 shrink-0"></span>
+            <span class="sk-flow-banner-title truncate">${esc(f.name)}</span>
+          </div>
+          <p class="sk-flow-banner-desc">${existingShapes.length} existing step${existingShapes.length === 1 ? '' : 's'} on canvas. Select any box and click <b>+</b> to extend, or pick <b>Screen</b> (R) to draw.</p>
+        </div>` : `<p class="text-sm text-slate-600">The steps are added after the last step of <b class="text-slate-900">${esc(f.name)}</b>.</p>`)
     : `<label class="block"><span class="field-label">Flow name</span>
           <input class="input w-full" data-sk-name value="${esc(sketch.name || '')}" placeholder="e.g. Sign Up, Add Money" maxlength="200" autocomplete="off"></label>`}
       <div>
         <p class="sk-h">Will be created</p>
-        ${plan.empty ? '<p class="text-sm text-slate-500">Nothing yet. Draw a box to start.</p>'
-    : `<p class="mb-2 text-xs text-slate-500">${screens} screen${screens === 1 ? '' : 's'} · ${conds} condition${conds === 1 ? '' : 's'} · ${paths} path${paths === 1 ? '' : 's'}</p>${skOutline(plan.steps)}`}
+        ${(f ? newShapes.length === 0 : plan.empty) ? '<p class="text-sm text-slate-500">Nothing yet. Draw a box to start.</p>'
+    : `<p class="mb-2 text-xs text-slate-500">${screens} screen${screens === 1 ? '' : 's'} · ${conds} condition${conds === 1 ? '' : 's'} · ${paths} path${paths === 1 ? '' : 's'}</p>${skOutline(newStepsToOutline)}`}
       </div>
-      ${list(plan.errors, 'error')}
-      ${list(plan.warnings, 'warn')}
-      <button class="btn-primary w-full justify-center" data-sk-create ${plan.empty || plan.errors.length ? 'disabled' : ''}>${f ? 'Add to flow' : 'Create flow'}</button>
+      ${f && newShapes.length === 0 ? '' : list(plan.errors, 'error')}
+      ${f && newShapes.length === 0 ? '' : list(plan.warnings, 'warn')}
+      <button class="btn-primary w-full justify-center" data-sk-create ${isCreateDisabled ? 'disabled' : ''}>${createBtnText}</button>
       <div class="sk-legend">
         <p class="sk-h">How it reads</p>
         <p><span class="sk-ico screen"></span> Box = screen</p>
@@ -1860,7 +2529,9 @@ $(function () {
         <p><span class="cond-diamond sm"></span> Diamond = condition</p>
         <p>${icon('arrow', 14)} Arrow = the next step. Out of a condition, its text is the branch (Success, Failed …).</p>
         <p>${icon('sticky', 14)} Sticky note = just a note, not created.</p>
-        <p class="text-slate-400">Double-click a box or an arrow to write on it; pick a colour above what is selected. Your drawing is kept in this browser until it is created.</p>
+        <p>${icon('plus', 14)} Select a box: hover a dot on its side to see the next box, click to add it (drag to point anywhere). While naming a box, Tab does the same (Shift+Tab: below).</p>
+        <p>${icon('diamond', 14)} Hover an arrow and click its + to put a screen, condition or popup in between (the steps after it move along), or drop a loose box onto an arrow.</p>
+        <p class="text-slate-400">Double-click a box or an arrow to write on it; pick a colour above what is selected. Alt-drag copies, Ctrl+C / Ctrl+V copy and paste. Your drawing is kept in this browser until it is created.</p>
       </div>`);
     if (focused) $('#sketchBody [data-sk-name]').trigger('focus');
   }
@@ -1916,9 +2587,21 @@ $(function () {
     let saved = null;
     try { saved = JSON.parse(storage('get', key) || 'null'); } catch (e) { saved = null; }
     const m = allModules.find((x) => x.id === (target.moduleId || (findFlow(target.flowId) || {}).moduleId));
+    const targetFlow = target.flowId ? findFlow(target.flowId) : null;
+    let initialEls = [];
+    if (targetFlow && targetFlow.screens && targetFlow.screens.length) {
+      if (!saved || !Array.isArray(saved.els) || !saved.els.length || !saved.els.some((e) => e.existing)) {
+        initialEls = flowToSketch(targetFlow);
+      } else {
+        initialEls = saved.els;
+      }
+    } else if (saved && Array.isArray(saved.els)) {
+      initialEls = saved.els;
+    }
     Object.assign(sketch, {
-      open: true, target, key, els: saved && Array.isArray(saved.els) ? saved.els : [], name: (saved && saved.name) || '',
-      sel: new Set(), tool: 'select', past: [], future: [], editing: null, drag: null, space: false,
+      open: true, target, key, els: initialEls, name: (saved && saved.name) || '',
+      sel: new Set(), tool: 'select', past: [], future: [], editing: null, drag: null, space: false, hoverPlus: -1, hoverArrow: null, hoverInsert: false,
+      insertMenu: null, born: null, overlayKey: null,
     });
     const f = skFlow();
     $('#sketchBody').html(`
@@ -1926,17 +2609,24 @@ $(function () {
         <span class="text-indigo-600">${icon('pen', 18)}</span>
         <div class="min-w-0 flex-1">
           <h3 class="truncate text-base font-semibold text-slate-900">${f ? `Draw into ${esc(f.name)}` : `Draw a new flow${m ? ` · ${esc(m.name)}` : ''}`}</h3>
-          <p class="truncate text-xs text-slate-500">Draw boxes and join them with arrows, like on a whiteboard. When the list on the right reads right, create it: the screens, conditions and paths are made for you.</p>
+          <p class="truncate text-xs text-slate-500">Draw boxes and join them with arrows, like in FigJam: select a box and click a dot on its side for the next step. When the list on the right reads right, create it: the screens, conditions and paths are made for you.</p>
         </div>
         <button class="icon-btn" data-close-sketch title="Close (your drawing is kept)">${icon('close', 18)}</button>
       </div>
       <div class="sk-body">
         <div class="sk-stage">
-          <svg class="sk-svg" aria-label="Drawing canvas"><g class="sk-world"></g></svg>
+          <svg class="sk-svg" aria-label="Drawing canvas"><g class="sk-world"></g><g class="sk-over"></g></svg>
+          <div class="sk-island sk-insert-menu hidden">
+            <span class="sk-insert-h">Add between</span>
+            <button class="sk-insert-opt" data-sk-insert="screen">${icon('box', 16)} Screen</button>
+            <button class="sk-insert-opt" data-sk-insert="condition">${icon('diamond', 16)} Condition</button>
+            <button class="sk-insert-opt" data-sk-insert="popup">${icon('popup', 16)} Popup</button>
+          </div>
           <div class="sk-island sk-toolbar">
             ${SK_TOOLS.map((t) => `<button class="sk-tool" data-sk-tool="${t.id}" title="${t.title} — ${t.key.toUpperCase()}${t.no ? ` or ${t.no}` : ''}">${icon(t.icon, 18)}${t.no ? `<span class="sk-key">${t.no}</span>` : ''}</button>`).join('')}
           </div>
           <div class="sk-island sk-corner">
+            ${f && f.screens.length ? `<button class="sk-tool" data-sk-reload-flow title="Reload original flow diagram">${icon('diagram', 16)}</button>` : ''}
             <button class="sk-tool" data-sk-undo title="Undo — Ctrl+Z">${icon('undo', 16)}</button>
             <button class="sk-tool" data-sk-redo title="Redo — Ctrl+Shift+Z">${icon('redo', 16)}</button>
             <span class="sk-sep"></span>
@@ -1950,7 +2640,8 @@ $(function () {
           <div class="sk-island sk-colors hidden"></div>
           <div class="sk-empty">
             <p class="sk-empty-title">Draw your flow</p>
-            <p>Pick <b>Screen</b> (R) and drag on the canvas, then <b>Arrow</b> (A) from one box to the next.<br>
+            <p>Pick <b>Screen</b> (R) and click the canvas, name it, then press <b>Tab</b> for the next screen. Or select a box
+              and click a dot on any side of it. To put a step in between, hover an arrow and click its <b>+</b>.<br>
               A <b>Condition</b> (D) splits the flow: write the branch name on each arrow out of it.</p>
           </div>
         </div>
@@ -1964,6 +2655,11 @@ $(function () {
     svg.addEventListener('pointermove', skMove);
     svg.addEventListener('pointerup', skUp);
     svg.addEventListener('pointercancel', skUp);
+    svg.addEventListener('pointerleave', () => {
+      if (sketch.drag || (sketch.hoverPlus < 0 && !sketch.hoverArrow)) return;
+      Object.assign(sketch, { hoverPlus: -1, hoverArrow: null, hoverInsert: false });
+      skDraw();
+    });
     svg.addEventListener('dblclick', skDouble);
     skFit();
     skDraw();
@@ -1979,6 +2675,7 @@ $(function () {
   }
   function skEscape() {
     if (sketch.drag) return;
+    if (sketch.insertMenu) { sketch.insertMenu = null; skDraw(); return; }
     if (sketch.sel.size) { sketch.sel.clear(); skDraw(); return; }
     if (sketch.tool !== 'select') { sketch.tool = 'select'; skDraw(); return; }
     closeSketch();
@@ -1992,6 +2689,13 @@ $(function () {
     const p = skWorld(e);
     const { tool } = sketch;
     let drag = null;
+    const wire = tool === 'select' && e.button === 0 && skInsertAt(p);
+    if (wire) {
+      sketch.insertMenu = sketch.insertMenu === wire.id ? null : wire.id;
+      skDraw();
+      return;
+    }
+    if (sketch.insertMenu) sketch.insertMenu = null;
     if (e.button === 1 || tool === 'hand' || sketch.space) {
       drag = { kind: 'pan', x: e.clientX, y: e.clientY, panX: sketch.panX, panY: sketch.panY };
     } else if (tool === 'select') {
@@ -1999,7 +2703,11 @@ $(function () {
       const near = (q) => Math.hypot(p[0] - q[0], p[1] - q[1]) <= 8 / sketch.zoom;
       const corner = one && SK_SHAPES.includes(one.type) ? skCorners(one).findIndex(near) : -1;
       const end = one && one.type === 'arrow' ? skArrowHandles(one).findIndex(near) : -1;
-      if (corner >= 0) {
+      const plus = skPlusAt(p);
+      if (plus) {
+        // click: the next box on that side; drag: an arrow to a box, or to empty canvas for a new box there
+        drag = { kind: 'arrow', from: plus.id, quick: plus.side, start: p, cur: p };
+      } else if (corner >= 0) {
         skRemember();
         drag = { kind: 'resize', id: one.id, corner, orig: { x: one.x, y: one.y, w: one.w, h: one.h } };
       } else if (end === 2) {
@@ -2036,7 +2744,19 @@ $(function () {
   function skMove(e) {
     const { drag } = sketch;
     if (!drag) {
-      if (sketch.tool === 'select' && !sketch.space) $('#sketchBody .sk-stage').toggleClass('over-element', Boolean(skHit(skWorld(e))));
+      if (sketch.tool !== 'select' || sketch.space) return;
+      const p = skWorld(e);
+      const plus = skPlusAt(p);
+      const ins = !plus && skInsertAt(p);
+      const hit = !plus && !ins && skHit(p);
+      $('#sketchBody .sk-stage').toggleClass('over-element', Boolean(hit)).toggleClass('over-plus', Boolean(plus || ins));
+      // an arrow under the pointer shows its +; it stays while the pointer is on the + itself
+      const arrow = ins ? ins.id : hit && skJoined(hit) ? hit.id : null;
+      const side = plus ? plus.side : -1;
+      if (side !== sketch.hoverPlus || arrow !== sketch.hoverArrow || Boolean(ins) !== sketch.hoverInsert) {
+        Object.assign(sketch, { hoverPlus: side, hoverArrow: arrow, hoverInsert: Boolean(ins) });
+        skOverlay();
+      }
       return;
     }
     const p = skWorld(e);
@@ -2044,12 +2764,18 @@ $(function () {
       sketch.panX = drag.panX + e.clientX - drag.x;
       sketch.panY = drag.panY + e.clientY - drag.y;
     } else if (drag.kind === 'move') {
-      const dx = p[0] - drag.start[0];
-      const dy = p[1] - drag.start[1];
+      let dx = p[0] - drag.start[0];
+      let dy = p[1] - drag.start[1];
       if (!drag.moved) {
         if (Math.hypot(dx, dy) * sketch.zoom < 3) return;
         skRemember();
         drag.moved = true;
+        // Alt-drag: move copies, the originals stay where they are
+        if (e.altKey) {
+          const copies = skClone(skSnapshot(sketch.els.filter((x) => sketch.sel.has(x.id))), 0);
+          sketch.els.push(...copies);
+          sketch.sel = new Set(copies.map((x) => x.id));
+        }
         // an arrow moved without the box it is joined to lets go of it
         sketch.els.filter((a) => a.type === 'arrow' && sketch.sel.has(a.id)).forEach((a) => {
           const [p1, p2] = skEnds(a);
@@ -2058,12 +2784,18 @@ $(function () {
         });
         drag.orig = new Map(sketch.els.filter((x) => sketch.sel.has(x.id)).map((x) => [x.id, { ...x }]));
       }
+      const boxes = [...drag.orig.values()].filter((o) => o.type !== 'arrow');
+      drag.guides = null;
+      if (boxes.length) ({ dx, dy, guides: drag.guides } = skSnap(boxes, dx, dy));
       drag.orig.forEach((o, id) => {
         const x = skFind(id);
         if (!x) return;
         if (x.type === 'arrow') Object.assign(x, { x1: o.x1 + dx, y1: o.y1 + dy, x2: o.x2 + dx, y2: o.y2 + dy });
         else Object.assign(x, { x: o.x + dx, y: o.y + dy });
       });
+      const alone = drag.orig.size === 1 && skFind([...drag.orig.keys()][0]);
+      const wire = skWireUnder(alone);
+      drag.wire = wire && wire.id;
     } else if (drag.kind === 'resize') {
       const x = skFind(drag.id);
       const o = drag.orig;
@@ -2116,6 +2848,7 @@ $(function () {
     }
     if (drag.kind === 'arrow') {
       const far = Math.hypot(drag.cur[0] - drag.start[0], drag.cur[1] - drag.start[1]) * sketch.zoom > 12;
+      if (drag.quick !== undefined && !drag.over) { skQuick(drag.from, drag.quick, far ? drag.cur : null); return; }
       if (!drag.over && !far) { skDraw(); return; }
       skRemember();
       const a = {
@@ -2143,6 +2876,17 @@ $(function () {
       });
     }
     if (drag.kind === 'move' && !drag.moved) { skDraw(); return; }
+    if (drag.kind === 'move' && drag.wire) {
+      const el = skFind([...drag.orig.keys()][0]);
+      const wire = skFind(drag.wire);
+      if (el && skJoined(wire) && skWireUnder(el) === wire) {
+        // it settles in the middle of the gap (the steps after it move along when the gap is too small)
+        const mid = skMakeRoom(wire, el.w, el.h);
+        Object.assign(el, { x: mid[0] - el.w / 2, y: mid[1] - el.h / 2 });
+        skSplit(wire, el);
+        skBorn(el.id);
+      }
+    }
     skChanged();
   }
 
@@ -2178,7 +2922,8 @@ $(function () {
     skEdit(el.id, true);
   }
 
-  function skEdit(id, fresh) {
+  // next: what to do once the text is finished with Enter (e.g. name the new box after its branch)
+  function skEdit(id, fresh, next) {
     const el = skFind(id);
     if (!el) return;
     sketch.editing = id;
@@ -2210,13 +2955,16 @@ $(function () {
       $t.css({ left: center[0] * z + sketch.panX - (width * z) / 2, top: center[1] * z + sketch.panY - h / 2, height: h });
     };
     fit();
+    let after = null;
     $t.on('input', fit)
       .on('keydown', (ev) => {
         ev.stopPropagation();
+        // Tab while naming a box: the next box to its right (Shift+Tab: below), joined, ready to name
+        if (ev.key === 'Tab' && SK_SHAPES.includes(el.type)) { ev.preventDefault(); after = () => skQuick(id, ev.shiftKey ? 1 : 0); t.blur(); return; }
         const done = ev.key === 'Escape' || (ev.key === 'Enter' && (note ? ev.metaKey || ev.ctrlKey : !ev.shiftKey));
-        if (done) { ev.preventDefault(); t.blur(); }
+        if (done) { ev.preventDefault(); if (ev.key === 'Enter') after = next; t.blur(); }
       })
-      .on('blur', () => skEndEdit(id, t.value, fresh));
+      .on('blur', () => { skEndEdit(id, t.value, fresh); if (after) after(); });
     setTimeout(() => { t.focus(); t.select(); });
   }
 
@@ -2244,22 +2992,43 @@ $(function () {
     sketch.sel = new Set();
     skChanged();
   }
-  function skDuplicate() {
-    const picked = sketch.els.filter((x) => sketch.sel.has(x.id));
-    if (!picked.length) return;
-    skRemember();
-    const ids = new Map(picked.map((x) => [x.id, skId()]));
-    const copies = picked.map((x) => {
+  // copies of elements as they are drawn now (an arrow with where its ends are), safe to keep after they change
+  const skSnapshot = (list) => list.map((x) => {
+    if (x.type !== 'arrow') return { ...x };
+    const [p1, p2] = skEnds(x);
+    return { ...x, x1: p1[0], y1: p1[1], x2: p2[0], y2: p2[1] };
+  });
+  // new elements from a snapshot, `off` further down and right; a copied arrow keeps a join only to a copied box
+  function skClone(snap, off) {
+    const ids = new Map(snap.map((x) => [x.id, skId()]));
+    return snap.map((x) => {
       const c = { ...x, id: ids.get(x.id) };
-      if (c.type !== 'arrow') return Object.assign(c, { x: x.x + 24, y: x.y + 24 });
-      // a copied arrow keeps a join only to a copied box
-      const [p1, p2] = skEnds(x);
-      Object.assign(c, { from: ids.get(x.from) || null, to: ids.get(x.to) || null, x1: p1[0] + 24, y1: p1[1] + 24, x2: p2[0] + 24, y2: p2[1] + 24 });
-      return c;
+      if (c.type !== 'arrow') return Object.assign(c, { x: x.x + off, y: x.y + off });
+      return Object.assign(c, { from: ids.get(x.from) || null, to: ids.get(x.to) || null, x1: x.x1 + off, y1: x.y1 + off, x2: x.x2 + off, y2: x.y2 + off });
     });
+  }
+  function skAdd(copies) {
+    skRemember();
     sketch.els.push(...copies);
     sketch.sel = new Set(copies.map((x) => x.id));
     skChanged();
+  }
+  function skDuplicate() {
+    const picked = sketch.els.filter((x) => sketch.sel.has(x.id));
+    if (picked.length) skAdd(skClone(skSnapshot(picked), 24));
+  }
+  // Ctrl+C / Ctrl+X / Ctrl+V (kept while the page is open, so it also pastes into another flow's drawing)
+  let skClip = null;
+  function skCopy() {
+    const picked = sketch.els.filter((x) => sketch.sel.has(x.id));
+    if (!picked.length) return false;
+    skClip = { els: skSnapshot(picked), pasted: 0 };
+    return true;
+  }
+  function skPaste() {
+    if (!skClip) return;
+    skClip.pasted += 1;
+    skAdd(skClone(skClip.els, 24 * skClip.pasted));
   }
   function skNudge(dx, dy) {
     const picked = sketch.els.filter((x) => sketch.sel.has(x.id));
@@ -2282,10 +3051,18 @@ $(function () {
     if (mod && k === 'y') { e.preventDefault(); skStep(sketch.future, sketch.past); return; }
     if (mod && k === 'a') { e.preventDefault(); sketch.sel = new Set(sketch.els.map((x) => x.id)); skDraw(); return; }
     if (mod && k === 'd') { e.preventDefault(); skDuplicate(); return; }
+    if (mod && k === 'c') { if (skCopy()) e.preventDefault(); return; }
+    if (mod && k === 'x') { if (skCopy()) { e.preventDefault(); skDelete(); } return; }
+    if (mod && k === 'v') { if (skClip) { e.preventDefault(); skPaste(); } return; }
     if (mod && (k === '=' || k === '+' || k === '-')) { e.preventDefault(); skZoomTo(sketch.zoom * (k === '-' ? 0.9 : 1.1)); return; }
     if (mod) return;
     if (k === 'delete' || k === 'backspace') { e.preventDefault(); skDelete(); return; }
     if (k === 'enter' && sketch.sel.size === 1) { e.preventDefault(); skEdit([...sketch.sel][0]); return; }
+    if (k === 'tab' && sketch.sel.size === 1 && SK_SHAPES.includes((skFind([...sketch.sel][0]) || {}).type)) {
+      e.preventDefault();
+      skQuick([...sketch.sel][0], e.shiftKey ? 1 : 0);
+      return;
+    }
     const nudge = { arrowleft: [-1, 0], arrowright: [1, 0], arrowup: [0, -1], arrowdown: [0, 1] }[k];
     if (nudge) { e.preventDefault(); skNudge(nudge[0] * (e.shiftKey ? 10 : 1), nudge[1] * (e.shiftKey ? 10 : 1)); return; }
     const tool = SK_TOOLS.find((t) => t.key === k || (t.no && t.no === k));
@@ -2310,6 +3087,7 @@ $(function () {
     sketch.els.forEach((e) => { if (sketch.sel.has(e.id) && e.type !== 'arrow') e.color = color; });
     skChanged();
   });
+  $doc.on('click', '[data-sk-insert]', function () { if (sketch.insertMenu) skInsert(sketch.insertMenu, $(this).data('sk-insert')); });
   $doc.on('click', '[data-sk-undo]', () => skStep(sketch.past, sketch.future));
   $doc.on('click', '[data-sk-redo]', () => skStep(sketch.future, sketch.past));
   $doc.on('click', '[data-sk-zoom]', function () {
@@ -2317,6 +3095,16 @@ $(function () {
     skZoomTo(step ? sketch.zoom * (step > 0 ? 1.1 : 1 / 1.1) : 1);
   });
   $doc.on('click', '[data-sk-fit]', () => { skFit(); skDraw(); });
+  $doc.on('click', '[data-sk-reload-flow]', function () {
+    const f = skFlow();
+    if (!f || !f.screens || !f.screens.length) return;
+    skRemember();
+    sketch.els = flowToSketch(f);
+    sketch.sel = new Set();
+    skFit();
+    skChanged();
+    toast('Flow diagram reloaded');
+  });
   $doc.on('click', '[data-sk-clear]', () => {
     if (!sketch.els.length) return;
     dialog.confirm({
@@ -2334,7 +3122,16 @@ $(function () {
     });
   });
   $doc.on('input', '[data-sk-name]', function () { sketch.name = this.value; skSave(); });
-  $doc.on('change', '[data-sk-name]', () => skPanel()); // path names follow the flow name
+  // path names follow the flow name; not redrawn in the middle of a click (the name loses focus on the press, and
+  // redrawing then would swap the Create button out from under the pointer, losing the click)
+  let skPressed = false;
+  let skPanelLater = false;
+  document.addEventListener('pointerdown', () => { skPressed = true; }, true);
+  document.addEventListener('pointerup', () => {
+    skPressed = false;
+    if (skPanelLater) { skPanelLater = false; setTimeout(skPanel); } // after this press's click
+  }, true);
+  $doc.on('change', '[data-sk-name]', () => { if (skPressed) skPanelLater = true; else skPanel(); });
   // a step in the list: select its box and bring it into view
   $doc.on('click', '[data-sk-focus]', function () {
     const el = skFind($(this).data('sk-focus'));
@@ -2356,8 +3153,13 @@ $(function () {
       toast('Name the flow first');
       return;
     }
+    const newCount = sketch.els.filter((x) => plan.placed.has(x.id) && !x.existing).length;
+    if (f && newCount === 0) {
+      toast('No new steps to add');
+      return;
+    }
     const steps = plan.steps;
-    const count = sketch.els.filter((x) => plan.placed.has(x.id)).length;
+    const count = newCount || sketch.els.filter((x) => plan.placed.has(x.id)).length;
     const req = f
       ? api('POST', `/api/flows/${f.id}/sketch`, { steps }, this)
       : api('POST', `/api/modules/${sketch.target.moduleId}/sketch`, { name, steps }, this);
@@ -2421,19 +3223,50 @@ $(function () {
       </div>
       <button class="popup-nav prev" data-popup-go="${prev ? prev.id : ''}" title="Previous screen in this flow (←)" ${prev ? '' : 'disabled'}>${icon('left', 20)}</button>
       ${next && next.condition
-        ? `<button class="popup-nav next" data-popup-choose title="${esc(next.condition.name)}: choose where to continue (→)">${icon('right', 20)}</button>
-          <div class="popup-choices hidden">
-            <p class="flex items-center gap-2 px-3 pb-1 pt-2 text-xs font-semibold text-slate-900"><span class="cond-diamond sm"></span>${esc(next.condition.name)}</p>
-            <p class="px-3 pb-2 text-xs text-slate-500">Continue with</p>
-            ${next.choices.map((c, k) => `
-              <button class="popup-choice" data-popup-go="${c.screen.id}">
-                <span class="cond-tag tone-${tone(c.branch.label)} mt-0"><span class="dot"></span>${esc(c.branch.label || '—')}</span>
-                <span class="min-w-0 flex-1 truncate text-left text-sm font-medium text-slate-900">${esc(c.screen.name)}</span>
-                ${c.flow && c.flow.id !== s.flowId ? `<span class="max-w-[90px] shrink-0 truncate text-xs text-slate-400">${esc(c.flow.name)}</span>` : ''}
-                <kbd>${k + 1}</kbd>
-              </button>`).join('') || '<p class="px-3 pb-3 text-sm text-slate-500">No branch leads to a screen yet.</p>'}
-          </div>`
+        ? `<button class="popup-nav next fork" data-popup-choose title="Next is a decision: ${esc(next.condition.name)} (→)">${icon('fork', 18)}<span class="fork-n">${next.choices.length}</span></button>
+          <span class="popup-nav-hint" data-popup-choose><span class="cond-diamond sm"></span>${esc(next.condition.name)}<b>${next.choices.length} way${next.choices.length === 1 ? '' : 's'}</b></span>
+          ${decisionPanel(s, next)}`
         : `<button class="popup-nav next" data-popup-go="${next ? next.id : ''}" title="Next screen in this flow (→)" ${next ? '' : 'disabled'}>${icon('right', 20)}</button>`}`);
+  }
+
+  // → into a condition: a decision card over the popup. The question (the condition's name), then one card per
+  // answer: "If <answer> → goes to <screen>" with a small picture of that screen, and its flow when it's another one.
+  // 1…9 pick an answer, Esc (or a click outside the card) stays on this screen.
+  const ANSWER_COLORS = ['#4f46e5', '#0891b2', '#7c3aed', '#db2777', '#0d9488', '#ca8a04'];
+  const TONE_COLORS = { success: '#16a34a', pending: '#ea580c', fail: '#dc2626' };
+  function decisionPanel(s, next) {
+    const cards = next.choices.map((c, k) => {
+      const color = TONE_COLORS[tone(c.branch.label)] || ANSWER_COLORS[k % ANSWER_COLORS.length];
+      const thumb = c.screen.image
+        ? `<img src="${esc(imageUrl(c.screen.image, 'sm'))}" alt="" loading="lazy" draggable="false">`
+        : `<span class="decide-wf">${icon(isPopup(c.screen) ? 'popup' : 'grid', 18)}</span>`;
+      return `<button class="popup-choice decide-opt" data-popup-go="${c.screen.id}" style="--tone:${color}">
+          <span class="decide-thumb">${thumb}</span>
+          <span class="decide-body">
+            <span class="decide-if">If</span>
+            <span class="decide-answer">${esc(c.branch.label || 'Otherwise')}</span>
+            <span class="decide-goes">${icon('right', 12)} goes to</span>
+            <span class="decide-target">${esc(c.screen.name)}</span>
+            ${c.flow && c.flow.id !== s.flowId ? `<span class="decide-flow">${icon('fork', 11)} ${esc(c.flow.name)}</span>` : ''}
+          </span>
+          <kbd>${k + 1}</kbd>
+        </button>`;
+    }).join('');
+    return `<div class="popup-choices decide hidden">
+      <div class="decide-card" role="dialog" aria-label="Choose where to continue">
+        <div class="decide-head">
+          <span class="decide-icon"><span class="cond-diamond"></span></span>
+          <div class="min-w-0 flex-1">
+            <p class="decide-kicker">Next step is a decision</p>
+            <h4 class="decide-q">${esc(next.condition.name)}</h4>
+            <p class="decide-sub">After <b>${esc(s.name)}</b>, the app goes one of ${next.choices.length} ways. Pick the case to follow.</p>
+          </div>
+          <button class="icon-btn" data-decide-close title="Stay here (Esc)">${icon('close', 16)}</button>
+        </div>
+        <div class="decide-grid">${cards || '<p class="decide-empty">No answer of this decision leads to a screen yet. Add one on the condition in the flow.</p>'}</div>
+        <p class="decide-foot"><kbd>1</kbd>–<kbd>${Math.max(1, next.choices.length)}</kbd> to pick · <kbd>Esc</kbd> to stay on this screen</p>
+      </div>
+    </div>`;
   }
 
   // Where ← and → lead from a screen in its flow. Going back skips conditions; going forward into a condition
@@ -2522,64 +3355,154 @@ $(function () {
 
   // ---------------------------------------------------------------- send on Teams: rows of a sheet or issues, with the columns picked
   //
-  // openTeamsSend({ title, count, columns: [{ id, label, on }], people: [{ id, name, teams }], webhook, send })
+  // openTeamsSend({ title, count, columns: [{ id, label, on }], people: [{ id, name, teams }], webhook, send, log, share })
   //   webhook: the app has a Teams channel (Workflows webhook, Sanity → Teams channel)
-  //   send({ columns, userIds, note, mode, button }) → jqXHR. mode 'channel': the server posts to the app's channel
+  //   send({ columns, userIds, note, mode, access, button }) → jqXHR. mode 'channel': the server posts to the app's channel
   //   and answers { teams, rows }; mode 'card': it answers { card, direct, people, rows } and this browser sends it
-  //   from your own Teams (public/graph.js).
-  // Where it goes: 'direct' = a chat with each person picked, 'mine' = a channel of a team you are in,
-  // 'app' = the app's channel. The last choice (and team / channel) is remembered in this browser.
+  //   from your own Teams (public/graph.js); mode 'none' (share only): nothing is sent.
+  //   log({ target, chatId, destination, messageId, ok, error, note }) (optional): told how a send from your own
+  //   Teams went, so the server can keep a record (the server records the app's channel itself).
+  //   excel (optional): the file name, when the whole sheet can go along as an Excel file (send gets { excel: true }
+  //   and, for mode 'card', answers it as { excel: { name, type, base64 } } to attach from your OneDrive)
+  //   share (optional): { access: 'view' | 'edit', picked: [user id] }: share a whole sheet instead of rows. There are
+  //   no columns, the people ticked are who it is shared with (always needed), and "Don't message" only gives access.
+  // Where it goes: 'direct' = a chat with each person picked, 'mine' = any of your own Teams chats (people you chat
+  // with, group chats you are in), 'app' = the app's channel. The last choice (and chats) is remembered here.
 
   let teamsSend = null;
-  const TEAMS_TARGETS = [['direct', 'Direct message'], ['mine', 'My Teams channel'], ['app', 'App channel']];
+  const TEAMS_TARGETS = [['direct', 'Direct message'], ['mine', 'My Teams chats'], ['app', 'App channel']];
   const teamsTargets = (webhook) => TEAMS_TARGETS.filter(([k]) => (k === 'app' ? webhook : window.flowGraph.configured()));
   const canSendTeams = (webhook) => teamsTargets(webhook).length > 0;
+  // the chats picked last time (was one chat, kept as 'teamsChat')
+  const lastChats = () => {
+    try { const list = JSON.parse(storage('get', 'teamsChats')); if (Array.isArray(list)) return list; } catch (e) { /* not saved yet */ }
+    return [storage('get', 'teamsChat')].filter(Boolean);
+  };
 
-  function openTeamsSend({ title, count, columns, people, webhook, send }) {
-    const targets = teamsTargets(webhook);
+  // ---- a Teams-like "To:" field: people (or chats) as chips with their initials, typed to find more
+  // tpick(name, [{ id, name, sub, kind }], picked Set, placeholder) → HTML; the picks stay checkboxes named `name`
+  // (hidden), so the form reads them as before.
+  const AVATAR_COLORS = ['#6264a7', '#c4314b', '#0f7b6c', '#ca5010', '#8764b8', '#038387', '#498205', '#986f0b'];
+  const initials = (name) => (String(name).trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join('') || '?').toUpperCase();
+  function avatar(name, kind) {
+    let h = 0;
+    for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return `<span class="tp-av" style="background:${AVATAR_COLORS[h % AVATAR_COLORS.length]}">${kind === 'group' ? icon('user', 12) : esc(initials(name))}</span>`;
+  }
+  const tpick = (name, items, picked, placeholder) => `<div class="tpick" data-tpick="${name}">
+      <div class="tpick-box"><span class="tpick-to">To:</span><span class="contents" data-tpick-chips></span>
+        <input class="tpick-input" placeholder="${esc(placeholder)}" autocomplete="off" data-tpick-input></div>
+      <div class="tpick-menu hidden" data-tpick-menu></div>
+      <div class="hidden">${items.map((x) => `<input type="checkbox" name="${name}" value="${esc(x.id)}" data-name="${esc(x.name)}" data-sub="${esc(x.sub || '')}" data-kind="${x.kind || ''}" ${picked.has(x.id) ? 'checked' : ''}>`).join('')}</div>
+    </div>`;
+  const tpickBoxes = (root) => $(root).find('input[type=checkbox]');
+  function tpickSync(root) {
+    $(root).find('[data-tpick-chips]').html(tpickBoxes(root).filter(':checked').map((i, el) => `<span class="tp-chip">${avatar(el.dataset.name, el.dataset.kind)}
+      <span class="truncate">${esc(el.dataset.name)}</span><button type="button" data-tpick-remove="${esc(el.value)}" title="Remove">${icon('close', 12)}</button></span>`).get().join(''));
+    $(root).find('[data-tpick-input]').attr('placeholder', tpickBoxes(root).filter(':checked').length ? '' : $(root).find('[data-tpick-input]').data('placeholder'));
+    countTeamsPicks();
+  }
+  function tpickMenu(root) {
+    const q = $(root).find('[data-tpick-input]').val().trim().toLowerCase();
+    const list = tpickBoxes(root).not(':checked').filter((i, el) => !q || el.dataset.name.toLowerCase().includes(q)).slice(0, 50).get();
+    $(root).find('[data-tpick-menu]').html(list.map((el, i) => `<button type="button" class="tp-opt ${i === 0 ? 'on' : ''}" data-tpick-add="${esc(el.value)}">
+        ${avatar(el.dataset.name, el.dataset.kind)}<span class="min-w-0 flex-1"><span class="block truncate">${esc(el.dataset.name)}</span>
+        ${el.dataset.sub ? `<span class="tp-sub">${esc(el.dataset.sub)}</span>` : ''}</span></button>`).join('')
+      || `<p class="tp-empty">${q ? 'Nobody matches' : tpickBoxes(root).length ? 'Everyone is added' : 'Nothing to pick yet'}</p>`).removeClass('hidden');
+  }
+  const tpickSet = (root, id, on) => {
+    tpickBoxes(root).filter((i, el) => el.value === String(id)).prop('checked', on);
+    tpickSync(root);
+  };
+  $doc.on('focus input', '[data-tpick-input]', function () { tpickMenu($(this).closest('.tpick')); });
+  $doc.on('blur', '[data-tpick-input]', function () { const root = $(this).closest('.tpick'); setTimeout(() => root.find('[data-tpick-menu]').addClass('hidden'), 120); });
+  $doc.on('mousedown', '[data-tpick-add]', function (e) {
+    e.preventDefault(); // keep typing in the field
+    const root = $(this).closest('.tpick');
+    root.find('[data-tpick-input]').val('');
+    tpickSet(root, $(this).data('tpick-add'), true);
+    tpickMenu(root);
+  });
+  $doc.on('click', '[data-tpick-remove]', function () { tpickSet($(this).closest('.tpick'), $(this).data('tpick-remove'), false); });
+  $doc.on('mousedown', '.tpick-box', function (e) { if (!$(e.target).closest('button, input').length) { e.preventDefault(); $(this).find('[data-tpick-input]').trigger('focus'); } });
+  $doc.on('keydown', '[data-tpick-input]', function (e) {
+    const root = $(this).closest('.tpick');
+    const opts = root.find('[data-tpick-add]');
+    const at = opts.index(opts.filter('.on'));
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const next = opts.eq(Math.max(0, Math.min(opts.length - 1, at + (e.key === 'ArrowDown' ? 1 : -1))));
+      opts.removeClass('on');
+      if (next.length) next.addClass('on')[0].scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'Enter') {
+      e.preventDefault(); // not the form's submit
+      if (at >= 0) opts.eq(at).trigger('mousedown');
+    } else if (e.key === 'Backspace' && !this.value) {
+      const last = tpickBoxes(root).filter(':checked').last();
+      if (last.length) tpickSet(root, last.val(), false);
+    } else if (e.key === 'Escape' && !root.find('[data-tpick-menu]').hasClass('hidden')) {
+      e.stopImmediatePropagation();
+      root.find('[data-tpick-menu]').addClass('hidden');
+    }
+  });
+
+  function openTeamsSend({ title, count, columns, people, webhook, send, log, share, excel }) {
+    const targets = [...teamsTargets(webhook), ...(share ? [['none', 'Don\'t message']] : [])];
     if (!targets.length) { dialog.alert('This app has no Teams channel yet. A super admin can add it in Sanity → Teams channel.', 'Teams'); return; }
     const last = storage('get', 'teamsTarget');
     teamsSend = {
-      send, count,
+      send, count, log, share,
       target: targets.some(([k]) => k === last) ? last : targets[0][0],
-      team: storage('get', 'teamsTeam') || '', channel: storage('get', 'teamsChannel') || '', teams: null,
+      chats: null, chatPicks: new Set(lastChats()),
     };
     const pick = (name, value, label, on) => `<label class="teams-pick"><input type="checkbox" class="h-4 w-4 accent-indigo-600" name="${name}" value="${esc(value)}" ${on ? 'checked' : ''}> ${label}</label>`;
+    const allNone = (name) => `<button type="button" class="text-xs text-indigo-600 hover:underline" data-teams-all="${name}">All</button>
+      <button type="button" class="text-xs text-indigo-600 hover:underline" data-teams-none="${name}">None</button>`;
+    const picked = new Set(share ? share.picked || [] : []);
     $('#teamsForm').html(`
       <div class="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
         <span class="text-indigo-600">${icon('share', 18)}</span>
         <div class="min-w-0 flex-1">
           <h3 class="truncate text-base font-semibold text-slate-900">${esc(title)}</h3>
-          <p class="text-xs text-slate-500">${count} row${count === 1 ? '' : 's'}${count > 40 ? ' (the first 40 are listed, with a link to the rest)' : ''}</p>
+          <p class="text-xs text-slate-500">${count} row${count === 1 ? '' : 's'}${share ? '' : count > 40 ? ' (the first 40 are listed, with a link to the rest)' : ''}</p>
         </div>
         <button type="button" class="icon-btn" data-close-teams title="Close">${icon('close', 18)}</button>
       </div>
       <div class="space-y-4 px-5 py-4">
+        ${share ? `
         <div>
-          <span class="field-label">Send to</span>
+          <span class="field-label">They can</span>
+          <div class="seg">${[['view', 'View'], ['edit', 'Edit']].map(([k, label]) => `<button type="button" data-teams-access="${k}" class="${k === share.access ? 'on' : ''}">${label}</button>`).join('')}</div>
+          <p class="mt-1.5 text-xs text-slate-500">View-only logins can never edit. Nobody loses access they already have.</p>
+        </div>` : ''}
+        <div>
+          <span class="field-label">${share ? 'Tell them on Teams' : 'Send to'}</span>
           ${targets.length > 1 ? `<div class="seg">${targets.map(([k, label]) => `<button type="button" data-teams-target="${k}">${label}</button>`).join('')}</div>` : ''}
           <p class="mt-1.5 text-xs text-slate-500" data-teams-hint></p>
           <div class="mt-2 hidden" data-teams-mine>
-            <div class="grid grid-cols-2 gap-2">
-              <select class="input w-full text-sm" data-teams-team><option value="">Team…</option></select>
-              <select class="input w-full text-sm" data-teams-channel><option value="">Channel…</option></select>
-            </div>
-            <button type="button" class="mt-1.5 text-xs text-indigo-600 hover:underline" data-teams-load>Load my teams</button>
+            <div class="flex items-center gap-2"><span class="field-label flex-1">Chats <span class="font-normal text-slate-400" data-teams-count="chat"></span></span>${allNone('chat')}</div>
+            <div data-tpick-wrap="chat">${tpick('chat', [], new Set(), 'Load your chats first')}</div>
+            <button type="button" class="mt-1.5 text-xs text-indigo-600 hover:underline" data-teams-load>Load my chats</button>
           </div>
         </div>
+        ${columns ? `
         <div>
-          <div class="flex items-center gap-2"><span class="field-label flex-1">Columns to send</span>
-            <button type="button" class="text-xs text-indigo-600 hover:underline" data-teams-all="col">All</button>
-            <button type="button" class="text-xs text-indigo-600 hover:underline" data-teams-none="col">None</button></div>
-          <div class="teams-picks">${columns.map((c) => pick('col', c.id, esc(c.label), c.on !== false)).join('')}</div>
-        </div>
+          <div class="flex items-center gap-2"><span class="field-label flex-1">Columns to send</span>${allNone('col')}</div>
+          <div class="teams-picks pills">${columns.map((c) => pick('col', c.id, esc(c.label), c.on !== false)).join('')}</div>
+        </div>` : ''}
+        ${excel ? `
+        <label class="tp-file"><input type="checkbox" name="excel" class="h-4 w-4 accent-indigo-600">
+          <span class="tp-xls">XLS</span>
+          <span class="min-w-0 flex-1"><span class="block truncate text-sm font-medium text-slate-800">Attach the whole sheet as Excel</span>
+            <span class="block truncate text-xs text-slate-500">${esc(excel)} · every row and column, <span data-teams-excel-how></span></span></span></label>` : ''}
         <div>
-          <span class="field-label" data-teams-people-label>@mention</span>
-          <div class="teams-picks max-h-40 overflow-y-auto">${people.map((u) => pick('user', u.id, `${esc(u.name)}${u.teams ? '' : ' <span class="text-xs text-slate-400">· no Teams email</span>'}`, false)).join('')
-            || '<span class="text-sm text-slate-400">Nobody else can open this app.</span>'}</div>
+          <div class="flex items-center gap-2"><span class="field-label flex-1"><span data-teams-people-label>@mention</span> <span class="font-normal text-slate-400" data-teams-count="user"></span></span>
+            ${people.length > 1 ? allNone('user') : ''}</div>
+          ${people.length ? tpick('user', people.map((u) => ({ id: u.id, name: u.name, sub: u.teams ? '' : 'No Teams email yet' })), picked, 'Type a name')
+            : '<p class="text-sm text-slate-400">Nobody else can open this app.</p>'}
         </div>
         <label class="block"><span class="field-label">Message <span class="font-normal text-slate-400">(optional)</span></span>
-          <textarea class="input w-full" name="note" rows="2" maxlength="1000" placeholder="e.g. Please check these before the 6 pm build"></textarea></label>
+          <textarea class="input w-full" name="note" rows="2" maxlength="1000" placeholder="${share ? 'e.g. Please fill in your rows by Friday' : 'e.g. Please check these before the 6 pm build'}"></textarea></label>
         <p class="dialog-error hidden"></p>
       </div>
       <div class="flex justify-end gap-2 border-t border-slate-200 px-5 py-3">
@@ -2587,6 +3510,8 @@ $(function () {
         <button class="btn-primary" data-teams-submit>${icon('share', 14)} Send</button>
       </div>`);
     teamsSend.people = people;
+    $('#teamsForm [data-tpick-input]').each((i, el) => $(el).data('placeholder', el.placeholder));
+    $('#teamsForm .tpick').each((i, el) => tpickSync(el));
     showTeamsTarget();
     $('#teamsModal').removeClass('hidden');
     $('body').addClass('overflow-hidden');
@@ -2595,42 +3520,52 @@ $(function () {
   function showTeamsTarget() {
     const t = teamsSend.target;
     const connected = Boolean(window.flowGraph.account());
+    const signIn = connected ? '' : ' (you sign in to Microsoft once)';
     $('[data-teams-target]').each((i, el) => $(el).toggleClass('on', $(el).data('teams-target') === t));
-    $('[data-teams-hint]').text({
-      direct: `Each person you tick gets it in a chat with you, sent from your Teams${connected ? '' : ' (you sign in to Microsoft once)'}.`,
-      mine: `Posted as you in a channel of a team you are in, @mentioning the people you tick${connected ? '' : ' (you sign in to Microsoft once)'}.`,
+    $('[data-teams-hint]').text((teamsSend.share ? {
+      direct: `Each person you tick gets access and a link to the sheet in a chat with you, sent from your Teams${signIn}.`,
+      mine: `Each person you tick gets access; the link is posted as you in every chat you pick, @mentioning them${signIn}.`,
+      app: 'Each person you tick gets access; the link is posted in this app\'s Teams channel, @mentioning them.',
+      none: 'Each person you tick gets access. Nothing is sent on Teams: they find it under Sheets.',
+    } : {
+      direct: `Each person you tick gets it in a chat with you, sent from your Teams${signIn}.`,
+      mine: `Sent as you to every chat you pick (people you chat with, group chats you are in), @mentioning the people you tick${signIn}.`,
       app: 'Posted in this app\'s Teams channel, @mentioning the people you tick.',
-    }[t]);
-    $('[data-teams-people-label]').html(t === 'direct' ? 'Send to' : '@mention <span class="font-normal text-slate-400">(optional)</span>');
-    $('[data-teams-submit]').html(`${icon('share', 14)} ${t === 'direct' ? 'Send messages' : 'Post on Teams'}`);
+    })[t]);
+    $('[data-teams-people-label]').html(teamsSend.share ? 'Share with' : t === 'direct' ? 'Send to' : '@mention <span class="font-normal text-slate-400">(optional)</span>');
+    $('[data-teams-submit]').html(`${icon('share', 14)} ${teamsSend.share ? (t === 'none' ? 'Share' : 'Share and send') : t === 'direct' ? 'Send messages' : 'Post on Teams'}`);
     $('[data-teams-mine]').toggleClass('hidden', t !== 'mine');
-    $('[data-teams-load]').toggleClass('hidden', Boolean(teamsSend.teams));
+    // the channel can't take files: it gets a Download Excel button instead; "Don't message" sends nothing
+    $('.tp-file').toggleClass('hidden', t === 'none');
+    $('[data-teams-excel-how]').text(t === 'app' ? 'as a Download Excel button in the post' : 'attached from your OneDrive');
+    $('[data-teams-load]').toggleClass('hidden', Boolean(teamsSend.chats));
     // with Teams connected the list loads by itself; else after a click (it may need the sign-in popup)
-    if (t === 'mine' && !teamsSend.teams && connected) loadMyTeams(true);
+    if (t === 'mine' && !teamsSend.chats && connected) loadMyChats(true);
   }
 
-  function loadMyTeams(quiet) {
-    const $err = $('#teamsForm .dialog-error');
-    return window.flowGraph.teamsList().then((list) => {
-      if (!teamsSend) return;
-      teamsSend.teams = list;
-      if (!list.some((x) => x.id === teamsSend.team)) teamsSend.team = list[0] ? list[0].id : '';
-      $('[data-teams-team]').html(`<option value="">Team…</option>${list.map((x) => `<option value="${esc(x.id)}" ${x.id === teamsSend.team ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}`);
-      $('[data-teams-load]').addClass('hidden');
-      if (!list.length) $err.text('You are not in any team on Teams.').removeClass('hidden');
-      renderAccount();
-      return loadMyChannels();
-    }).catch((err) => { if (!quiet) $err.text(err.message).removeClass('hidden'); });
+  // "3 picked" next to people and chats
+  function countTeamsPicks() {
+    $('[data-teams-count]').each((i, el) => {
+      const n = $(`#teamsForm [name="${$(el).data('teams-count')}"]:checked`).length;
+      $(el).text(n ? `· ${n} picked` : '');
+    });
   }
-  function loadMyChannels() {
-    const { team } = teamsSend;
-    $('[data-teams-channel]').html('<option value="">Channel…</option>');
-    if (!team) return Promise.resolve();
-    return window.flowGraph.channelsOf(team).then((list) => {
-      if (!teamsSend || teamsSend.team !== team) return;
-      if (!list.some((x) => x.id === teamsSend.channel)) teamsSend.channel = (list.find((x) => /general/i.test(x.name)) || list[0] || {}).id || '';
-      $('[data-teams-channel]').html(`<option value="">Channel…</option>${list.map((x) => `<option value="${esc(x.id)}" ${x.id === teamsSend.channel ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}`);
-    }).catch((err) => $('#teamsForm .dialog-error').text(err.message).removeClass('hidden'));
+
+  // Your chats in one list: People (1:1 chats) and Groups (group chats you are in); tick as many as you like
+  function loadMyChats(quiet) {
+    const $err = $('#teamsForm .dialog-error');
+    return window.flowGraph.chatsList().then((list) => {
+      if (!teamsSend) return;
+      teamsSend.chats = list;
+      $('[data-tpick-wrap="chat"]').html(tpick('chat', list.map((x) => ({ id: x.id, name: x.name, kind: x.kind, sub: x.kind === 'group' ? 'Group chat' : 'Chat' })),
+        teamsSend.chatPicks, 'Type a person or group chat'));
+      const $in = $('[data-tpick-wrap="chat"] [data-tpick-input]');
+      $in.data('placeholder', $in.attr('placeholder'));
+      tpickSync($('[data-tpick-wrap="chat"] .tpick'));
+      $('[data-teams-load]').addClass('hidden');
+      if (!list.length) $err.text('You have no chats on Teams yet.').removeClass('hidden');
+      renderAccount();
+    }).catch((err) => { if (!quiet) $err.text(err.message).removeClass('hidden'); });
   }
 
   function closeTeamsSend() {
@@ -2643,15 +3578,19 @@ $(function () {
   $doc.on('click', '[data-teams-all], [data-teams-none]', function () {
     const all = $(this).is('[data-teams-all]');
     $(`#teamsForm [name="${$(this).data(all ? 'teams-all' : 'teams-none')}"]`).prop('checked', all);
+    $('#teamsForm .tpick').each((i, el) => tpickSync(el));
+    countTeamsPicks();
   });
   $doc.on('click', '[data-teams-target]', function () {
     teamsSend.target = $(this).data('teams-target');
     $('#teamsForm .dialog-error').addClass('hidden');
     showTeamsTarget();
   });
-  $doc.on('click', '[data-teams-load]', () => loadMyTeams(false));
-  $doc.on('change', '[data-teams-team]', function () { teamsSend.team = this.value; teamsSend.channel = ''; loadMyChannels(); });
-  $doc.on('change', '[data-teams-channel]', function () { teamsSend.channel = this.value; });
+  $doc.on('click', '[data-teams-access]', function () {
+    teamsSend.share.access = $(this).data('teams-access');
+    $('[data-teams-access]').each((i, el) => $(el).toggleClass('on', $(el).data('teams-access') === teamsSend.share.access));
+  });
+  $doc.on('click', '[data-teams-load]', () => loadMyChats(false));
 
   // "Sent to A, B" (+ who could not be reached, and why)
   function teamsDirectResult(results) {
@@ -2661,40 +3600,71 @@ $(function () {
     dialog.alert(`${sent.length ? `Sent to ${sent.join(', ')}. ` : ''}Not sent to ${failed.map((x) => `${x.name} (${x.error})`).join(', ')}.`, sent.length ? 'Partly sent' : 'Not sent');
   }
 
+  // The same message in each chat, one after the other → [{ id, name, ok, error, messageId }]
+  function sendToChats(ids, card, file) {
+    const name = (id) => ((teamsSend.chats || []).find((x) => x.id === id) || {}).name || 'a chat';
+    return ids.reduce((done, id) => done.then((out) => window.flowGraph.sendChat(id, card, file).then(
+      (msg) => [...out, { id, name: name(id), ok: true, messageId: msg && msg.id }],
+      (err) => [...out, { id, name: name(id), ok: false, error: err.message }],
+    )), Promise.resolve([]));
+  }
+
   $('#teamsForm').on('submit', function (e) {
     e.preventDefault();
     const $f = $(this);
     const $err = $f.find('.dialog-error').addClass('hidden');
     const fail = (msg) => $err.text(msg).removeClass('hidden');
     const picked = (name) => $f.find(`[name="${name}"]:checked`).map((i, el) => el.value).get();
+    const { target, share } = teamsSend;
     const columns = picked('col');
     const userIds = picked('user');
-    const { target, team, channel } = teamsSend;
-    if (!columns.length) { fail('Pick at least one column.'); return; }
+    const chats = picked('chat');
+    if (!share && !columns.length) { fail('Pick at least one column.'); return; }
+    if (share && !userIds.length) { fail('Tick who to share it with.'); return; }
     if (target === 'direct' && !userIds.length) { fail('Tick who to send it to.'); return; }
     if (target === 'direct' && !teamsSend.people.some((u) => userIds.includes(u.id) && u.teams)) {
       fail('None of them has a Teams email yet. A super admin adds it to their login in Admin (or they connect Teams themselves).');
       return;
     }
-    if (target === 'mine' && (!team || !channel)) { fail('Pick a team and a channel.'); return; }
+    if (target === 'mine' && !chats.length) { fail('Tick at least one person or group chat.'); return; }
     storage('set', 'teamsTarget', target);
     const button = $f.find('[data-teams-submit]')[0];
-    const val = { columns, userIds, note: $f.find('[name=note]').val().trim(), button };
-    if (target === 'app') {
-      teamsSend.send({ ...val, mode: 'channel' })
-        .done((r) => { closeTeamsSend(); toast(`Sent ${r.rows} row${r.rows === 1 ? '' : 's'} on Teams`); })
+    const val = { columns, userIds, note: $f.find('[name=note]').val().trim(), access: share && share.access, excel: $f.find('[name=excel]').prop('checked'), button };
+    const what = (r) => (r.rows !== undefined ? `${r.rows} row${r.rows === 1 ? '' : 's'}` : 'the sheet');
+    if (target === 'app' || target === 'none') {
+      teamsSend.send({ ...val, mode: target === 'app' ? 'channel' : 'none' })
+        .done((r) => {
+          closeTeamsSend();
+          toast(share ? `Shared with ${r.shared} ${r.shared === 1 ? 'person' : 'people'}${target === 'app' ? ' and posted on Teams' : ''}` : `Sent ${what(r)} on Teams`);
+        })
         .fail((xhr) => fail(errorText(xhr)));
       return;
     }
-    if (target === 'mine') { storage('set', 'teamsTeam', team); storage('set', 'teamsChannel', channel); }
+    if (target === 'mine') storage('set', 'teamsChats', JSON.stringify(chats));
     setBusy(button, true);
+    // how a send from your own Teams went, for the server's record (each chat by its Graph id, and its name)
+    const { log } = teamsSend;
+    const record = (entry) => { if (log) log({ target, note: val.note, ...entry }); };
     // sign in first, while this is still the click (browsers allow the popup then)
-    const signIn = window.flowGraph.account() ? Promise.resolve() : window.flowGraph.connect();
+    // with an Excel the sign-in also asks for your OneDrive, so all of it is one popup
+    const signIn = val.excel ? window.flowGraph.allow('files') : window.flowGraph.account() ? Promise.resolve() : window.flowGraph.connect();
     signIn
       .then(() => teamsSend.send({ ...val, mode: 'card' }))
+      .then((r) => (r.excel ? window.flowGraph.uploadFile(r.excel).then((file) => ({ ...r, file })) : r))
       .then((r) => (target === 'direct'
-        ? window.flowGraph.sendDirect(r.people, r.direct).then((results) => { closeTeamsSend(); teamsDirectResult(results); })
-        : window.flowGraph.sendChannel(team, channel, r.card).then(() => { closeTeamsSend(); toast(`Posted ${r.rows} row${r.rows === 1 ? '' : 's'} on Teams`); })))
+        ? window.flowGraph.sendDirect(r.people, r.direct, r.file).then((results) => {
+          const failed = results.filter((x) => !x.ok);
+          record({ destination: results.map((x) => x.name).join(', '), ok: failed.length < results.length, error: failed.map((x) => `${x.name}: ${x.error}`).join('; ') });
+          closeTeamsSend();
+          teamsDirectResult(results);
+        })
+        : sendToChats(chats, r.card, r.file).then((results) => {
+          results.forEach((x) => record({ chatId: x.id, destination: x.name, messageId: x.messageId, ok: x.ok, error: x.error }));
+          if (!results.some((x) => x.ok)) throw new Error(results.map((x) => `${x.name}: ${x.error}`).join('; '));
+          closeTeamsSend();
+          if (results.every((x) => x.ok)) toast(`Posted ${what(r)} on Teams in ${results.length === 1 ? results[0].name : `${results.length} chats`}`);
+          else teamsDirectResult(results);
+        })))
       .catch((err) => fail(err && err.readyState !== undefined ? errorText(err) : (err && err.message) || 'Could not send on Teams'))
       .finally(() => { setBusy(button, false); renderAccount(); });
   });
@@ -2712,6 +3682,7 @@ $(function () {
         people: d.people.filter((u) => u.id !== me.id),
         webhook: d.teams,
         send: (val) => api('POST', '/api/issues/teams', { productId: pid, ids, columns: val.columns, userIds: val.userIds, note: val.note, mode: val.mode }, val.button, QUIET),
+        log: (entry) => api('POST', '/api/issues/teams/log', { productId: pid, ids, ...entry }, null, QUIET),
       });
     });
   }
@@ -2845,22 +3816,27 @@ $(function () {
   // ---------------------------------------------------------------- account + sign in
 
   function renderAccount() {
-    if (!me) { $('#account').empty(); return; }
+    if (!me) { $('#account, #sbNav').empty(); return; }
     const current = products.find((p) => p.id === productId);
     const version = current && current.version ? current.version.replace(/^v(?=\d)/i, '') : '';
+    $('#sbNav').html(`
+      <button class="sb-write" data-action="writer" title="Write an issue on any screen">${icon('plus', 16)}<span class="sb-label">Write issue</span></button>
+      <a href="/" class="sb-item ${!sheetsView && !sanity && !adminView ? 'on' : ''}" data-action="home" title="Board: modules, flows and screens"><span class="sb-ico">${icon('home', 16)}</span><span class="sb-label">Board</span></a>
+      ${sbItem({ attrs: 'data-action="sheets"', ico: icon('grid', 16), label: 'Sheets', on: Boolean(sheetsView), title: 'Sheets: typed columns, formulas, links to flows and screens, Excel in and out' })}
+      ${sbItem({ attrs: 'data-action="sanity"', ico: icon('check', 16), label: 'Sanity', on: Boolean(sanity), title: 'Daily sanity checklist of this app' })}
+      ${sbItem({ attrs: 'data-action="done"', ico: icon('note', 16), label: 'Done today', title: 'What you finished today, shared on Teams' })}
+      <a class="sb-item" href="/api/export" title="Download every task as an Excel sheet"><span class="sb-ico">${icon('download', 16)}</span><span class="sb-label">Excel export</span></a>
+      ${sbItem({ attrs: 'data-action="admin"', ico: icon('shield', 16), label: 'Users & access', on: Boolean(adminView), title: 'Admin: logins, passwords and access' })}`);
     $('#account').html(`
-      ${version ? `<button class="version-tag" data-action="sanity-logs" title="Present version of ${esc(current.name)}: the latest version tested in Sanity. Opens the sanity logs.">v${esc(version)}</button>` : ''}
-      <span class="account" title="${esc(ACCESS[me.access].hint)}">${icon('user', 14)} ${esc(me.name || me.username)}
-        <span class="access-tag access-${me.access}">${ACCESS[me.access].label}</span></span>
-      <button class="btn-secondary px-3 py-1 text-xs ${sheetsView ? 'on' : ''}" data-action="sheets" title="Your own sheets: typed columns, links to flows and screens, Excel in and out">${icon('grid', 12)} Sheets</button>
-      <button class="btn-secondary px-3 py-1 text-xs ${sanity ? 'on' : ''}" data-action="sanity" title="Daily sanity checklist of this app">${icon('check', 12)} Sanity</button>
-      <button class="btn-secondary px-3 py-1 text-xs" data-action="done" title="What you finished today, shared on Teams">${icon('note', 12)} Done today</button>
-      <button class="btn-primary px-3 py-1 text-xs" data-action="writer" title="Write an issue on any screen">${icon('plus', 12)} Write issue</button>
-      <a class="btn-secondary px-3 py-1 text-xs" href="/api/export" title="Download every task as an Excel sheet">${icon('download', 12)} Excel</a>
-      <button class="btn-secondary px-3 py-1 text-xs" data-action="admin">Admin</button>
-      ${teamsAccount()}
-      ${themeButton()}
-      <button class="tab-add" data-action="logout">Sign out</button>`);
+      ${version ? `<button class="sb-version" data-action="sanity-logs" title="Present version of ${esc(current.name)}: the latest version tested in Sanity. Opens the sanity logs.">
+        <span class="sb-ico">${icon('tag', 14)}</span><span class="sb-label">${esc(current.name)} <b>v${esc(version)}</b></span></button>` : ''}
+      <div class="sb-tools-row">${teamsAccount()}${themeButton()}</div>
+      <div class="sb-user" title="${esc(ACCESS[me.access].hint)}">
+        <span class="sb-avatar">${esc(appInitials(me.name || me.username))}</span>
+        <span class="sb-label min-w-0 flex-1"><span class="block truncate text-sm font-semibold text-slate-900">${esc(me.name || me.username)}</span>
+          <span class="access-tag access-${me.access}">${ACCESS[me.access].label}</span></span>
+        <button class="icon-btn sb-logout" data-action="logout" title="Sign out">${icon('logout', 16)}</button>
+      </div>`);
   }
   // Your own Teams (public/graph.js): connect your Microsoft account once, then FlowTrace sends as you: direct
   // messages, posts in your channels, and a message to people when you give them an issue or change its status.
@@ -2869,8 +3845,8 @@ $(function () {
     if (!g.configured()) return '';
     const acc = g.account();
     return `<details class="sheet-share teams-account">
-      <summary class="btn-secondary px-3 py-1 text-xs ${acc ? 'on' : ''}" title="${acc ? `Teams: connected as ${esc(acc.username)}` : 'Connect your Microsoft Teams'}">
-        ${icon('chat', 12)} Teams${acc ? '<span class="teams-dot"></span>' : ''}</summary>
+      <summary class="sb-item ${acc ? 'on' : ''}" data-teams-summary title="${acc ? `Teams: connected as ${esc(acc.username)}` : 'Connect your Microsoft Teams'}">
+        <span class="sb-ico">${icon('chat', 16)}${acc ? '<span class="teams-dot"></span>' : ''}</span><span class="sb-label">Teams</span></summary>
       <div class="sheet-share-pop">
         ${acc ? `
           <p class="text-sm font-semibold text-slate-900">Teams connected</p>
@@ -2917,10 +3893,12 @@ $(function () {
   };
   $doc.on('click', '[data-theme-toggle]', function () {
     if (!window.flowTheme) return;
-    window.flowTheme.toggle();
-    $(this).replaceWith(themeButton());
-    if (diagram.flowId) renderDiagram(); // its wires take colours from the theme
-    if (sketch.open) skDraw();
+    const button = this;
+    window.flowTheme.toggle(button, () => {
+      $(button).replaceWith(themeButton());
+      if (diagram.flowId) renderDiagram(); // its wires take colours from the theme
+      if (sketch.open) skDraw();
+    });
   });
 
   function showLogin() {
@@ -2941,71 +3919,255 @@ $(function () {
   });
   $doc.on('click', '[data-action="logout"]', () => api('POST', '/api/logout').always(() => location.reload()));
 
-  // ---------------------------------------------------------------- admin dashboard (super admins): logins + app access
+  // ---------------------------------------------------------------- who is online (presence.js, a WebSocket)
+  // Every tab keeps a socket open and says every 30 s whether you used it (key, click, mouse, scroll) in the last
+  // 2 minutes with the tab in front. Super admins get everyone's state pushed back: online (used in the last 2 min),
+  // away (a tab open, not used for 2 min) or offline (with when they were last here), shown live on Users & access.
+  // The socket comes back by itself after a drop (waiting a little longer each time, up to 30 s).
+
+  const PRESENCE_ACTIVE = 2 * 60 * 1000;
+  const live = { ws: null, tries: 0, used: Date.now(), users: new Map(), beat: null };
+  const markUsed = () => { live.used = Date.now(); };
+  ['pointerdown', 'keydown', 'mousemove', 'wheel', 'touchstart'].forEach((ev) => window.addEventListener(ev, markUsed, { passive: true }));
+  const inUse = () => document.visibilityState === 'visible' && Date.now() - live.used < PRESENCE_ACTIVE;
+  const sendBeat = () => { if (live.ws && live.ws.readyState === 1) live.ws.send(JSON.stringify({ type: 'beat', active: inUse() })); };
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') markUsed(); sendBeat(); });
+
+  function connectPresence() {
+    if (live.ws || !me || !window.WebSocket) return;
+    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+    live.ws = ws;
+    ws.onopen = () => {
+      live.tries = 0;
+      sendBeat();
+      clearInterval(live.beat);
+      live.beat = setInterval(sendBeat, 30000);
+    };
+    ws.onmessage = (e) => {
+      let m;
+      try { m = JSON.parse(e.data); } catch (err) { return; }
+      if (m.type !== 'presence') return;
+      live.users = new Map(m.users.map((u) => [u.id, u]));
+      paintPresence();
+    };
+    ws.onclose = (e) => {
+      clearInterval(live.beat);
+      live.ws = null;
+      if (e.code === 4401 || e.code === 4403) return; // signed out, or not this app: no point trying again
+      live.tries += 1;
+      setTimeout(connectPresence, Math.min(30000, 1000 * 2 ** live.tries));
+    };
+  }
+
+  // a login's state: from the socket when it has spoken, else from when the users list was loaded
+  const presenceOf = (u) => live.users.get(u.id) || u.presence || { status: 'offline', lastSeen: null };
+  function presenceText(u) {
+    const p = presenceOf(u);
+    if (p.status === 'online') return '<span class="pr pr-online"><i></i>Online</span>';
+    if (p.status === 'away') return '<span class="pr pr-away"><i></i>Away</span> <span class="text-slate-400">· idle</span>';
+    if (p.lastSeen && Date.now() - new Date(p.lastSeen).getTime() < PRESENCE_ACTIVE) return '<span class="pr pr-recent"><i></i>Just left</span>';
+    return `<span class="pr pr-off"><i></i>Offline</span> <span class="text-slate-400">· ${p.lastSeen ? `last seen ${esc(ago(p.lastSeen))}` : 'never seen'}</span>`;
+  }
+  function presenceStat() {
+    const states = users.map((u) => presenceOf(u).status);
+    const on = states.filter((x) => x === 'online').length;
+    const away = states.filter((x) => x === 'away').length;
+    return `<div class="adm-stat green"><p class="adm-stat-n">${on}</p><p class="adm-stat-l">Online now</p>
+      <p class="adm-stat-h">${away ? `${away} away · ` : ''}live, active in the last 2 min</p></div>`;
+  }
+  // only the state parts of the Users & access page, so an open form keeps what is typed
+  function paintPresence() {
+    if (!adminView) return;
+    users.forEach((u) => {
+      $(`[data-presence="${u.id}"]`).html(presenceText(u));
+      $(`[data-presence-dot="${u.id}"]`).attr('class', `adm-online pr-${presenceOf(u).status}`).attr('title', presenceOf(u).status);
+    });
+    $('[data-presence-stat]').html(presenceStat());
+  }
+  // "last seen 3 min ago" and "Just left" move on by themselves
+  setInterval(paintPresence, 30000);
+
+  // ---------------------------------------------------------------- admin (super admins): its own page, like Sheets
+  // People with a login: who they are, what they can do (access) and which apps they open. Summary cards on top, a
+  // list to search and filter, and a panel from the right to make or change a login. A new login (or a new password)
+  // ends on its credentials, to copy and send to the person: the password is shown only then.
+  // The address (#admin) keeps the page after a refresh.
 
   let users = [];
-  let editing = null; // user being edited, null = new login
+  // { q, access: '' | level, app: '' | product id, panel: null | { id: user id | null, reset, created: { username, password } } }
+  let adminView = null;
+
+  const ago = (iso) => {
+    if (!iso) return '';
+    const min = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+    if (min < 1) return 'just now';
+    if (min < 60) return `${min} min ago`;
+    if (min < 60 * 24) return `${Math.round(min / 60)} h ago`;
+    if (min < 60 * 24 * 30) return `${Math.round(min / 1440)} d ago`;
+    return fmtDate(iso);
+  };
+  const appNamesOf = (x) => (x.allProducts ? ['All apps'] : x.productIds.map((id) => (products.find((p) => p.id === id) || {}).name).filter(Boolean));
+  // a password that reads well when sent: no 0 / O / 1 / l / I
+  function newPassword() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+    const marks = '@#$%&*!?';
+    const rnd = new Uint32Array(14);
+    crypto.getRandomValues(rnd);
+    const s = [...rnd.slice(0, 12)].map((n) => chars[n % chars.length]);
+    s.splice(4, 0, marks[rnd[12] % marks.length]);
+    s.splice(9, 0, String(2 + (rnd[13] % 8)));
+    return s.join('');
+  }
+
+  const loadUsers = () => api('GET', '/api/users').done((list) => { users = list; if (adminView) renderAdmin(); });
+
+  function openAdmin() {
+    loadUsers().done(() => {
+      if (sheetsView) closeSheets();
+      if (sanity) closeSanity();
+      adminView = adminView || { q: '', access: '', app: '', panel: null };
+      $('#board, #tabs').addClass('hidden');
+      $('#adminPage').removeClass('hidden');
+      renderAdmin();
+      markNav();
+      history.replaceState(null, '', `${location.pathname}${location.search}#admin`);
+      window.scrollTo(0, 0);
+    });
+  }
+  function closeAdmin() {
+    adminView = null;
+    $('#adminPage').addClass('hidden').empty();
+    $('#board, #tabs').removeClass('hidden');
+    unlockScroll();
+    markNav();
+    history.replaceState(null, '', location.pathname + location.search);
+  }
+
+  function adminRows() {
+    const { q, access, app } = adminView;
+    const s = q.trim().toLowerCase();
+    return users.filter((x) => (!access || x.access === access)
+      && (!app || x.allProducts || x.access === 'super' || x.productIds.includes(app))
+      && (!s || [x.name, x.username, x.teamsEmail, ...appNamesOf(x)].some((t) => String(t || '').toLowerCase().includes(s))));
+  }
 
   function renderAdmin() {
-    const u = users.find((x) => x.id === editing) || null;
-    const access = u ? u.access : 'view';
-    const all = u ? u.allProducts : false;
-    const appNames = (x) => (x.allProducts ? 'All apps' : x.productIds.map((id) => (products.find((p) => p.id === id) || {}).name).filter(Boolean).join(', ') || 'No apps');
-    $('#adminBody').html(`
-      <div class="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
-        <h3 class="min-w-0 flex-1 text-base font-semibold text-slate-900">Logins and access</h3>
-        <button class="icon-btn" data-close-admin title="Close">${icon('close', 18)}</button>
-      </div>
-      <div class="grid gap-5 p-5 md:grid-cols-[1fr_340px]">
-        <div class="min-w-0">
-          <div class="admin-list">
-            ${users.map((x) => `
-              <div class="admin-row ${x.id === editing ? 'on' : ''}">
-                <div class="min-w-0 flex-1">
-                  <p class="truncate text-sm font-medium text-slate-900">${esc(x.name || x.username)} ${x.id === me.id ? '<span class="text-xs font-normal text-slate-400">(you)</span>' : ''}</p>
-                  <p class="truncate text-xs text-slate-500"><span class="font-mono">${esc(x.username)}</span> · ${esc(appNames(x))}</p>
-                </div>
-                ${x.sanityTester ? '<span class="access-tag sanity-tag">Sanity</span>' : ''}
-                <span class="access-tag access-${x.access}">${ACCESS[x.access].label}</span>
-                <button class="icon-btn" data-admin-edit="${x.id}" title="Edit">${icon('edit', 14)}</button>
-                ${x.id === me.id ? '<span class="w-7"></span>' : `<button class="icon-btn danger" data-admin-delete="${x.id}" title="Delete login">${icon('trash', 14)}</button>`}
-              </div>`).join('')}
-          </div>
+    const v = adminView;
+    const list = adminRows();
+    const count = (k) => users.filter((x) => x.access === k).length;
+    const stat = (label, n, hint, tone) => `<div class="adm-stat ${tone}"><p class="adm-stat-n">${n}</p><p class="adm-stat-l">${label}</p><p class="adm-stat-h">${hint}</p></div>`;
+    $('#adminPage').html(`<div class="adm-page">
+      <div class="adm-head">
+        <div class="min-w-0 flex-1">
+          <h2 class="adm-title">${icon('shield', 20)} Users &amp; access</h2>
+          <p class="text-sm text-slate-500">Make logins, choose what each person can do and which apps they can open.</p>
         </div>
-        <form id="adminForm" class="space-y-3" autocomplete="off">
-          <h4 class="text-sm font-semibold text-slate-900">${u ? `Edit ${esc(u.username)}` : 'New login'}</h4>
-          <label class="block"><span class="field-label">Username</span>
-            <input class="input w-full" name="username" value="${esc(u ? u.username : '')}" ${u ? 'disabled' : ''} placeholder="e.g. priya.qa" maxlength="40"></label>
-          <label class="block"><span class="field-label">Name</span>
+        <button class="btn-primary" data-admin-new>${icon('plus', 14)} New user</button>
+      </div>
+      <div class="adm-stats">
+        ${stat('Logins', users.length, `${count('super')} super admin${count('super') === 1 ? '' : 's'}`, 'indigo')}
+        <div data-presence-stat>${presenceStat()}</div>
+        ${stat('Sanity testers', users.filter((x) => x.sanityTester || ['tester', 'developer', 'super'].includes(x.access)).length, 'can run the daily sanity', 'amber')}
+        ${stat('No Teams email', users.filter((x) => !x.teamsEmail).length, 'cannot be @mentioned', 'slate')}
+      </div>
+      <div class="adm-card">
+        <div class="adm-toolbar">
+          <div class="adm-search">${icon('filter', 14)}<input type="search" placeholder="Search name, username, email or app" value="${esc(v.q)}" data-admin-q></div>
+          <div class="adm-chips">
+            <button class="adm-chip ${!v.access ? 'on' : ''}" data-admin-access="">All <b>${users.length}</b></button>
+            ${Object.entries(ACCESS).filter(([k]) => count(k)).map(([k, a]) => `<button class="adm-chip ${v.access === k ? 'on' : ''}" data-admin-access="${k}">${a.label} <b>${count(k)}</b></button>`).join('')}
+          </div>
+          <select class="input py-1 text-sm" data-admin-app><option value="">Any app</option>${products.map((p) => `<option value="${p.id}" ${v.app === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="adm-table">
+            <thead><tr><th>User</th><th>Access</th><th>Apps</th><th>Teams email</th><th>Status</th><th></th></tr></thead>
+            <tbody>${list.map((x) => {
+              const apps = appNamesOf(x);
+              return `<tr class="${v.panel && v.panel.id === x.id ? 'on' : ''}">
+                <td><div class="flex items-center gap-3">
+                  <span class="adm-avatar">${esc(appInitials(x.name || x.username))}<i class="adm-online" data-presence-dot="${x.id}"></i></span>
+                  <div class="min-w-0"><p class="truncate font-semibold text-slate-900">${esc(x.name || x.username)}${x.id === me.id ? ' <span class="text-xs font-normal text-slate-400">(you)</span>' : ''}</p>
+                    <p class="truncate font-mono text-xs text-slate-500">${esc(x.username)}</p></div></div></td>
+                <td><span class="access-tag access-${x.access}" title="${esc(ACCESS[x.access].hint)}">${ACCESS[x.access].label}</span>${x.sanityTester ? ' <span class="access-tag sanity-tag">Sanity</span>' : ''}</td>
+                <td><div class="adm-apps">${apps.slice(0, 3).map((n) => `<span class="adm-app">${esc(n)}</span>`).join('')}${apps.length > 3 ? `<span class="adm-app more" title="${esc(apps.slice(3).join(', '))}">+${apps.length - 3}</span>` : ''}${apps.length ? '' : '<span class="text-xs text-slate-400">No apps</span>'}</div></td>
+                <td class="text-xs">${x.teamsEmail ? esc(x.teamsEmail) : '<span class="text-slate-400">—</span>'}</td>
+                <td class="whitespace-nowrap text-xs" data-presence="${x.id}" title="Last sign-in: ${x.lastSignIn ? esc(ago(x.lastSignIn)) : 'never'}"></td>
+                <td><div class="adm-actions">
+                  <button class="icon-btn" data-admin-edit="${x.id}" title="Edit">${icon('edit', 14)}</button>
+                  <button class="icon-btn" data-admin-reset="${x.id}" title="Reset password">${icon('lock', 14)}</button>
+                  ${x.id === me.id ? '' : `<button class="icon-btn" data-admin-signout="${x.id}" title="Sign out on every device" ${x.signedIn ? '' : 'disabled'}>${icon('logout', 14)}</button>
+                  <button class="icon-btn danger" data-admin-delete="${x.id}" title="Delete login">${icon('trash', 14)}</button>`}
+                </div></td></tr>`;
+            }).join('')}</tbody>
+          </table>
+          ${list.length ? '' : `<div class="adm-empty">${icon('user', 22)}<p>${users.length ? 'Nobody matches the search or filters.' : 'No logins yet.'}</p></div>`}
+        </div>
+        <p class="adm-foot">${list.length} of ${users.length} login${users.length === 1 ? '' : 's'}</p>
+      </div>
+      <div class="adm-backdrop ${v.panel ? 'show' : ''}" data-admin-close></div>
+      <aside class="adm-panel ${v.panel ? 'show' : ''}">${v.panel ? adminPanel() : ''}</aside>
+    </div>`);
+    if (v.panel) syncAppBoxes();
+    paintPresence();
+  }
+
+  // the panel: a login's form, or the credentials of one just made (or given a new password)
+  function adminPanel() {
+    const { panel } = adminView;
+    if (panel.created) {
+      const c = panel.created;
+      return `<div class="adm-panel-head"><h3>${panel.id ? 'New password set' : 'Login created'}</h3><button class="icon-btn" data-admin-close title="Close">${icon('close', 18)}</button></div>
+        <div class="adm-panel-body">
+          <div class="adm-done">${icon('check', 22)}</div>
+          <p class="text-center text-sm text-slate-600">Send these to <b>${esc(c.name || c.username)}</b>. The password is shown only now.</p>
+          <div class="adm-cred">
+            ${[['Address', location.origin], ['Username', c.username], ['Password', c.password]].map(([k, val]) => `
+              <div class="adm-cred-row"><span>${k}</span><code>${esc(val)}</code><button type="button" class="icon-btn sm" data-admin-copy="${esc(val)}" title="Copy ${k.toLowerCase()}">${icon('copy', 13)}</button></div>`).join('')}
+          </div>
+          <button class="btn-primary w-full justify-center" data-admin-copy-all>${icon('copy', 14)} Copy login details</button>
+          <button class="btn-secondary mt-2 w-full justify-center" data-admin-close>Done</button>
+        </div>`;
+    }
+    const u = users.find((x) => x.id === panel.id) || null;
+    const access = u ? u.access : 'view';
+    const self = u && u.id === me.id;
+    return `<form id="adminForm" autocomplete="off" class="flex h-full flex-col">
+      <div class="adm-panel-head"><h3>${u ? `Edit ${esc(u.name || u.username)}` : 'New user'}</h3><button type="button" class="icon-btn" data-admin-close title="Close">${icon('close', 18)}</button></div>
+      <div class="adm-panel-body">
+        <section class="adm-sec"><h4>Account</h4>
+          <label class="block"><span class="field-label">Username <span class="font-normal text-slate-400">(they sign in with it)</span></span>
+            <input class="input w-full font-mono" name="username" value="${esc(u ? u.username : '')}" ${u ? 'disabled' : ''} placeholder="e.g. priya.qa" maxlength="40"></label>
+          <label class="block"><span class="field-label">Full name</span>
             <input class="input w-full" name="name" value="${esc(u ? u.name : '')}" placeholder="e.g. Priya Sharma" maxlength="80"></label>
-          <label class="block"><span class="field-label">${u ? 'New password' : 'Password'}</span>
-            <input class="input w-full" type="password" name="password" autocomplete="new-password" placeholder="${u ? 'Leave blank to keep the current one' : 'At least 8 characters'}"></label>
-          <div><span class="field-label">Access</span>
-            ${Object.entries(ACCESS).map(([k, a]) => `
-              <label class="access-opt">
-                <input type="radio" name="access" value="${k}" class="mt-0.5 accent-indigo-600" ${k === access ? 'checked' : ''} ${u && u.id === me.id && k !== 'super' ? 'disabled' : ''}>
-                <span><span class="text-sm font-medium text-slate-900">${a.label}</span><span class="block text-xs text-slate-500">${a.hint}</span></span>
-              </label>`).join('')}
-          </div>
-          <label class="access-opt">
-            <input type="checkbox" name="sanityTester" class="mt-0.5 h-4 w-4 accent-indigo-600" ${u && u.sanityTester ? 'checked' : ''}>
-            <span><span class="text-sm font-medium text-slate-900">Sanity tester</span><span class="block text-xs text-slate-500">On top of the access above: can run the daily sanity checklist (Done / Failed, review, version and time). Testers, developers and super admins always can.</span></span>
-          </label>
-          <label class="block"><span class="field-label">Teams email <span class="font-normal text-slate-400">(optional, to @mention them)</span></span>
+          <label class="block"><span class="field-label">Teams email <span class="font-normal text-slate-400">(to @mention and message them)</span></span>
             <input class="input w-full" name="teamsEmail" value="${esc(u ? u.teamsEmail : '')}" placeholder="e.g. priya@company.com" maxlength="120"></label>
-          <div><span class="field-label">Apps this login can open</span>
-            <label class="flex items-center gap-2 py-1 text-sm"><input type="checkbox" name="allProducts" class="h-4 w-4 accent-indigo-600" ${all ? 'checked' : ''}> All apps (also new ones)</label>
-            ${products.map((p) => `
-              <label class="flex items-center gap-2 py-1 pl-6 text-sm"><input type="checkbox" name="productIds" value="${p.id}" class="h-4 w-4 accent-indigo-600" ${u && u.productIds.includes(p.id) ? 'checked' : ''}> ${esc(p.name)}</label>`).join('') || '<p class="pl-6 text-xs text-slate-400">No apps yet</p>'}
-          </div>
-          <p class="dialog-error hidden"></p>
-          <div class="flex justify-end gap-2 pt-1">
-            ${u ? '<button type="button" class="btn-secondary" data-admin-new>Cancel</button>' : ''}
-            <button class="btn-primary">${u ? 'Save changes' : 'Create login'}</button>
-          </div>
-        </form>
-      </div>`);
-    syncAppBoxes();
+        </section>
+        <section class="adm-sec"><h4>Password ${u && !panel.reset ? '<span class="font-normal text-slate-400">(leave empty to keep it)</span>' : ''}</h4>
+          <div class="adm-pass"><input class="input w-full font-mono" type="text" name="password" autocomplete="new-password" placeholder="${u ? 'New password' : 'At least 8 characters'}" value="${esc(panel.password || '')}">
+            <button type="button" class="btn-secondary" data-admin-generate title="Make a strong password">${icon('flip', 13)} Generate</button></div>
+          <p class="mt-1 text-xs text-slate-400">${u ? 'A new password signs them out on their other devices.' : 'You will see it once more after saving, to send it.'}</p>
+        </section>
+        <section class="adm-sec"><h4>Access</h4>
+          <div class="adm-access">${Object.entries(ACCESS).map(([k, a]) => `
+            <label class="adm-acc"><input type="radio" name="access" value="${k}" ${k === access ? 'checked' : ''} ${self && k !== 'super' ? 'disabled' : ''}>
+              <span><b>${a.label}</b><small>${a.hint}</small></span></label>`).join('')}</div>
+          <label class="adm-switch"><input type="checkbox" name="sanityTester" ${u && u.sanityTester ? 'checked' : ''}><span class="adm-toggle"></span>
+            <span><b>Sanity tester</b><small>On top of the access above: runs the daily sanity checklist. Testers, developers and super admins always can.</small></span></label>
+        </section>
+        <section class="adm-sec"><h4>Apps</h4>
+          <label class="adm-switch"><input type="checkbox" name="allProducts" ${u && u.allProducts ? 'checked' : ''}><span class="adm-toggle"></span>
+            <span><b>All apps</b><small>Also apps added later. Super admins always see every app.</small></span></label>
+          <div class="teams-picks pills mt-2" data-admin-apps>${products.map((p) => `
+            <label class="teams-pick"><input type="checkbox" name="productIds" value="${p.id}" ${u && u.productIds.includes(p.id) ? 'checked' : ''}><span class="sb-app sm" style="--app:${appColor(p)}">${esc(appInitials(p.name))}</span>${esc(p.name)}</label>`).join('') || '<p class="text-xs text-slate-400">No apps yet</p>'}</div>
+        </section>
+        <p class="dialog-error hidden"></p>
+      </div>
+      <div class="adm-panel-foot">
+        <button type="button" class="btn-secondary" data-admin-close>Cancel</button>
+        <button class="btn-primary">${u ? 'Save changes' : 'Create user'}</button>
+      </div>
+    </form>`;
   }
 
   // Super admins and "All apps" logins see every app, so the single-app boxes don't apply.
@@ -3014,33 +4176,40 @@ $(function () {
     const isSuper = $f.find('[name=access]:checked').val() === 'super';
     $f.find('[name=allProducts]').prop('disabled', isSuper);
     if (isSuper) $f.find('[name=allProducts]').prop('checked', true);
-    $f.find('[name=productIds]').prop('disabled', $f.find('[name=allProducts]').is(':checked'));
+    const all = $f.find('[name=allProducts]').is(':checked');
+    $f.find('[name=productIds]').prop('disabled', all);
+    $f.find('[data-admin-apps]').toggleClass('off', all);
   }
-
-  const loadUsers = () => api('GET', '/api/users').done((list) => { users = list; renderAdmin(); });
-
-  function openAdmin() {
-    editing = null;
-    loadUsers().done(() => {
-      $('#adminModal').removeClass('hidden');
-      $('body').addClass('overflow-hidden');
-    });
-  }
-
-  function closeAdmin() {
-    $('#adminModal').addClass('hidden');
-    unlockScroll();
-  }
+  const openPanel = (panel) => { adminView.panel = panel; renderAdmin(); setTimeout(() => $('#adminForm input:not(:disabled)').first().trigger('focus'), 220); };
+  const closePanel = () => { adminView.panel = null; renderAdmin(); };
+  const copy = (textValue, what) => navigator.clipboard.writeText(textValue).then(() => toast(`${what} copied`), () => dialog.alert(textValue, what));
 
   $doc.on('click', '[data-action="admin"]', openAdmin);
-  $doc.on('click', '[data-close-admin]', closeAdmin);
-  $('#adminModal').on('mousedown', function (e) { if (e.target === this) closeAdmin(); });
-  $doc.on('click', '[data-admin-edit]', function () { editing = $(this).data('admin-edit'); renderAdmin(); });
-  $doc.on('click', '[data-admin-new]', () => { editing = null; renderAdmin(); });
+  $doc.on('click', '[data-admin-close]', closePanel);
+  $doc.on('click', '[data-admin-new]', () => openPanel({ id: null, password: newPassword() }));
+  $doc.on('click', '[data-admin-edit]', function () { openPanel({ id: $(this).data('admin-edit') }); });
+  $doc.on('click', '[data-admin-reset]', function () { openPanel({ id: $(this).data('admin-reset'), reset: true, password: newPassword() }); });
+  $doc.on('click', '[data-admin-generate]', () => { $('#adminForm [name=password]').val(newPassword()).trigger('select'); });
+  $doc.on('input', '[data-admin-q]', function () {
+    adminView.q = this.value;
+    const at = this.selectionStart;
+    renderAdmin();
+    const box = $('[data-admin-q]')[0];
+    box.focus(); box.setSelectionRange(at, at);
+  });
+  $doc.on('click', '[data-admin-access]', function () { adminView.access = $(this).data('admin-access'); renderAdmin(); });
+  $doc.on('change', '[data-admin-app]', function () { adminView.app = this.value; renderAdmin(); });
   $doc.on('change', '#adminForm [name=access], #adminForm [name=allProducts]', syncAppBoxes);
+  $doc.on('click', '[data-admin-copy]', function () { copy(String($(this).data('admin-copy')), 'Copied'); });
+  $doc.on('click', '[data-admin-copy-all]', () => {
+    const c = adminView.panel.created;
+    copy(`FlowTrace login\nAddress: ${location.origin}\nUsername: ${c.username}\nPassword: ${c.password}`, 'Login details');
+  });
   $doc.on('submit', '#adminForm', function (e) {
     e.preventDefault();
     const $f = $(this);
+    const { panel } = adminView;
+    const editing = panel.id;
     const body = {
       name: $f.find('[name=name]').val().trim(),
       access: $f.find('[name=access]:checked').val(),
@@ -3054,14 +4223,22 @@ $(function () {
     if (!editing) body.username = $f.find('[name=username]').val().trim();
     const $err = $f.find('.dialog-error').addClass('hidden');
     const self = editing === me.id;
-    api(editing ? 'PATCH' : 'POST', editing ? `/api/users/${editing}` : '/api/users', body, null, QUIET)
-      .done(() => {
-        toast(editing ? 'Saved' : 'Login created');
-        editing = null;
+    api(editing ? 'PATCH' : 'POST', editing ? `/api/users/${editing}` : '/api/users', body, $f.find('.btn-primary')[0], QUIET)
+      .done((u) => {
+        // a new login or a new password: show the credentials to send; else back to the list
+        adminView.panel = pass && !self ? { id: editing, created: { username: u.username, name: u.name, password: pass } } : null;
+        toast(editing ? 'Saved' : 'User created');
         loadUsers();
         if (self) load();
       })
       .fail((xhr) => $err.text(errorText(xhr)).removeClass('hidden'));
+  });
+  $doc.on('click', '[data-admin-signout]', function () {
+    const u = users.find((x) => x.id === $(this).data('admin-signout'));
+    dialog.confirm({
+      title: `Sign ${u.name || u.username} out?`, message: 'They are signed out on every device and have to sign in again.', confirmText: 'Sign out',
+      onConfirm: () => api('POST', `/api/users/${u.id}/signout`, null, null, QUIET).done(() => { toast('Signed out everywhere'); loadUsers(); }),
+    });
   });
   $doc.on('click', '[data-admin-delete]', function () {
     const u = users.find((x) => x.id === $(this).data('admin-delete'));
@@ -3070,7 +4247,10 @@ $(function () {
       message: 'They will be signed out and cannot sign in again. Their issues and history stay.',
       confirmText: 'Delete',
       danger: true,
-      onConfirm: () => api('DELETE', `/api/users/${u.id}`, null, null, QUIET).done(() => { if (editing === u.id) editing = null; loadUsers(); }),
+      onConfirm: () => api('DELETE', `/api/users/${u.id}`, null, null, QUIET).done(() => {
+        if (adminView.panel && adminView.panel.id === u.id) adminView.panel = null;
+        loadUsers();
+      }),
     });
   });
 
@@ -3535,11 +4715,15 @@ $(function () {
   $doc.on('click', '[data-close-popup]', closePopup);
   $doc.on('click', '[data-popup-go]', function () { if ($(this).data('popup-go')) openPopup($(this).data('popup-go')); });
   $doc.on('click', '[data-popup-choose]', (e) => { e.stopPropagation(); $('#popupBody .popup-choices').toggleClass('hidden'); });
-  $doc.on('click', '#popupBody', (e) => { if (!$(e.target).closest('.popup-choices').length) $('#popupBody .popup-choices').addClass('hidden'); });
+  // the decision closes from its ✕, or a click outside its card
+  $doc.on('click', '#popupBody', (e) => {
+    if ($(e.target).closest('[data-popup-choose]').length) return;
+    if (!$(e.target).closest('.decide-card').length || $(e.target).closest('[data-decide-close]').length) $('#popupBody .popup-choices').addClass('hidden');
+  });
   // ← → step through the flow while the popup is on top and nothing is being typed
   $doc.on('keydown', (e) => {
     if (!openId || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || $(e.target).is('input, textarea, select, [contenteditable]')) return;
-    if (dialog.isOpen() || sheetId || videoFlowId || bugsView || $('#copyModal, #writerModal, #statusModal, #adminModal, #doneModal, #sheetsModal, #sanityLogModal').not('.hidden').length) return;
+    if (dialog.isOpen() || sheetId || videoFlowId || bugsView || $('#copyModal, #writerModal, #statusModal, #doneModal, #sheetsModal, #sanityLogModal').not('.hidden').length) return;
     const s = findScreen(openId);
     const { prev, next } = s ? popupSiblings(s) : {};
     const to = e.key === 'ArrowLeft' ? prev : next;
@@ -3728,7 +4912,7 @@ $(function () {
       const { clientX: x, clientY: y } = ev;
       const bend = Math.max(40, Math.abs(y - y0) / 2);
       $svg.find('.line').attr('d', `M${x0} ${y0}C${x0} ${y0 - bend} ${x} ${y + bend} ${x} ${y}`);
-      $svg.find('.head').attr('d', `M${x - 5} ${y + 7}L${x} ${y}L${x + 5} ${y + 7}`);
+      $svg.find('.head').attr('d', `M${x} ${y}L${x - 6} ${y + 8}L${x} ${y + 6}L${x + 6} ${y + 8}Z`);
       const $card = $(document.elementFromPoint(x, y)).closest('#board .card:not(.cond)');
       const s = $card.length && findScreen($card.data('id'));
       const next = s && s.id !== flow.fromScreenId && !own.has(s.flowId) ? $card[0] : null;
@@ -3751,6 +4935,28 @@ $(function () {
     document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', up);
     document.addEventListener('pointercancel', up);
+  });
+
+  // Hovering on a parent screen card illuminates wires for subflows extending from it
+  $doc.on('mouseenter', '#board .card', function () {
+    const id = $(this).data('id');
+    if (id) $(`#board .flow[data-from-screen="${id}"]`).addClass('parent-screen-hovered');
+  });
+  $doc.on('mouseleave', '#board .card', function () {
+    const id = $(this).data('id');
+    if (id) $(`#board .flow[data-from-screen="${id}"]`).removeClass('parent-screen-hovered');
+  });
+
+  // Hovering on the elbow grip or from-screen tag illuminates the source card it extends from
+  $doc.on('mouseenter', '.flow.from-screen .elbow-grip, .flow.from-screen [data-locate]', function () {
+    const $flow = $(this).closest('.flow.from-screen');
+    const fromId = $flow.data('from-screen');
+    if (fromId) $(`#board .card[data-id="${fromId}"]`).addClass('source-screen-active');
+  });
+  $doc.on('mouseleave', '.flow.from-screen .elbow-grip, .flow.from-screen [data-locate]', function () {
+    const $flow = $(this).closest('.flow.from-screen');
+    const fromId = $flow.data('from-screen');
+    if (fromId) $(`#board .card[data-id="${fromId}"]`).removeClass('source-screen-active');
   });
 
   $doc.on('click', '[data-add-popup]', function () {
@@ -3946,6 +5152,7 @@ $(function () {
     if (e.key !== 'Escape') return;
     if (dialog.isOpen()) dialog.cancel();
     else if (teamsSend) closeTeamsSend();
+    else if (colEdit) closeColumn();
     else if ($('#sheetFilterPop').length) closeFilter();
     else if (!$('#importModal').hasClass('hidden')) closeImport();
     else if (sketch.open) skEscape();
@@ -3954,7 +5161,7 @@ $(function () {
     else if (doneView) closeDone();
     else if (!$('#statusModal').hasClass('hidden')) closeStatuses();
     else if (bugsView) closeBugs();
-    else if (!$('#adminModal').hasClass('hidden')) closeAdmin();
+    else if (adminView && adminView.panel) { adminView.panel = null; renderAdmin(); }
     else if (videoFlowId) closeVideo();
     else if (!$('#writerModal').hasClass('hidden')) closeWriter();
     else if (sheetId) closeSheet();
@@ -3998,7 +5205,7 @@ $(function () {
     if (doneView) closeDone();
     if (!$('#statusModal').hasClass('hidden')) closeStatuses();
     if (bugsView) closeBugs();
-    if (!$('#adminModal').hasClass('hidden')) closeAdmin();
+    if (adminView) closeAdmin();
     if (videoFlowId) closeVideo();
     if (!$('#writerModal').hasClass('hidden')) closeWriter();
     if (sheetId) closeSheet();
@@ -4017,7 +5224,8 @@ $(function () {
     const h = new URLSearchParams(location.hash.slice(1));
     if (![...h.keys()].length) return;
     history.replaceState(null, '', location.pathname + location.search);
-    if (h.get('flow')) showFlow(h.get('flow'));
+    if (h.has('admin')) { if (can('super')) openAdmin(); }
+    else if (h.get('flow')) showFlow(h.get('flow'));
     else if (h.get('screen')) showScreen(h.get('screen'));
     else if (h.get('sheet')) api('GET', `/api/sheets/${encodeURIComponent(h.get('sheet'))}`).done((x) => openSheets(x.productId, x.id));
     else if (h.get('sheets')) {
@@ -4067,9 +5275,10 @@ $(function () {
       renderSanity();
       // the page takes the board's place; the address keeps it, so a refresh or a shared link comes back here
       if (sheetsView) closeSheets();
+      if (adminView) closeAdmin();
       $('#board, #tabs').addClass('hidden');
       $('#sanityPage').removeClass('hidden');
-      $('[data-action="sanity"]').addClass('on');
+      markNav();
       history.replaceState(null, '', `${location.pathname}${location.search}#sanity=${encodeURIComponent(pid)}${sanity.view === 'logs' ? '&view=logs' : ''}`);
       if (fresh) window.scrollTo(0, 0);
     });
@@ -4080,7 +5289,7 @@ $(function () {
     sanity = null;
     $('#sanityPage').addClass('hidden').empty();
     $('#board, #tabs').removeClass('hidden');
-    $('[data-action="sanity"]').removeClass('on');
+    markNav();
     history.replaceState(null, '', location.pathname + location.search);
   }
 
@@ -4637,7 +5846,7 @@ $(function () {
   // A cell saves on its own (only that cell is sent), so the grid is not redrawn while you type.
 
   const SHEET_TYPES = {
-    text: 'Text', number: 'Number', date: 'Date', select: 'Dropdown', checkbox: 'Checkbox', person: 'Person', flow: 'Flow', screen: 'Screen',
+    text: 'Text', number: 'Number', date: 'Date', select: 'Dropdown', checkbox: 'Checkbox', person: 'Person', flow: 'Flow', screen: 'Screen', formula: 'Formula',
   };
   const SHEET_SHARES = [['private', 'Private: only me and editors'], ['view', 'Everyone in the app can view'], ['edit', 'Everyone in the app can edit']];
   const TONE_TAG = { success: 'green', pending: 'amber', fail: 'red', other: 'slate' }; // dropdown value → status tag colour
@@ -4652,6 +5861,7 @@ $(function () {
     if (!pid) { dialog.alert('Add an app first.', 'No app'); return; }
     api('GET', `/api/sheets?product=${encodeURIComponent(pid)}`).done((d) => {
       if (sanity) closeSanity();
+      if (adminView) closeAdmin();
       const keep = sheetsView && sheetsView.productId === pid ? sheetsView : {};
       sheetsView = {
         productId: pid, list: d.sheets, people: d.people, canCreate: d.canCreate, teams: d.teams, doc: null,
@@ -4661,7 +5871,7 @@ $(function () {
       $('#board, #tabs').addClass('hidden');
       $('#sheetsPage').removeClass('hidden');
       $('body').addClass('sheets-open');
-      $('[data-action="sheets"]').addClass('on');
+      markNav();
       if (!keep.productId) window.scrollTo(0, 0);
       if (id) openSheetDoc(id); else renderSheets();
     });
@@ -4674,6 +5884,7 @@ $(function () {
         sheetsView.sort = null; sheetsView.search = ''; sheetsView.picked = new Set(); sheetsView.filters = savedFilters(id);
       }
       sheetsView.doc = doc;
+      computeFormulas(doc);
       sheetsView.picked = new Set([...sheetsView.picked].filter((r) => doc.rowList.some((x) => x.id === r)));
       Object.keys(sheetsView.filters).forEach((c) => { if (!doc.columns.some((x) => x.id === c)) delete sheetsView.filters[c]; });
       renderSheets();
@@ -4688,7 +5899,7 @@ $(function () {
     $('#sheetsPage').addClass('hidden').empty();
     $('#board, #tabs').removeClass('hidden');
     $('body').removeClass('sheets-open');
-    $('[data-action="sheets"]').removeClass('on');
+    markNav();
     history.replaceState(null, '', location.pathname + location.search);
   }
 
@@ -4717,6 +5928,29 @@ $(function () {
   }
 
   const sheetPerson = (id) => (sheetsView.people.find((x) => x.id === id) || {}).name || '';
+
+  // ---- formula columns: worked out in this browser (public/formula.js, the same code as the server) from the other
+  // cells of the row. row.fx keeps each result as it came (to show it, errors too); row.cells gets it as a value the
+  // grid sorts and filters by: a number, a date ('YYYY-MM-DD') or text. col.kind: what its results are.
+  const FX = window.flowFormula;
+  const fxPlain = (col, v) => (['person', 'flow', 'screen'].includes(col.type) ? cellText(col, v) : v);
+  function computeFormulas(doc, only) {
+    const fx = doc.columns.filter((c) => c.type === 'formula');
+    if (!fx.length) return;
+    (only ? [only] : doc.rowList).forEach((row) => {
+      row.fx = FX.computeRow(doc.columns, row.cells, fxPlain, doc.rowList.indexOf(row) + 1);
+      fx.forEach((c) => {
+        const x = row.fx[c.id];
+        row.cells[c.id] = FX.isErr(x) ? x.code : typeof x === 'number' && c.format.kind === 'date' ? FX.isoDay(x)
+          : typeof x === 'boolean' ? (x ? 'TRUE' : 'FALSE') : x;
+      });
+    });
+    fx.forEach((c) => {
+      const vals = doc.rowList.map((r) => r.cells[c.id]).filter((v) => !blank(v));
+      c.kind = c.format.kind === 'date' ? 'date' : vals.length && vals.every((v) => typeof v === 'number') ? 'number' : 'text';
+    });
+  }
+  const fxText = (col, row) => FX.display(row.fx ? row.fx[col.id] : '', col.format);
   function sheetFlows() {
     const p = products.find((x) => x.id === sheetsView.productId);
     return (p ? p.modules : []).flatMap((m) => m.flows.map((f) => ({ m, f })));
@@ -4728,6 +5962,8 @@ $(function () {
     if (col.type === 'person') return sheetPerson(v);
     if (col.type === 'flow') { const f = findFlow(v); return f ? f.name : ''; }
     if (col.type === 'screen') { const x = findScreen(v); return x ? x.name : ''; }
+    if (col.type === 'formula' && typeof v === 'number') return FX.display(v, col.format);
+    if (col.type === 'formula' && col.kind === 'date' && v) return fmtDate(v);
     return String(v);
   }
 
@@ -4738,6 +5974,11 @@ $(function () {
     const none = '<option value=""></option>';
     switch (col.type) {
       case 'number': return `<input class="sc-input num" type="number" step="any" value="${has ? esc(v) : ''}" ${attrs}>`;
+      case 'formula': {
+        const x = row.fx ? row.fx[col.id] : '';
+        return `<div class="sc-formula ${FX.isErr(x) ? 'err' : ''} ${typeof x === 'number' ? 'num' : ''}" data-fx="${row.id}:${col.id}"
+          title="= ${esc(col.formulaText || '')}${FX.isErr(x) ? ` → ${esc(x.code)}` : ''}">${esc(fxText(col, row))}</div>`;
+      }
       case 'date': return `<input class="sc-input" type="date" value="${has ? esc(v) : ''}" ${attrs}>`;
       case 'checkbox': return `<label class="sc-check"><input type="checkbox" class="h-4 w-4 accent-indigo-600" ${v ? 'checked' : ''} ${attrs}></label>`;
       case 'select': {
@@ -4771,7 +6012,7 @@ $(function () {
     date: [['on', 'On'], ['before', 'Before'], ['after', 'After'], ['between', 'Between'], ['empty', 'Is empty'], ['notEmpty', 'Is not empty']],
   };
   const NO_ARGS = ['empty', 'notEmpty'];
-  const kindOf = (col) => (col.type === 'number' ? 'number' : col.type === 'date' ? 'date' : 'text');
+  const kindOf = (col) => (col.type === 'formula' ? col.kind || 'text' : col.type === 'number' ? 'number' : col.type === 'date' ? 'date' : 'text');
   const blank = (v) => v === '' || v === undefined || v === null;
   // a cell as its filter lists it ('' = blank)
   const filterKey = (col, v) => (col.type === 'checkbox' ? (v === true ? 'Yes' : 'No') : blank(v) ? '' : cellText(col, v));
@@ -4792,13 +6033,13 @@ $(function () {
     if (op === 'empty') return blank(v);
     if (op === 'notEmpty') return !blank(v);
     if (blank(v)) return op === 'notContains' || op === 'notEquals' || op === 'ne';
-    if (col.type === 'number') {
+    if (kindOf(col) === 'number') {
       const n = Number(v);
       const x = Number(a);
       const y = Number(b);
       return { eq: n === x, ne: n !== x, gt: n > x, gte: n >= x, lt: n < x, lte: n <= x, between: n >= Math.min(x, y) && n <= Math.max(x, y) }[op];
     }
-    if (col.type === 'date') {
+    if (kindOf(col) === 'date') {
       const [lo, hi] = a <= b ? [a, b] : [b, a];
       return { on: v === a, before: v < a, after: v > a, between: v >= lo && v <= hi }[op];
     }
@@ -4821,7 +6062,9 @@ $(function () {
     if (except) return rows;
     const col = sort && doc.columns.find((c) => c.id === sort.col);
     if (col) {
-      const key = (r) => (col.type === 'number' ? (blank(r.cells[col.id]) ? null : Number(r.cells[col.id])) : cellText(col, r.cells[col.id]).toLowerCase());
+      const kind = kindOf(col);
+      const key = (r) => (kind === 'number' ? (blank(r.cells[col.id]) || typeof r.cells[col.id] === 'string' ? null : Number(r.cells[col.id]))
+        : kind === 'date' ? String(r.cells[col.id] || '') : cellText(col, r.cells[col.id]).toLowerCase());
       rows = rows.slice().sort((a, b) => {
         const x = key(a); const y = key(b);
         if (x === null || x === '') return 1; if (y === null || y === '') return -1; // empty last
@@ -4857,7 +6100,7 @@ $(function () {
     const keys = [...counts.keys()].sort((a, b) => {
       if (a === '') return 1; if (b === '') return -1;
       if (order) return order(a) - order(b);
-      if (col.type === 'number') return Number(a) - Number(b);
+      if (kindOf(col) === 'number') return (Number(String(a).replace(/[^\d.-]/g, '')) || 0) - (Number(String(b).replace(/[^\d.-]/g, '')) || 0);
       return a.localeCompare(b, undefined, { numeric: true });
     });
     const label = (k) => (k === '' ? '(Blanks)' : col.type === 'date' ? fmtDate(k) : k);
@@ -4975,11 +6218,13 @@ $(function () {
   function sheetTotals() {
     const { doc } = sheetsView;
     const rows = sheetRows();
-    if (!rows.length || !doc.columns.some((c) => c.type === 'number' || c.type === 'checkbox')) return '';
+    // a formula column adds up too, shown in its own format (not percentages: their sum means nothing)
+    const adds = (c) => c.type === 'number' || (c.type === 'formula' && c.kind === 'number' && c.format.kind !== 'percent');
+    if (!rows.length || !doc.columns.some((c) => adds(c) || c.type === 'checkbox')) return '';
     return `<tr><td class="sc-num">Σ</td><td></td>${doc.columns.map((c) => {
-      if (c.type === 'number') {
-        const sum = rows.reduce((t, r) => t + (Number(r.cells[c.id]) || 0), 0);
-        return `<td class="num">${sum.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>`;
+      if (adds(c)) {
+        const sum = rows.reduce((t, r) => t + (typeof r.cells[c.id] === 'number' ? r.cells[c.id] : Number(r.cells[c.id]) || 0), 0);
+        return `<td class="num">${c.type === 'formula' ? esc(FX.display(sum, c.format)) : sum.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>`;
       }
       if (c.type === 'checkbox') return `<td>${rows.filter((r) => r.cells[c.id] === true).length} / ${rows.length}</td>`;
       return '<td></td>';
@@ -5012,14 +6257,15 @@ $(function () {
           <h3 class="truncate text-base font-semibold text-slate-900">Sheets <span class="font-normal text-slate-400">· ${esc(p ? p.name : '')}</span>${doc ? ` <span class="font-normal text-slate-400">›</span> ${esc(doc.name)}` : ''}</h3>
         </div>
         ${!sideOpen && v.canCreate ? `<label class="btn-secondary cursor-pointer text-sm">${icon('upload', 14)} Import Excel
-          <input type="file" class="hidden" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" data-sheet-import></label>` : ''}
+          <input type="file" class="hidden" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" data-sheet-import></label>` : ''}
       </div>
       <div class="sheets-layout ${sideOpen ? '' : 'side-closed'}">
         <aside class="sheets-side">
           ${v.canCreate ? `
             <button class="btn-primary w-full justify-center" data-sheet-new>${icon('plus', 14)} New sheet</button>
-            <label class="btn-secondary w-full cursor-pointer justify-center">${icon('upload', 14)} Import Excel
-              <input type="file" class="hidden" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" data-sheet-import></label>` : ''}
+            <label class="btn-secondary w-full cursor-pointer justify-center" title="An Excel (.xlsx) or .csv file">${icon('upload', 14)} Import Excel / CSV
+              <input type="file" class="hidden" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" data-sheet-import></label>
+            <button class="btn-secondary w-full justify-center" data-sheet-google title="Import a Google Sheet by its link">${icon('grid', 14)} From Google Sheets</button>` : ''}
           ${mine.length ? `
             <div class="sheets-picks">
               <label class="flex items-center gap-2"><input type="checkbox" class="h-4 w-4 accent-indigo-600" data-sheets-pick-all ${allSheets ? 'checked' : ''}> Select all</label>
@@ -5049,11 +6295,17 @@ $(function () {
               <details class="sheet-share">
                 <summary class="btn-secondary text-sm">${icon(doc.share === 'private' ? 'lock' : 'user', 14)} Share</summary>
                 <div class="sheet-share-pop">
-                  <span class="field-label">Who can see it</span>
+                  <button class="btn-primary w-full justify-center text-sm" data-sheet-share-people title="Give one or more people access and tell them on Teams">
+                    ${icon('share', 14)} Share with people…</button>
+                  <span class="field-label mt-3">Who can see it</span>
                   <select class="input w-full text-sm" data-sheet-share>${SHEET_SHARES.map(([k, label]) => `<option value="${k}" ${k === doc.share ? 'selected' : ''}>${label}</option>`).join('')}</select>
-                  <span class="field-label mt-3">Editors <span class="font-normal text-slate-400">(can always edit)</span></span>
-                  <div class="max-h-48 overflow-y-auto">${v.people.filter((x) => x.id !== doc.ownerId).map((x) => `
-                    <label class="flex items-center gap-2 py-0.5 text-sm"><input type="checkbox" class="h-4 w-4 accent-indigo-600" data-sheet-editor value="${x.id}" ${doc.editors.includes(x.id) ? 'checked' : ''}> ${esc(x.name)}</label>`).join('')}</div>
+                  <span class="field-label mt-3">People <span class="font-normal text-slate-400">(on top of the above)</span></span>
+                  <div class="max-h-48 overflow-y-auto">${v.people.filter((x) => x.id !== doc.ownerId).map((x) => {
+                    const has = doc.editors.includes(x.id) ? 'edit' : doc.viewers.includes(x.id) ? 'view' : '';
+                    return `<label class="flex items-center gap-2 py-0.5 text-sm"><span class="min-w-0 flex-1 truncate">${esc(x.name)}</span>
+                      <select class="input w-24 py-0.5 text-xs" data-sheet-person="${x.id}">${[['', '—'], ['view', 'Can view'], ['edit', 'Can edit']]
+                        .map(([k, label]) => `<option value="${k}" ${k === has ? 'selected' : ''}>${label}</option>`).join('')}</select></label>`;
+                  }).join('')}</div>
                   <p class="mt-2 text-xs text-slate-400">View-only logins can never edit.</p>
                 </div>
               </details>` : ''}
@@ -5132,11 +6384,140 @@ $(function () {
     if (box) { box.focus(); box.setSelectionRange(at, at); }
   }
 
-  const columnDialog = (c = { name: '', type: 'text', options: [] }) => [
-    { name: 'name', label: 'Column name', value: c.name, placeholder: 'e.g. Device, Build, Tester', required: true, max: 60 },
-    { name: 'type', label: 'Type', value: c.type, options: Object.entries(SHEET_TYPES) },
-    { name: 'options', label: 'Dropdown options, comma separated (Dropdown only)', value: c.options.join(', '), placeholder: 'e.g. To do, In progress, Done', max: 600 },
+  // ---- the column editor: name, type and what the type needs (dropdown options; a formula and how it shows).
+  // A formula names columns in [ ]: click a column or a function to put it in at the cursor, and the preview works it
+  // out on the first rows as you type (the same code the grid and the server use).
+  let colEdit = null;
+  const FX_FORMATS = [['', 'Automatic'], ['number', 'Number'], ['percent', 'Percent'], ['currency', 'Currency'], ['date', 'Date'], ['text', 'Text']];
+  const FX_EXAMPLES = [
+    ['Multiply', '[Qty] * [Price]'], ['If / else', 'IF([Status] = "Done", "✓", "Pending")'], ['Days left', '[Due] - TODAY()'],
+    ['Overdue', 'AND([Status] <> "Done", [Due] < TODAY())'], ['Join text', '[First name] & " " & [Last name]'],
+    ['Working days', 'NETWORKDAYS([Start], [End])'], ['Grade', 'IFS([Score] >= 90, "A", [Score] >= 75, "B", TRUE, "C")'],
   ];
+  function openColumn(c) {
+    const { doc } = sheetsView;
+    const col = c || { name: '', type: 'text', options: [], formulaText: '', format: {} };
+    const others = doc.columns.filter((x) => !c || x.id !== c.id);
+    colEdit = { col: c || null, type: col.type, others };
+    const f = col.format || {};
+    $('#columnForm').html(`
+      <div class="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
+        <span class="text-indigo-600">${icon('grid', 18)}</span>
+        <h3 class="min-w-0 flex-1 truncate text-base font-semibold text-slate-900">${c ? `Edit column “${esc(c.name)}”` : 'New column'}</h3>
+        <button type="button" class="icon-btn" data-close-column title="Close">${icon('close', 18)}</button>
+      </div>
+      <div class="max-h-[72vh] space-y-4 overflow-y-auto px-5 py-4">
+        <label class="block"><span class="field-label">Column name</span>
+          <input class="input w-full" name="name" maxlength="60" placeholder="e.g. Device, Build, Total" value="${esc(col.name)}"></label>
+        <div><span class="field-label">Type</span>
+          <div class="col-types">${Object.entries(SHEET_TYPES).map(([k, label]) => `<button type="button" class="col-type ${k === col.type ? 'on' : ''}" data-col-type="${k}">${k === 'formula' ? '<b class="fx-mark">ƒx</b>' : ''}${label}</button>`).join('')}</div></div>
+        <label class="block" data-col-for="select"><span class="field-label">Options <span class="font-normal text-slate-400">(comma separated, up to 100)</span></span>
+          <textarea class="input w-full" name="options" rows="2" maxlength="8000" placeholder="e.g. To do, In progress, Done">${esc((col.options || []).join(', '))}</textarea></label>
+        <div class="space-y-3" data-col-for="formula">
+          <div class="fx-box"><span class="fx-eq">ƒx</span>
+            <textarea class="fx-input" name="formula" rows="2" spellcheck="false" autocomplete="off" placeholder="[Qty] * [Price]">${esc(col.formulaText || '')}</textarea></div>
+          <div data-fx-preview class="fx-preview"></div>
+          <div><span class="field-label">Columns <span class="font-normal text-slate-400">(click to add)</span></span>
+            <div class="fx-chips">${others.map((x) => `<button type="button" class="fx-chip" data-fx-insert="[${esc(x.name)}]"><span class="sc-type">${SHEET_TYPES[x.type]}</span>${esc(x.name)}</button>`).join('')
+              || '<span class="text-xs text-slate-400">Add other columns first.</span>'}</div></div>
+          <details class="fx-more"><summary>Examples</summary>
+            <div class="mt-2 space-y-1">${FX_EXAMPLES.map(([t, x]) => `<button type="button" class="fx-example" data-fx-example="${esc(x)}"><b>${t}</b><code>${esc(x)}</code></button>`).join('')}</div></details>
+          <details class="fx-more"><summary>Functions <span class="text-slate-400">(${FX.FUNCTION_NAMES.length}, Excel's names)</span></summary>
+            <div class="fx-chips mt-2">${FX.FUNCTION_NAMES.map((n) => `<button type="button" class="fx-chip fn" data-fx-insert="${n}(">${n}</button>`).join('')}</div></details>
+          <div class="grid grid-cols-3 gap-3">
+            <label class="col-span-1"><span class="field-label">Show as</span>
+              <select class="input w-full" name="kind">${FX_FORMATS.map(([k, label]) => `<option value="${k}" ${k === (f.kind || '') ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+            <label><span class="field-label">Decimals</span><input class="input w-full" type="number" min="0" max="6" name="decimals" value="${Number.isInteger(f.decimals) ? f.decimals : ''}" placeholder="auto"></label>
+            <label data-fx-symbol><span class="field-label">Symbol</span><input class="input w-full" name="symbol" maxlength="4" value="${esc(f.symbol || '₹')}"></label>
+          </div>
+        </div>
+        <p class="dialog-error hidden"></p>
+      </div>
+      <div class="flex justify-end gap-2 border-t border-slate-200 px-5 py-3">
+        <button type="button" class="btn-secondary" data-close-column>Cancel</button>
+        <button class="btn-primary">${c ? 'Save' : 'Add column'}</button>
+      </div>`);
+    showColumnType();
+    $('#columnModal').removeClass('hidden');
+    $('body').addClass('overflow-hidden');
+    $('#columnForm [name=name]').trigger('focus');
+  }
+  function closeColumn() {
+    colEdit = null;
+    $('#columnModal').addClass('hidden');
+    unlockScroll();
+  }
+  function showColumnType() {
+    const t = colEdit.type;
+    $('[data-col-type]').each((i, el) => $(el).toggleClass('on', $(el).data('col-type') === t));
+    $('[data-col-for]').each((i, el) => $(el).toggleClass('hidden', $(el).data('col-for') !== t));
+    $('[data-fx-symbol]').toggleClass('invisible', $('#columnForm [name=kind]').val() !== 'currency');
+    if (t === 'formula') fxPreview();
+  }
+  // the format picked in the editor
+  const fxFormat = () => {
+    const $f = $('#columnForm');
+    const kind = $f.find('[name=kind]').val();
+    const dec = $f.find('[name=decimals]').val();
+    return { ...(kind ? { kind } : {}), ...(dec !== '' ? { decimals: Math.max(0, Math.min(6, Number(dec))) } : {}), ...(kind === 'currency' ? { symbol: $f.find('[name=symbol]').val() || '₹' } : {}) };
+  };
+  // the formula worked out on the first rows (or why it can't be)
+  function fxPreview() {
+    const { doc } = sheetsView;
+    const text = $('#columnForm [name=formula]').val().trim();
+    const $p = $('[data-fx-preview]');
+    if (!text) { $p.html('<span class="text-slate-400">Write a formula: column names in [ ], like Excel\'s functions. The result shows here.</span>'); return; }
+    let stored;
+    try { stored = FX.toIds(text, colEdit.others); } catch (err) { $p.html(`<span class="fx-bad">${esc(err.message)}</span>`); return; }
+    const me = { id: '__fx', name: 'This column', type: 'formula', formula: stored, format: fxFormat() };
+    const cols = [...colEdit.others, me];
+    const rows = doc.rowList.slice(0, 3);
+    if (!rows.length) { $p.html('<span class="fx-ok">Looks right. Add rows to see results.</span>'); return; }
+    $p.html(rows.map((r, k) => {
+      const x = FX.computeRow(cols, r.cells, fxPlain, k + 1).__fx;
+      return `<div class="fx-row"><span class="text-slate-400">Row ${k + 1}</span><b class="${FX.isErr(x) ? 'fx-bad' : ''}">${esc(FX.display(x, me.format) || '(empty)')}</b></div>`;
+    }).join(''));
+  }
+  function fxInsert(snippet) {
+    const el = $('#columnForm [name=formula]')[0];
+    const at = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? at;
+    const before = el.value.slice(0, at);
+    const pad = before && !/[\s(,]$/.test(before) && !snippet.endsWith('(') ? ' ' : '';
+    el.value = `${before}${pad}${snippet}${el.value.slice(end)}`;
+    const caret = at + pad.length + snippet.length;
+    el.focus();
+    el.setSelectionRange(caret, caret);
+    fxPreview();
+  }
+  $doc.on('click', '[data-close-column]', closeColumn);
+  $('#columnModal').on('mousedown', function (e) { if (e.target === this) closeColumn(); });
+  $doc.on('click', '[data-col-type]', function () { colEdit.type = $(this).data('col-type'); showColumnType(); });
+  $doc.on('mousedown', '[data-fx-insert]', (e) => e.preventDefault()); // keep the cursor in the formula
+  $doc.on('click', '[data-fx-insert]', function () { fxInsert(String($(this).data('fx-insert'))); });
+  $doc.on('click', '[data-fx-example]', function () { $('#columnForm [name=formula]').val($(this).data('fx-example')); fxPreview(); });
+  $doc.on('input', '#columnForm [name=formula], #columnForm [name=decimals], #columnForm [name=symbol]', fxPreview);
+  $doc.on('change', '#columnForm [name=kind]', showColumnType);
+  $('#columnForm').on('submit', function (e) {
+    e.preventDefault();
+    const $f = $(this);
+    const $err = $f.find('.dialog-error').addClass('hidden');
+    const fail = (msg) => $err.text(msg).removeClass('hidden');
+    const name = $f.find('[name=name]').val().trim();
+    const { type } = colEdit;
+    if (!name) { fail('Give the column a name.'); return; }
+    const body = { name, type };
+    if (type === 'select') body.options = $f.find('[name=options]').val();
+    if (type === 'formula') {
+      body.formula = $f.find('[name=formula]').val().trim();
+      if (!body.formula) { fail('Write the formula, e.g. [Qty] * [Price]'); return; }
+      body.format = fxFormat();
+    }
+    const c = colEdit.col;
+    api(c ? 'PATCH' : 'POST', c ? `/api/sheet-columns/${c.id}` : `/api/sheets/${sheetsView.doc.id}/columns`, body, $f.find('.btn-primary')[0], QUIET)
+      .done(() => { closeColumn(); reloadSheet(); })
+      .fail((xhr) => fail(errorText(xhr)));
+  });
 
   // What an Excel import read: per worksheet its rows, columns with their types and colours, and the empty
   // columns it left out
@@ -5160,7 +6541,8 @@ $(function () {
               <button class="ml-auto text-xs text-indigo-600 hover:underline" data-import-open="${ws.id}">Open</button>
             </div>
             <div class="mt-2 flex flex-wrap gap-1.5">${ws.columns.map((c) => `
-              <span class="import-col"><span class="sc-type">${SHEET_TYPES[c.type]}</span>${esc(c.name)}${c.colors ? `<span class="text-slate-400">· ${c.colors} colour${c.colors === 1 ? '' : 's'}</span>` : ''}</span>`).join('')}</div>
+              <span class="import-col" ${c.formula ? `title="= ${esc(c.formula)}"` : ''}><span class="sc-type">${SHEET_TYPES[c.type]}</span>${esc(c.name)}${c.colors ? `<span class="text-slate-400">· ${c.colors} colour${c.colors === 1 ? '' : 's'}</span>` : ''}</span>`).join('')}</div>
+            ${ws.columns.some((c) => c.formula) ? `<p class="mt-2 text-xs text-slate-500">${icon('grid', 11)} Formulas keep working: ${ws.columns.filter((c) => c.formula).map((c) => `<b>${esc(c.name)}</b> = <code>${esc(c.formula)}</code>`).join(' · ')}</p>` : ''}
             ${ws.styled ? `<p class="mt-2 text-xs text-slate-500">${ws.styled} cell${ws.styled === 1 ? '' : 's'} keep their colours from Excel (fills, text colours, conditional formatting).</p>` : ''}
             ${ws.skipped.length ? `<p class="mt-1 text-xs text-slate-500">Left out, no values: ${esc(ws.skipped.join(', '))}</p>` : ''}
             ${ws.more ? '<p class="mt-1 text-xs text-amber-700">Only the first 5,000 rows were imported.</p>' : ''}
@@ -5214,14 +6596,18 @@ $(function () {
     const shown = sheetRows();
     const rows = shown.filter((r) => picked.has(r.id));
     const send = rows.length ? rows : shown;
+    // every row of the sheet (all ticked, or none ticked with no search or filter): it can go as an Excel too,
+    // when you can edit the sheet
+    const whole = send.length === doc.rowList.length && doc.edit;
     openTeamsSend({
       title: `Send “${doc.name}” on Teams`,
       count: send.length,
       columns: doc.columns.map((c) => ({ id: c.id, label: c.name })),
       people: sheetsView.people,
       webhook: sheetsView.teams,
+      excel: whole ? sheetExcelName(doc) : null,
       send: (val) => api('POST', `/api/sheets/${doc.id}/teams`, {
-        rowIds: send.map((r) => r.id), columnIds: val.columns, userIds: val.userIds, note: val.note, mode: val.mode,
+        rowIds: send.map((r) => r.id), columnIds: val.columns, userIds: val.userIds, note: val.note, mode: val.mode, excel: val.excel,
       }, val.button, QUIET),
     });
   });
@@ -5260,13 +6646,22 @@ $(function () {
     const file = this.files[0];
     this.value = '';
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) { dialog.alert('Please choose an Excel file under 5 MB.', 'File too large'); return; }
-    const name = file.name.replace(/\.xlsx$/i, '');
+    if (file.size > 5 * 1024 * 1024) { dialog.alert('Please choose a file under 5 MB.', 'File too large'); return; }
+    const name = file.name.replace(/\.(xlsx|csv)$/i, '');
     const reader = new FileReader();
-    reader.onload = () => api('POST', '/api/sheets/import', { productId: sheetsView.productId, name, dataUrl: reader.result })
+    reader.onload = () => api('POST', '/api/sheets/import', { productId: sheetsView.productId, name, file: file.name, dataUrl: reader.result })
       .done((x) => { reloadSheets(x.id); showImport(x, name); });
     reader.readAsDataURL(file);
   });
+  // A Google Sheet by its link (shared as "Anyone with the link"): the server asks Google for it as .xlsx, so its
+  // dropdowns, colours and formulas come along like an Excel's
+  $doc.on('click', '[data-sheet-google]', () => ask({
+    title: 'Import from Google Sheets',
+    fields: [{ name: 'url', label: 'Link to the Google Sheet (shared as “Anyone with the link can view”)', placeholder: 'https://docs.google.com/spreadsheets/d/…', required: true, max: 500 }],
+    confirmText: 'Import',
+    save: (val) => api('POST', '/api/sheets/import', { productId: sheetsView.productId, url: val.url }, null, QUIET)
+      .done((x) => { reloadSheets(x.id); showImport(x, x.title || 'Google Sheet'); }),
+  }));
   $doc.on('click', '[data-sheet-rename]', () => ask({
     title: 'Rename sheet', fields: [{ name: 'name', label: 'Sheet name', value: sheetsView.doc.name, required: true, max: 80 }],
     save: (val) => api('PATCH', `/api/sheets/${sheetsView.doc.id}`, val, null, QUIET).done(() => reloadSheets(sheetsView.doc.id)),
@@ -5281,9 +6676,27 @@ $(function () {
   $doc.on('change', '[data-sheet-share]', function () {
     api('PATCH', `/api/sheets/${sheetsView.doc.id}`, { share: this.value }).done(() => { toast('Sharing saved'); reloadSheets(sheetsView.doc.id); });
   });
-  $doc.on('change', '[data-sheet-editor]', () => {
-    const editors = $('[data-sheet-editor]:checked').map((i, el) => el.value).get();
-    api('PATCH', `/api/sheets/${sheetsView.doc.id}`, { editors }).done(() => { sheetsView.doc.editors = editors; toast('Editors saved'); });
+  $doc.on('change', '[data-sheet-person]', () => {
+    const who = (access) => $('[data-sheet-person]').filter((i, el) => el.value === access).map((i, el) => $(el).data('sheet-person')).get();
+    const editors = who('edit');
+    const viewers = who('view');
+    api('PATCH', `/api/sheets/${sheetsView.doc.id}`, { editors, viewers }).done(() => { Object.assign(sheetsView.doc, { editors, viewers }); toast('Sharing saved'); });
+  });
+  const sheetExcelName = (doc) => `${doc.name.replace(/[^\w-]+/g, '-') || 'sheet'}.xlsx`; // as the server names it
+  // the whole sheet, with one or more people: they get access and a link on Teams
+  $doc.on('click', '[data-sheet-share-people]', function () {
+    $(this).closest('details').prop('open', false);
+    const { doc } = sheetsView;
+    openTeamsSend({
+      title: `Share “${doc.name}”`,
+      count: doc.rowList.length,
+      people: sheetsView.people.filter((x) => x.id !== doc.ownerId && x.id !== me.id),
+      webhook: sheetsView.teams,
+      share: { access: 'view' },
+      excel: sheetExcelName(doc),
+      send: (val) => api('POST', `/api/sheets/${doc.id}/share`, { userIds: val.userIds, access: val.access, note: val.note, mode: val.mode, excel: val.excel }, val.button, QUIET)
+        .done(() => reloadSheets(doc.id)),
+    });
   });
   $doc.on('input', '[data-sheet-search]', function () { sheetsView.search = this.value; refilter(); });
   $doc.on('click', '[data-sheet-sort]', function () {
@@ -5305,6 +6718,8 @@ $(function () {
       .done((saved) => {
         row.cells = saved.cells;
         row.styles = saved.styles;
+        computeFormulas(doc, row);
+        doc.columns.filter((c) => c.type === 'formula').forEach((c) => $(`[data-fx="${row.id}:${c.id}"]`).replaceWith(sheetCell(c, row, true)));
         $('#sheetTotals').html(sheetTotals());
         if (['select', 'flow', 'screen'].includes(col.type)) $(el).closest('td').html(sheetCell(col, row, true));
       })
@@ -5322,17 +6737,8 @@ $(function () {
   $doc.on('click', '[data-sheet-row-delete]', function () {
     api('DELETE', `/api/sheet-rows/${$(this).data('sheet-row-delete')}`).done(reloadSheet);
   });
-  $doc.on('click', '[data-sheet-col-add]', () => ask({
-    title: 'New column', fields: columnDialog(), confirmText: 'Add column',
-    save: (val) => api('POST', `/api/sheets/${sheetsView.doc.id}/columns`, val, null, QUIET).done(reloadSheet),
-  }));
-  $doc.on('click', '[data-sheet-col-edit]', function () {
-    const c = sheetsView.doc.columns.find((x) => x.id === $(this).data('sheet-col-edit'));
-    ask({
-      title: 'Edit column', fields: columnDialog(c),
-      save: (val) => api('PATCH', `/api/sheet-columns/${c.id}`, val, null, QUIET).done(reloadSheet),
-    });
-  });
+  $doc.on('click', '[data-sheet-col-add]', () => openColumn(null));
+  $doc.on('click', '[data-sheet-col-edit]', function () { openColumn(sheetsView.doc.columns.find((x) => x.id === $(this).data('sheet-col-edit'))); });
   $doc.on('click', '[data-sheet-col-delete]', function () {
     const c = sheetsView.doc.columns.find((x) => x.id === $(this).data('sheet-col-delete'));
     dialog.confirm({

@@ -6,7 +6,9 @@ const db = require('./db');
 const cloud = require('./cloud');
 const auth = require('./auth');
 const teams = require('./teams');
+const presence = require('./presence');
 const excel = require('./excel');
+const formula = require('./public/formula');
 const ExcelJS = require('exceljs');
 
 const PORT = Number(process.env.PORT) || 4000;
@@ -261,10 +263,29 @@ function password(value) {
   return value.slice(0, 200);
 }
 
+// who is online (presence.js), set once the server listens
+let online = null;
+
+// with when each login last signed in, whether it is signed in now, and whether it is online now (Admin page)
 app.get('/api/users', route(async (req, res) => {
   need(req, 'super');
-  const { rows } = await db.query('SELECT * FROM users WHERE NOT is_deleted ORDER BY created_at');
-  res.json(rows.map(toUser));
+  const { rows } = await db.query(
+    `SELECT u.*, (SELECT max(s.created_at) FROM sessions s WHERE s.user_id = u.id) AS last_sign_in,
+            (SELECT count(*)::int FROM sessions s WHERE s.user_id = u.id AND s.expires_at > now()) AS active_sessions
+     FROM users u WHERE NOT u.is_deleted ORDER BY u.created_at`);
+  res.json(rows.map((r) => ({
+    ...toUser(r), lastSignIn: r.last_sign_in, signedIn: r.active_sessions > 0,
+    presence: online ? online.of(r.id) : { status: 'offline', lastSeen: null },
+  })));
+}));
+
+// Sign a login out on every device (not you: that would be Sign out)
+app.post('/api/users/:id/signout', route(async (req, res) => {
+  need(req, 'super');
+  const user = await live('users', req.params.id, '*');
+  if (user.id === req.user.id) throw new HttpError(400, 'Use Sign out for your own login');
+  await expireSessions(user.id, req.user.id);
+  res.json({ ok: true });
 }));
 
 app.post('/api/users', route(async (req, res) => {
@@ -699,7 +720,7 @@ app.post('/api/screens/:id/branches/:branchId/path', route(async (req, res) => {
 
 // Start a new flow from a plain screen, e.g. screens 1–3 are shared and a second journey continues from screen 4.
 app.post('/api/screens/:id/extend', route(async (req, res) => {
-  await allowed(req, 'screens', req.params.id, 'full');
+  await allowed(req, 'screens', req.params.id, 'developer');
   const screen = await live('screens', req.params.id, '*');
   if (screen.type === 'condition') throw new HttpError(400, 'Use Extend path on a branch of the condition');
   const flow = await live('flows', screen.flow_id, '*');
@@ -740,10 +761,19 @@ async function buildSketch(client, req, root, steps) {
     let first = null;
     for (const step of list) {
       if (!step || typeof step !== 'object') throw new HttpError(400, 'Invalid sketch');
-      if ((count += 1) > SKETCH_MAX) throw new HttpError(400, `A sketch can create up to ${SKETCH_MAX} steps`);
-      const id = randomUUID();
       const type = step.type === 'condition' ? 'condition' : 'screen';
       const key = text(step.key, 64);
+      if (step.existingId) {
+        if (key) made.set(key, { id: step.existingId, type });
+        if (!first) first = { id: step.existingId, type };
+        for (const ext of Array.isArray(step.extends) ? step.extends : []) {
+          const path = await insertFlow(flow, text(ext && ext.name) || `${flow.name} › ${step.name}`, { screenId: step.existingId });
+          await lane(path, ext.steps, depth + 1);
+        }
+        continue;
+      }
+      if ((count += 1) > SKETCH_MAX) throw new HttpError(400, `A sketch can create up to ${SKETCH_MAX} steps`);
+      const id = randomUUID();
       if (key) made.set(key, { id, type });
       if (!first) first = { id, type };
       if (type === 'condition') {
@@ -767,7 +797,6 @@ async function buildSketch(client, req, root, steps) {
           `INSERT INTO screens (id, flow_id, name, kind, sort_order, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $6)`,
           [id, flow.id, name, step.type === 'popup' ? 'popup' : 'screen', (order += 1), req.user.id]);
         for (const ext of Array.isArray(step.extends) ? step.extends : []) {
-          need(req, 'full'); // same as "Extend a flow from a screen" on the board
           const path = await insertFlow(flow, text(ext && ext.name) || `${flow.name} › ${name}`, { screenId: id });
           await lane(path, ext.steps, depth + 1);
         }
@@ -1786,16 +1815,18 @@ app.put('/api/done/:id/closed', route(async (req, res) => {
 
 // ---------------------------------------------------------------- sheets: spreadsheets made inside an app
 
-const SHEET_TYPES = ['text', 'number', 'date', 'select', 'checkbox', 'person', 'flow', 'screen'];
+const SHEET_TYPES = ['text', 'number', 'date', 'select', 'checkbox', 'person', 'flow', 'screen', 'formula'];
+const FORMAT_KINDS = ['', 'number', 'percent', 'currency', 'date', 'text'];
 const SHEET_SHARES = ['private', 'view', 'edit'];
 
 // Who may do what with a sheet: owner and super admins manage it (rename, share, delete); they, the editors and,
 // when shared to edit, anyone in the app with Update tasks or more change columns and rows; view-only logins only look.
+// Viewers are people a private sheet is shared with to look at only.
 function sheetRights(user, sheet) {
   const manage = user.access === 'super' || sheet.owner_id === user.id;
   const editor = sheet.editors.includes(user.id);
   const edit = auth.atLeast(user, 'edit') && (manage || editor || sheet.share === 'edit');
-  const view = edit || manage || editor || sheet.share !== 'private';
+  const view = edit || manage || editor || (sheet.viewers || []).includes(user.id) || sheet.share !== 'private';
   return { view, edit, manage };
 }
 
@@ -1809,21 +1840,40 @@ async function sheetFor(req, id, need = 'view') {
 }
 
 const toSheet = (r, user) => ({
-  id: r.id, productId: r.product_id, name: r.name, ownerId: r.owner_id, share: r.share, editors: r.editors,
+  id: r.id, productId: r.product_id, name: r.name, ownerId: r.owner_id, share: r.share, editors: r.editors, viewers: r.viewers || [],
   rows: r.row_count, ...sheetRights(user, r), ...audit(r),
 });
-const toSheetColumn = (r) => ({
+// columns (optional): the sheet's columns, to show a formula with their names ([Qty] * [Price])
+const toSheetColumn = (r, columns) => ({
   id: r.id, name: r.name, type: r.type, options: r.options, colors: r.colors || {}, fonts: r.fonts || {}, width: r.width, order: r.sort_order,
+  formula: r.formula || '', format: r.format || {}, ...(columns && r.type === 'formula' ? { formulaText: formula.toNames(r.formula, columns) } : {}),
 });
 const toSheetRow = (r) => ({ id: r.id, cells: r.cells, styles: r.styles || {}, order: r.sort_order, updatedAt: r.updated_at, updatedBy: r.updated_by });
 
-function columnFields(b, current = {}) {
+// columns: the sheet's other columns (a formula names them)
+function columnFields(b, current = {}, columns = []) {
   const fields = {};
   if (b.name !== undefined) fields.name = required(text(b.name, 60), 'Column name');
   if (b.type !== undefined) fields.type = oneOf(b.type, SHEET_TYPES, 'column type');
   if (b.options !== undefined) {
     const list = Array.isArray(b.options) ? b.options : String(b.options).split(',');
-    fields.options = [...new Set(list.map((x) => text(x, 40)).filter(Boolean))].slice(0, 30);
+    fields.options = [...new Set(list.map((x) => text(x, 80)).filter(Boolean))].slice(0, 100);
+  }
+  if ((fields.type || current.type) === 'formula') {
+    if (b.formula !== undefined) {
+      try {
+        fields.formula = formula.toIds(text(b.formula, 2000), columns.filter((c) => c.id !== current.id));
+      } catch (err) {
+        throw new HttpError(400, `Formula: ${err.message}`);
+      }
+    }
+    if (!(fields.formula || current.formula)) throw new HttpError(400, 'A formula column needs a formula, e.g. [Qty] * [Price]');
+  }
+  if (b.format !== undefined) {
+    const f = b.format && typeof b.format === 'object' ? b.format : { kind: String(b.format || '') };
+    const kind = oneOf(f.kind || '', FORMAT_KINDS, 'format');
+    const decimals = Number.isInteger(Number(f.decimals)) && f.decimals !== '' && f.decimals !== undefined ? Math.max(0, Math.min(6, Number(f.decimals))) : undefined;
+    fields.format = JSON.stringify({ ...(kind ? { kind } : {}), ...(decimals !== undefined ? { decimals } : {}), ...(kind === 'currency' ? { symbol: text(f.symbol || '₹', 4) } : {}) });
   }
   if ((fields.type || current.type) === 'select' && !(fields.options || current.options || []).length) throw new HttpError(400, 'A dropdown needs at least one option');
   // fill and text colours stay with the options that are still there
@@ -1855,6 +1905,7 @@ function cellValue(col, value) {
       return String(value);
     case 'checkbox': return value === true || value === 'true';
     case 'select': return col.options.includes(String(value)) ? String(value) : (() => { throw new HttpError(400, `${col.name}: pick one of the options`); })();
+    case 'formula': throw new HttpError(400, `${col.name} is worked out by its formula`);
     default: return text(String(value), 2000);
   }
 }
@@ -1891,7 +1942,7 @@ app.get('/api/sheets/:id', route(async (req, res) => {
     db.query('SELECT * FROM sheet_columns WHERE sheet_id = $1 AND NOT is_deleted ORDER BY sort_order, created_at', [sheet.id]),
     db.query('SELECT * FROM sheet_rows WHERE sheet_id = $1 AND NOT is_deleted ORDER BY sort_order, created_at', [sheet.id]),
   ]);
-  res.json({ ...toSheet({ ...sheet, row_count: rows.rows.length }, req.user), columns: cols.rows.map(toSheetColumn), rowList: rows.rows.map(toSheetRow) });
+  res.json({ ...toSheet({ ...sheet, row_count: rows.rows.length }, req.user), columns: cols.rows.map((c) => toSheetColumn(c, cols.rows)), rowList: rows.rows.map(toSheetRow) });
 }));
 
 // New sheet with a few starter columns and empty rows (all of them can be changed)
@@ -1916,24 +1967,59 @@ app.post('/api/sheets', route(async (req, res) => {
 
 // ---- Excel import: excel.js reads the workbook in detail (types, dropdown lists, colours, conditional formats …)
 
-// Excel → new sheets (one per worksheet with data). Rows go in a few at a time, not one query per row.
+// A Google Sheets link → the spreadsheet as .xlsx (Google's own export keeps dropdowns, colours and formulas).
+// Only Google's address is ever fetched, built from the id in the link.
+async function googleSheet(link) {
+  const id = (/^https:\/\/docs\.google\.com\/spreadsheets\/d\/([\w-]{20,})/.exec(String(link || '').trim()) || [])[1];
+  if (!id) throw new HttpError(400, 'Paste the link of a Google Sheet (https://docs.google.com/spreadsheets/d/…)');
+  let res;
+  try {
+    res = await fetch(`https://docs.google.com/spreadsheets/d/${id}/export?format=xlsx`, { redirect: 'follow', signal: AbortSignal.timeout(30000) });
+  } catch (err) {
+    throw new HttpError(502, 'Google Sheets could not be reached. Try again, or download it as .xlsx and import that.');
+  }
+  const type = res.headers.get('content-type') || '';
+  if (!res.ok || type.includes('text/html')) {
+    throw new HttpError(400, 'Google did not give the sheet: share it as “Anyone with the link can view” (or download it as .xlsx and import that).');
+  }
+  const size = Number(res.headers.get('content-length') || 0);
+  if (size > 15 * 1024 * 1024) throw new HttpError(400, 'That Google Sheet is too large to import (over 15 MB)');
+  const buffer = Buffer.from(await res.arrayBuffer());
+  if (buffer.length > 15 * 1024 * 1024) throw new HttpError(400, 'That Google Sheet is too large to import (over 15 MB)');
+  const title = decodeURIComponent((/filename\*=UTF-8''([^;]+)/i.exec(res.headers.get('content-disposition') || '') || [, ''])[1]).replace(/\.xlsx$/i, '');
+  return { buffer, title };
+}
+
+// Excel (.xlsx), .csv or a Google Sheets link → new sheets (one per worksheet with data). Rows go in a few at a time,
+// not one query per row.
 app.post('/api/sheets/import', route(async (req, res) => {
   const product = await productFor(req, req.body.productId, 'edit');
-  const m = /^data:[\w/.+-]*;base64,([A-Za-z0-9+/=]+)$/.exec(req.body.dataUrl || '');
-  if (!m) throw new HttpError(400, 'Please choose an .xlsx file');
+  let buffer;
+  let csv = false;
+  let fromGoogle = '';
+  if (req.body.url) {
+    const g = await googleSheet(req.body.url);
+    buffer = g.buffer;
+    fromGoogle = g.title;
+  } else {
+    const m = /^data:([\w/.+-]*);base64,([A-Za-z0-9+/=]+)$/.exec(req.body.dataUrl || '');
+    if (!m) throw new HttpError(400, 'Please choose an .xlsx or .csv file');
+    buffer = Buffer.from(m[2], 'base64');
+    csv = /csv|text\/plain/.test(m[1]) || /\.csv$/i.test(String(req.body.file || ''));
+  }
   const [{ rows: people }, { rows: tags }] = await Promise.all([
     peopleOf(product.id),
     db.query('SELECT label, color FROM statuses WHERE NOT is_deleted'),
   ]);
   let read;
   try {
-    read = await excel.readWorkbook(Buffer.from(m[1], 'base64'), { people, tags });
+    read = await excel.readWorkbook(buffer, { people, tags, csv });
   } catch (err) {
     console.error('Excel import:', err.message);
-    throw new HttpError(400, 'That file could not be read as an Excel (.xlsx) sheet');
+    throw new HttpError(400, csv ? 'That file could not be read as a .csv file' : 'That file could not be read as an Excel (.xlsx) sheet');
   }
   if (!read.length) throw new HttpError(400, 'The Excel file has no data: it needs a header row and at least one filled row');
-  const file = text(req.body.name, 80) || 'Imported sheet';
+  const file = text(req.body.name, 80) || text(fromGoogle, 80) || 'Imported sheet';
   const ids = [];
   await db.tx(async (client) => {
     for (const ws of read) {
@@ -1944,10 +2030,12 @@ app.post('/api/sheets/import', route(async (req, res) => {
         [id, product.id, name.slice(0, 80), req.user.id, Date.now() + ids.length]);
       const colIds = ws.columns.map(() => randomUUID());
       for (const [i, c] of ws.columns.entries()) {
+        // a formula names columns by their place ({@2}): now by id
+        const f = c.type === 'formula' ? c.formula.replace(/\{@(\d+)\}/g, (x, k) => `{${colIds[+k]}}`) : '';
         await client.query(
-          `INSERT INTO sheet_columns (id, sheet_id, name, type, options, colors, fonts, width, sort_order, created_by, updated_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)`,
-          [colIds[i], id, c.name, c.type, c.options, JSON.stringify(c.colors), JSON.stringify(c.fonts), c.width, i, req.user.id]);
+          `INSERT INTO sheet_columns (id, sheet_id, name, type, options, colors, fonts, width, formula, format, sort_order, created_by, updated_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)`,
+          [colIds[i], id, c.name, c.type, c.options, JSON.stringify(c.colors), JSON.stringify(c.fonts), c.width, f, JSON.stringify(c.format || {}), i, req.user.id]);
       }
       // cells: { columnId: value }, styles: { columnId: { bg, fg, b } } (a cell's own colours from Excel)
       const rows = ws.rows.map((row, k) => {
@@ -1969,11 +2057,14 @@ app.post('/api/sheets/import', route(async (req, res) => {
   // what was read, shown to the person who imported it
   const report = read.map((ws, k) => ({
     id: ids[k], name: ws.name, header: ws.header, rows: ws.rows.length, skipped: ws.skipped, more: ws.rows.length >= excel.MAX_ROWS,
-    columns: ws.columns.map((c) => ({ name: c.name, type: c.type, colors: Object.keys(c.colors).length + Object.keys(c.fonts).length })),
+    columns: ws.columns.map((c) => ({
+      name: c.name, type: c.type, colors: Object.keys(c.colors).length + Object.keys(c.fonts).length,
+      ...(c.type === 'formula' ? { formula: formula.toNames(c.formula, ws.columns.map((y, j) => ({ id: `@${j}`, name: y.name }))) } : {}),
+    })),
     styled: ws.styles.reduce((t, r) => t + r.filter(Boolean).length, 0),
   }));
   res.status(201).json({
-    id: ids[0], sheets: ids.length, rows: report.reduce((t, x) => t + x.rows, 0), columns: report.reduce((t, x) => t + x.columns.length, 0), report,
+    id: ids[0], title: file, sheets: ids.length, rows: report.reduce((t, x) => t + x.rows, 0), columns: report.reduce((t, x) => t + x.columns.length, 0), report,
   });
 }));
 
@@ -1983,9 +2074,13 @@ app.patch('/api/sheets/:id', route(async (req, res) => {
   const fields = {};
   if (b.name !== undefined) fields.name = required(text(b.name, 80), 'Sheet name');
   if (b.share !== undefined) fields.share = oneOf(b.share, SHEET_SHARES, 'sharing');
-  if (b.editors !== undefined) {
+  if (b.editors !== undefined || b.viewers !== undefined) {
     const { rows } = await peopleOf(sheet.product_id);
-    fields.editors = (Array.isArray(b.editors) ? b.editors : []).filter((x) => rows.some((u) => u.id === x));
+    const of = (list) => [...new Set((Array.isArray(list) ? list : []).filter((x) => rows.some((u) => u.id === x)))];
+    if (b.editors !== undefined) fields.editors = of(b.editors);
+    // an editor is not also a viewer
+    const editors = fields.editors || sheet.editors;
+    fields.viewers = of(b.viewers !== undefined ? b.viewers : sheet.viewers).filter((x) => !editors.includes(x));
   }
   await update('sheets', sheet.id, fields, req.user.id);
   res.json({ ok: true });
@@ -2009,22 +2104,24 @@ app.delete('/api/sheets/:id', route(async (req, res) => {
 
 app.post('/api/sheets/:id/columns', route(async (req, res) => {
   const { sheet } = await sheetFor(req, req.params.id, 'edit');
-  const f = columnFields({ type: 'text', ...req.body });
+  const { rows: cols } = await db.query('SELECT * FROM sheet_columns WHERE sheet_id = $1 AND NOT is_deleted', [sheet.id]);
+  const f = columnFields({ type: 'text', ...req.body }, {}, cols);
   required(f.name, 'Column name');
   const { rows } = await db.query(
-    `INSERT INTO sheet_columns (id, sheet_id, name, type, options, sort_order, created_by, updated_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $7) RETURNING *`,
-    [randomUUID(), sheet.id, f.name, f.type, f.options || [], Date.now(), req.user.id]);
+    `INSERT INTO sheet_columns (id, sheet_id, name, type, options, formula, format, sort_order, created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9) RETURNING *`,
+    [randomUUID(), sheet.id, f.name, f.type, f.options || [], f.formula || '', f.format || '{}', Date.now(), req.user.id]);
   res.status(201).json(toSheetColumn(rows[0]));
 }));
 
 app.patch('/api/sheet-columns/:id', route(async (req, res) => {
   const col = await live('sheet_columns', req.params.id, '*');
   await sheetFor(req, col.sheet_id, 'edit');
-  const fields = columnFields(req.body, col);
+  const { rows: cols } = await db.query('SELECT * FROM sheet_columns WHERE sheet_id = $1 AND NOT is_deleted', [col.sheet_id]);
+  const fields = columnFields(req.body, col, cols);
   await update('sheet_columns', col.id, fields, req.user.id);
-  // a new type: values that don't fit it are cleared from every row
-  if (fields.type && fields.type !== col.type) {
+  // a new type: values that don't fit it are cleared from every row (a formula column holds none)
+  if (fields.type && fields.type !== col.type && fields.type !== 'formula') {
     const next = { ...col, ...fields };
     const { rows } = await db.query('SELECT id, cells FROM sheet_rows WHERE sheet_id = $1 AND cells ? $2', [col.sheet_id, col.id]);
     for (const r of rows) {
@@ -2107,14 +2204,26 @@ async function sheetContent(sheet) {
               WHERE m.product_id = $1`, [sheet.product_id]),
   ]);
   const named = (list, id, label) => { const x = list.find((y) => y.id === id); return x ? label(x) : ''; };
-  const show = (col, v) => {
-    if (v === '' || v === undefined || v === null) return null;
-    if (col.type === 'date') return new Date(`${v}T00:00:00Z`);
-    if (col.type === 'checkbox') return v ? 'Yes' : 'No';
+  const linked = (col, v) => {
     if (col.type === 'person') return named(people, v, personName);
     if (col.type === 'flow') return named(flows, v, (f) => `${f.module} › ${f.name}`);
     if (col.type === 'screen') return named(screens, v, (x) => `${x.flow} › ${x.name}`);
     return v;
+  };
+  // formula columns: worked out per row (r.results), people / flows / screens counting by name
+  if (cols.some((c) => c.type === 'formula')) {
+    rows.forEach((r, k) => { r.results = formula.computeRow(cols, r.cells, linked, k + 1); });
+  }
+  const show = (col, v, r) => {
+    if (col.type === 'formula') {
+      const x = r && r.results ? r.results[col.id] : '';
+      if (col.format && col.format.kind === 'date' && typeof x === 'number') return formula.fromSerial(x);
+      return x === '' ? null : formula.display(x, col.format);
+    }
+    if (v === '' || v === undefined || v === null) return null;
+    if (col.type === 'date') return new Date(`${v}T00:00:00Z`);
+    if (col.type === 'checkbox') return v ? 'Yes' : 'No';
+    return linked(col, v);
   };
   return { cols, rows, show };
 }
@@ -2133,33 +2242,36 @@ const teamsTable = (rows) => ({
 // mode 'channel' posts to the app's channel (webhook, as a card). mode 'card' sends nothing: it answers the message for
 // the browser to send from the person's own Teams (Microsoft Graph), as an HTML table: `card` @mentions the people picked (for a channel),
 // `direct` does not (a chat with each of them), and `people` are who to message.
-async function sendList(req, product, { title, rows, userIds, note, link, mode }) {
-  if (mode !== 'card' && !product.teams_webhook) throw new HttpError(400, 'This app has no Teams channel yet. A super admin can add it in Sanity → Teams channel.');
+async function sendList(req, product, { title, rows, userIds, note, link, mode, extra = [] }) {
   if (!rows.length) throw new HttpError(400, 'Pick at least one row to send');
   const { rows: people } = await peopleOf(product.id);
   const wanted = Array.isArray(userIds) ? userIds : [];
-  const to = people.filter((u) => wanted.includes(u.id));
-  const lines = [text(note, 1000)];
+  const message = { title, lines: [text(note, 1000)], table: teamsTable(rows), actions: [['Open in FlowTrace', link], ...extra] };
+  return { ...await teamsTo(product, message, people.filter((u) => wanted.includes(u.id)), mode), rows: rows.length };
+}
+
+// A message for people `to`, by mode (see sendList): posted to the app's channel @mentioning them, or answered for
+// the browser to send from the person's own Teams.
+async function teamsTo(product, message, to, mode) {
+  if (mode !== 'card' && !product.teams_webhook) throw new HttpError(400, 'This app has no Teams channel yet. A super admin can add it in Sanity → Teams channel.');
+  const lines = [...message.lines];
   if (mode !== 'card' && to.some((u) => !u.teams_email)) lines.push(`For: ${to.filter((u) => !u.teams_email).map(personName).join(', ')}`);
-  const message = {
-    title, lines,
-    table: teamsTable(rows),
-    actions: [['Open in FlowTrace', link]],
-    mentions: to.flatMap(mention),
-  };
+  const full = { ...message, lines, mentions: to.flatMap(mention) };
   if (mode === 'card') {
     return {
-      card: teams.html(message), direct: teams.html({ ...message, mentions: [] }), rows: rows.length,
+      card: teams.html(full), direct: teams.html({ ...full, mentions: [] }),
       people: to.map((u) => ({ name: personName(u), email: u.teams_email })),
     };
   }
-  const sent = await toTeams(product, message);
+  const sent = await toTeams(product, full);
   if (sent !== 'sent') throw new HttpError(502, sent);
-  return { teams: sent, rows: rows.length };
+  return { teams: sent };
 }
 
+// excel: the whole sheet goes along as an Excel file. Only for people who can edit the sheet, and only when every
+// row is sent (the file is the whole sheet, not the rows picked).
 app.post('/api/sheets/:id/teams', route(async (req, res) => {
-  const { sheet } = await sheetFor(req, req.params.id);
+  const { sheet, rights } = await sheetFor(req, req.params.id);
   need(req, 'edit');
   const product = await live('products', sheet.product_id, '*');
   const { cols, rows, show } = await sheetContent(sheet);
@@ -2175,11 +2287,46 @@ app.post('/api/sheets/:id/teams', route(async (req, res) => {
     const x = { bg: opt.bg || own.bg, fg: opt.fg || own.fg, b: own.b };
     return x.bg || x.fg || x.b ? x : null;
   };
-  const list = rows.filter((r) => wantedRows.has(r.id)).map((r) => picked.map((c) => [c.name, show(c, r.cells[c.id]), look(c, r)]));
-  res.json(await sendList(req, product, {
+  const list = rows.filter((r) => wantedRows.has(r.id)).map((r) => picked.map((c) => [c.name, show(c, r.cells[c.id], r), look(c, r)]));
+  const excel = Boolean(req.body.excel);
+  if (excel && !rights.edit) throw new HttpError(403, 'Only people who can edit this sheet can send it as Excel');
+  if (excel && rows.some((r) => !wantedRows.has(r.id))) throw new HttpError(400, 'Excel goes only with the whole sheet: tick every row (or none, with no search or filter)');
+  const out = await sendList(req, product, {
     title: `📋 ${sheet.name}`, rows: list, userIds: req.body.userIds, note: req.body.note,
     link: deeplink(req, `sheet=${sheet.id}`), mode: req.body.mode,
-  }));
+    extra: excel ? [['Download Excel', deeplink(req, '').replace(/\/#$/, `/api/sheets/${sheet.id}/export`)]] : [],
+  });
+  res.json(excel && req.body.mode === 'card' ? { ...out, excel: await excelFile(sheet) } : out);
+}));
+
+// Share a whole sheet with one or more people of the app: they can view it (or edit it) from now on, and are told on
+// Teams with a link to it (mode as in sendList; 'none' only gives the access)
+app.post('/api/sheets/:id/share', route(async (req, res) => {
+  const { sheet } = await sheetFor(req, req.params.id, 'manage');
+  const product = await live('products', sheet.product_id, '*');
+  const access = oneOf(req.body.access, ['view', 'edit'], 'access');
+  const wanted = Array.isArray(req.body.userIds) ? req.body.userIds : [];
+  const { rows: people } = await peopleOf(product.id);
+  const to = people.filter((u) => wanted.includes(u.id) && u.id !== sheet.owner_id && u.id !== req.user.id);
+  if (!to.length) throw new HttpError(400, 'Tick who to share it with');
+  const ids = to.map((u) => u.id);
+  // view never takes away edit: an editor picked to view stays an editor
+  const editors = access === 'edit' ? [...new Set([...sheet.editors, ...ids])] : sheet.editors;
+  const viewers = [...new Set([...(sheet.viewers || []), ...(access === 'view' ? ids : [])])].filter((x) => !editors.includes(x));
+  await update('sheets', sheet.id, { editors, viewers }, req.user.id);
+  const shared = { shared: to.length, editors, viewers };
+  if (req.body.mode === 'none') { res.json(shared); return; }
+  const { rows: [{ count }] } = await db.query('SELECT count(*)::int FROM sheet_rows WHERE sheet_id = $1 AND NOT is_deleted', [sheet.id]);
+  // view-only logins can never edit, whatever the sheet says
+  const can = access === 'edit' && to.every((u) => auth.atLeast(u, 'edit')) ? 'can edit' : 'can view';
+  const message = {
+    title: `📋 ${sheet.name}`,
+    lines: [`${personName(req.user)} shared this sheet of ${product.name} with you (${can}, ${count} row${count === 1 ? '' : 's'}).`, text(req.body.note, 1000)],
+    actions: [['Open the sheet', deeplink(req, `sheet=${sheet.id}`)],
+      ...(req.body.excel ? [['Download Excel', deeplink(req, '').replace(/\/#$/, `/api/sheets/${sheet.id}/export`)]] : [])],
+  };
+  const sent = await teamsTo(product, message, to, req.body.mode);
+  res.json({ ...shared, ...sent, ...(req.body.excel && req.body.mode === 'card' ? { excel: await excelFile(sheet) } : {}) });
 }));
 
 // Issues: the columns a message can have
@@ -2213,10 +2360,50 @@ app.post('/api/issues/teams', route(async (req, res) => {
   const keys = (Array.isArray(req.body.columns) ? req.body.columns : []).filter((k) => ISSUE_COLUMNS[k]);
   if (!keys.length) throw new HttpError(400, 'Pick at least one column to send');
   const list = rows.map((r) => keys.map((k) => [ISSUE_COLUMNS[k][0], ISSUE_COLUMNS[k][1](r) || null]));
-  res.json(await sendList(req, product, {
+  const send = sendList(req, product, {
     title: `🐞 ${rows.length} issue${rows.length === 1 ? '' : 's'}`, rows: list, userIds: req.body.userIds, note: req.body.note,
     link: rows.length === 1 ? deeplink(req, `screen=${rows[0].screen_id}`) : deeplink(req, ''), mode: req.body.mode,
-  }));
+  });
+  // 'card': the browser sends it from the person's own Teams and reports back (below); the app's channel is sent here
+  if (req.body.mode === 'card') { res.json(await send); return; }
+  const share = { productId: product.id, issueIds: rows.map((r) => r.id), target: 'app', destination: `${product.name} channel`, note: req.body.note };
+  try {
+    const out = await send;
+    await logShare(req, { ...share, ok: true });
+    res.json(out);
+  } catch (err) {
+    await logShare(req, { ...share, ok: false, error: err.message });
+    throw err;
+  }
+}));
+
+// Keep a record of an issue send on Teams (never fails the send itself)
+function logShare(req, s) {
+  return db.query(
+    `INSERT INTO teams_shares (id, product_id, issue_ids, target, chat_id, destination, note, message_id, ok, error, created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)`,
+    [randomUUID(), s.productId, s.issueIds, s.target, text(s.chatId, 200), text(s.destination, 300),
+      text(s.note, 1000), text(s.messageId, 200), Boolean(s.ok), text(s.error, 1000), req.user.id])
+    .catch((err) => console.error('Teams share log:', err.message));
+}
+
+// The browser sent issues from the person's own Teams (Microsoft Graph): how it went, to keep with the issues.
+// Graph itself decided whether they may post there; this only records what the browser says happened.
+app.post('/api/issues/teams/log', route(async (req, res) => {
+  const product = await productFor(req, req.body.productId, 'edit');
+  const target = ['mine', 'direct'].includes(req.body.target) ? req.body.target : null;
+  if (!target) throw new HttpError(400, 'target must be mine or direct');
+  const ids = Array.isArray(req.body.ids) ? req.body.ids.filter((x) => typeof x === 'string').slice(0, 500) : [];
+  const { rows } = await db.query(
+    `SELECT c.id FROM comments c JOIN screens s ON s.id = c.screen_id JOIN flows f ON f.id = s.flow_id JOIN modules m ON m.id = f.module_id
+     WHERE c.id = ANY($1) AND m.product_id = $2`, [ids, product.id]);
+  if (!rows.length) throw new HttpError(400, 'No issues of this app');
+  const b = req.body;
+  await logShare(req, {
+    productId: product.id, issueIds: rows.map((r) => r.id), target, chatId: b.chatId,
+    destination: b.destination, note: b.note, messageId: b.messageId, ok: b.ok, error: b.error,
+  });
+  res.status(201).json({ ok: true });
 }));
 
 // ---- issue notifications: assignees are told when an issue is given to them, and assignees and the one who
@@ -2258,18 +2445,37 @@ async function notifyIssue(req, productId, issueId, { added = [], statusFrom = n
 const notifyOf = (...args) => notifyIssue(...args).catch((err) => { console.error('Issue notification:', err.message); return undefined; });
 
 // The sheet as Excel: numbers as numbers, dates as dates, people / flows / screens by name, totals under number columns
-app.get('/api/sheets/:id/export', route(async (req, res) => {
-  const { sheet } = await sheetFor(req, req.params.id);
+// A formula column's format as an Excel number format
+function excelFormat(f = {}) {
+  const dec = Number.isInteger(f.decimals) ? f.decimals : null;
+  const places = (d) => (d ? `.${'0'.repeat(d)}` : '');
+  if (f.kind === 'date') return 'dd mmm yyyy';
+  if (f.kind === 'percent') return `0${places(dec === null ? 0 : dec)}%`;
+  if (f.kind === 'currency') return `"${f.symbol || '₹'}"#,##0${places(dec === null ? 2 : dec)}`;
+  return dec === null ? '#,##0.##' : `#,##0${places(dec)}`;
+}
+
+// The whole sheet as an Excel workbook (the download, and the file sent on Teams)
+async function sheetWorkbook(sheet) {
   const { cols, rows, show } = await sheetContent(sheet);
   const book = new ExcelJS.Workbook();
   book.creator = 'FlowTrace';
   const ws = book.addWorksheet(sheet.name.replace(/[\\/?*[\]:]/g, ' ').slice(0, 31) || 'Sheet', { views: [{ state: 'frozen', ySplit: 1 }] });
   ws.columns = cols.map((c) => ({
     header: c.name, key: c.id, width: Math.max(8, Math.round(c.width / 7)),
-    style: c.type === 'date' ? { numFmt: 'dd mmm yyyy' } : c.type === 'number' ? { numFmt: '#,##0.##' } : {},
+    style: c.type === 'date' ? { numFmt: 'dd mmm yyyy' } : c.type === 'number' ? { numFmt: '#,##0.##' } : c.type === 'formula' ? { numFmt: excelFormat(c.format) } : {},
   }));
-  rows.forEach((r) => {
-    const row = ws.addRow(Object.fromEntries(cols.map((c) => [c.id, show(c, r.cells[c.id])])));
+  // a formula column stays a formula in Excel ({id} → that column's cell in the row), with its result
+  const letters = new Map(cols.map((c, i) => [c.id, formula.colLetter(i + 1)]));
+  const cellOf = (c, r, n) => {
+    if (c.type !== 'formula') return show(c, r.cells[c.id]);
+    const x = r.results ? r.results[c.id] : '';
+    const result = formula.isErr(x) ? { error: x.code } : x;
+    const f = c.formula.replace(/\{([\w-]+)\}/g, (m, id) => (letters.has(id) ? `${letters.get(id)}${n}` : '#REF!'));
+    return { formula: f, result };
+  };
+  rows.forEach((r, k) => {
+    const row = ws.addRow(Object.fromEntries(cols.map((c) => [c.id, cellOf(c, r, k + 2)])));
     // dropdown values keep their colours, other cells their own (from an imported Excel)
     const argb = (hex) => ({ argb: `FF${hex.slice(1).toUpperCase()}` });
     cols.forEach((c, i) => {
@@ -2292,9 +2498,22 @@ app.get('/api/sheets/:id/export', route(async (req, res) => {
     total.font = { bold: true };
     if (cols[0].type !== 'number') total.getCell(1).value = 'Total';
   }
-  const safe = sheet.name.replace(/[^\w-]+/g, '-');
-  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', `attachment; filename="${safe || 'sheet'}.xlsx"`);
+  return book;
+}
+const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+const excelName = (sheet) => `${sheet.name.replace(/[^\w-]+/g, '-') || 'sheet'}.xlsx`;
+
+// The file itself, for the browser to put on the sender's OneDrive and attach to the Teams message
+async function excelFile(sheet) {
+  const book = await sheetWorkbook(sheet);
+  return { name: excelName(sheet), type: XLSX, base64: Buffer.from(await book.xlsx.writeBuffer()).toString('base64') };
+}
+
+app.get('/api/sheets/:id/export', route(async (req, res) => {
+  const { sheet } = await sheetFor(req, req.params.id);
+  const book = await sheetWorkbook(sheet);
+  res.setHeader('Content-Type', XLSX);
+  res.setHeader('Content-Disposition', `attachment; filename="${excelName(sheet)}"`);
   await book.xlsx.write(res);
   res.end();
 }));
@@ -2329,12 +2548,16 @@ async function ensureSuperAdmin() {
 
 db.init()
   .then(ensureSuperAdmin)
-  .then(() => app.listen(PORT, () => {
+  .then(() => {
+    const server = app.listen(PORT, () => {
     console.log(`FlowTrace running at http://localhost:${PORT}`);
     if (!cloud.configured()) console.log('Image uploads are off: add the Cloudinary keys to .env to turn them on.');
     if (!process.env.APP_URL) console.log('APP_URL is not set: Teams reminders will have no "Start sanity" link.');
     setInterval(() => sanityReminders().catch((err) => console.error('Sanity reminders:', err.message)), 60 * 1000);
-  }))
+    });
+    // who is online: a WebSocket on the same port (/ws)
+    online = presence.attach(server, { db, auth });
+  })
   .catch((err) => {
     console.error('Could not connect to the database:', err.message);
     process.exit(1);
