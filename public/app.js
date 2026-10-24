@@ -3861,10 +3861,12 @@ $(function () {
   };
   $doc.on('click', '[data-theme-toggle]', function () {
     if (!window.flowTheme) return;
-    window.flowTheme.toggle();
-    $(this).replaceWith(themeButton());
-    if (diagram.flowId) renderDiagram(); // its wires take colours from the theme
-    if (sketch.open) skDraw();
+    const button = this;
+    window.flowTheme.toggle(button, () => {
+      $(button).replaceWith(themeButton());
+      if (diagram.flowId) renderDiagram(); // its wires take colours from the theme
+      if (sketch.open) skDraw();
+    });
   });
 
   function showLogin() {

@@ -765,7 +765,7 @@ html.dark .flow-head .cond-tag:hover { background: rgba(99, 102, 241, .28); bord
 html.dark .elbow .glow-bg { stroke: rgba(129, 140, 248, .28); filter: blur(4px); }
 html.dark .elbow .line { stroke: #818cf8; }
 html.dark .elbow .flow { stroke: #e0e7ff; }
-html.dark .elbow .port { fill: #818cf8; stroke: #020617; filter: drop-shadow(0 0 6px #818cf8); }
+html.dark .elbow .port { fill: #818cf8; stroke: #090b17; filter: drop-shadow(0 0 6px #818cf8); }
 html.dark .elbow .head { fill: #818cf8; stroke: #818cf8; filter: drop-shadow(0 0 6px #818cf8); }
 html.dark .flow.from-screen:hover > .elbow .glow-bg,
 html.dark .flow.from-screen:has(.cond-tag:hover) > .elbow .glow-bg,
@@ -1262,3 +1262,12 @@ body { padding-left: var(--sb-w); transition: padding-left .2s ease; }
   .adm-access { grid-template-columns: 1fr; }
 }
 .adm-table tbody tr.on .adm-app { background: #fff; }
+
+/* switching light ↔ dark: the new theme spreads in a circle from the switch (theme.js); the old picture stays still
+   under it. Without view transitions, colours fade instead (html.theme-fade, for a moment). */
+::view-transition-old(root), ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+::view-transition-old(root) { z-index: 1; }
+::view-transition-new(root) { z-index: 2; }
+html.theme-fade, html.theme-fade *, html.theme-fade *::before, html.theme-fade *::after {
+  transition: background-color .4s ease, color .4s ease, border-color .4s ease, fill .4s ease, stroke .4s ease, box-shadow .4s ease !important;
+}
