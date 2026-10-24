@@ -3223,19 +3223,50 @@ $(function () {
       </div>
       <button class="popup-nav prev" data-popup-go="${prev ? prev.id : ''}" title="Previous screen in this flow (←)" ${prev ? '' : 'disabled'}>${icon('left', 20)}</button>
       ${next && next.condition
-        ? `<button class="popup-nav next" data-popup-choose title="${esc(next.condition.name)}: choose where to continue (→)">${icon('right', 20)}</button>
-          <div class="popup-choices hidden">
-            <p class="flex items-center gap-2 px-3 pb-1 pt-2 text-xs font-semibold text-slate-900"><span class="cond-diamond sm"></span>${esc(next.condition.name)}</p>
-            <p class="px-3 pb-2 text-xs text-slate-500">Continue with</p>
-            ${next.choices.map((c, k) => `
-              <button class="popup-choice" data-popup-go="${c.screen.id}">
-                <span class="cond-tag tone-${tone(c.branch.label)} mt-0"><span class="dot"></span>${esc(c.branch.label || '—')}</span>
-                <span class="min-w-0 flex-1 truncate text-left text-sm font-medium text-slate-900">${esc(c.screen.name)}</span>
-                ${c.flow && c.flow.id !== s.flowId ? `<span class="max-w-[90px] shrink-0 truncate text-xs text-slate-400">${esc(c.flow.name)}</span>` : ''}
-                <kbd>${k + 1}</kbd>
-              </button>`).join('') || '<p class="px-3 pb-3 text-sm text-slate-500">No branch leads to a screen yet.</p>'}
-          </div>`
+        ? `<button class="popup-nav next fork" data-popup-choose title="Next is a decision: ${esc(next.condition.name)} (→)">${icon('fork', 18)}<span class="fork-n">${next.choices.length}</span></button>
+          <span class="popup-nav-hint" data-popup-choose><span class="cond-diamond sm"></span>${esc(next.condition.name)}<b>${next.choices.length} way${next.choices.length === 1 ? '' : 's'}</b></span>
+          ${decisionPanel(s, next)}`
         : `<button class="popup-nav next" data-popup-go="${next ? next.id : ''}" title="Next screen in this flow (→)" ${next ? '' : 'disabled'}>${icon('right', 20)}</button>`}`);
+  }
+
+  // → into a condition: a decision card over the popup. The question (the condition's name), then one card per
+  // answer: "If <answer> → goes to <screen>" with a small picture of that screen, and its flow when it's another one.
+  // 1…9 pick an answer, Esc (or a click outside the card) stays on this screen.
+  const ANSWER_COLORS = ['#4f46e5', '#0891b2', '#7c3aed', '#db2777', '#0d9488', '#ca8a04'];
+  const TONE_COLORS = { success: '#16a34a', pending: '#ea580c', fail: '#dc2626' };
+  function decisionPanel(s, next) {
+    const cards = next.choices.map((c, k) => {
+      const color = TONE_COLORS[tone(c.branch.label)] || ANSWER_COLORS[k % ANSWER_COLORS.length];
+      const thumb = c.screen.image
+        ? `<img src="${esc(imageUrl(c.screen.image, 'sm'))}" alt="" loading="lazy" draggable="false">`
+        : `<span class="decide-wf">${icon(isPopup(c.screen) ? 'popup' : 'grid', 18)}</span>`;
+      return `<button class="popup-choice decide-opt" data-popup-go="${c.screen.id}" style="--tone:${color}">
+          <span class="decide-thumb">${thumb}</span>
+          <span class="decide-body">
+            <span class="decide-if">If</span>
+            <span class="decide-answer">${esc(c.branch.label || 'Otherwise')}</span>
+            <span class="decide-goes">${icon('right', 12)} goes to</span>
+            <span class="decide-target">${esc(c.screen.name)}</span>
+            ${c.flow && c.flow.id !== s.flowId ? `<span class="decide-flow">${icon('fork', 11)} ${esc(c.flow.name)}</span>` : ''}
+          </span>
+          <kbd>${k + 1}</kbd>
+        </button>`;
+    }).join('');
+    return `<div class="popup-choices decide hidden">
+      <div class="decide-card" role="dialog" aria-label="Choose where to continue">
+        <div class="decide-head">
+          <span class="decide-icon"><span class="cond-diamond"></span></span>
+          <div class="min-w-0 flex-1">
+            <p class="decide-kicker">Next step is a decision</p>
+            <h4 class="decide-q">${esc(next.condition.name)}</h4>
+            <p class="decide-sub">After <b>${esc(s.name)}</b>, the app goes one of ${next.choices.length} ways. Pick the case to follow.</p>
+          </div>
+          <button class="icon-btn" data-decide-close title="Stay here (Esc)">${icon('close', 16)}</button>
+        </div>
+        <div class="decide-grid">${cards || '<p class="decide-empty">No answer of this decision leads to a screen yet. Add one on the condition in the flow.</p>'}</div>
+        <p class="decide-foot"><kbd>1</kbd>–<kbd>${Math.max(1, next.choices.length)}</kbd> to pick · <kbd>Esc</kbd> to stay on this screen</p>
+      </div>
+    </div>`;
   }
 
   // Where ← and → lead from a screen in its flow. Going back skips conditions; going forward into a condition
@@ -4684,7 +4715,11 @@ $(function () {
   $doc.on('click', '[data-close-popup]', closePopup);
   $doc.on('click', '[data-popup-go]', function () { if ($(this).data('popup-go')) openPopup($(this).data('popup-go')); });
   $doc.on('click', '[data-popup-choose]', (e) => { e.stopPropagation(); $('#popupBody .popup-choices').toggleClass('hidden'); });
-  $doc.on('click', '#popupBody', (e) => { if (!$(e.target).closest('.popup-choices').length) $('#popupBody .popup-choices').addClass('hidden'); });
+  // the decision closes from its ✕, or a click outside its card
+  $doc.on('click', '#popupBody', (e) => {
+    if ($(e.target).closest('[data-popup-choose]').length) return;
+    if (!$(e.target).closest('.decide-card').length || $(e.target).closest('[data-decide-close]').length) $('#popupBody .popup-choices').addClass('hidden');
+  });
   // ← → step through the flow while the popup is on top and nothing is being typed
   $doc.on('keydown', (e) => {
     if (!openId || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || $(e.target).is('input, textarea, select, [contenteditable]')) return;

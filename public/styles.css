@@ -1291,3 +1291,50 @@ html.theme-fade, html.theme-fade *, html.theme-fade *::before, html.theme-fade *
 html, body, .sb-scroll { scrollbar-width: none; -ms-overflow-style: none; }
 html::-webkit-scrollbar, body::-webkit-scrollbar, .sb-scroll::-webkit-scrollbar,
 html.dark::-webkit-scrollbar, html.dark body::-webkit-scrollbar, html.dark .sb-scroll::-webkit-scrollbar { display: none; width: 0; height: 0; }
+
+/* → into a condition: the arrow shows a fork and how many ways; the decision opens as a card over the popup */
+.popup-nav.fork { width: 44px; height: 44px; right: -22px; border-color: #c7d2fe; background: #4f46e5; color: #fff; box-shadow: 0 6px 18px rgba(79, 70, 229, .35); }
+.popup-nav.fork:hover { background: #4338ca; color: #fff; border-color: #4338ca; }
+.fork-n { position: absolute; top: -6px; right: -6px; display: grid; place-items: center; min-width: 18px; height: 18px; padding: 0 4px; border: 2px solid #fff; border-radius: 99px; background: #f59e0b; color: #fff; font-size: 10px; font-weight: 700; }
+.popup-nav-hint { position: absolute; top: calc(50% - 64px); right: -10px; z-index: 5; display: inline-flex; align-items: center; gap: 6px; max-width: 260px; padding: 4px 6px 4px 10px; border: 1px solid #c7d2fe; border-radius: 99px; background: #eef2ff; color: #3730a3; font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; box-shadow: 0 4px 12px rgba(79, 70, 229, .15); }
+.popup-nav-hint b { padding: 0 7px; border-radius: 99px; background: #4f46e5; color: #fff; font-size: 11px; }
+.popup-nav-hint:hover { background: #e0e7ff; }
+
+.popup-choices.decide { position: absolute; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; width: auto; max-width: none; max-height: none; padding: 24px; overflow-y: auto; transform: none; border: 0; border-radius: inherit; background: rgba(15, 23, 42, .45); box-shadow: none; backdrop-filter: blur(2px); animation: decideFade .15s ease-out; }
+.popup-choices.decide.hidden { display: none; }
+.decide-card { width: min(720px, 100%); max-height: 100%; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 14px; background: #fff; box-shadow: 0 24px 60px rgba(15, 23, 42, .3); animation: decideIn .18s ease-out; }
+.decide-head { display: flex; align-items: flex-start; gap: 14px; padding: 18px 20px 14px; border-bottom: 1px solid #eef2f7; }
+.decide-icon { display: grid; flex-shrink: 0; place-items: center; width: 40px; height: 40px; border-radius: 10px; background: #eef2ff; }
+.decide-icon .cond-diamond { width: 14px; height: 14px; }
+.decide-kicker { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #6366f1; }
+.decide-q { margin-top: 2px; font-size: 18px; font-weight: 700; color: #0f172a; }
+.decide-sub { margin-top: 2px; font-size: 13px; color: #64748b; }
+.decide-sub b { color: #334155; }
+.decide-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; padding: 16px 20px; }
+.popup-choice.decide-opt { position: relative; display: flex; align-items: stretch; gap: 12px; padding: 10px; border: 1px solid #e2e8f0; border-left: 4px solid var(--tone); border-radius: 10px; background: #fff; text-align: left; transition: border-color .12s, box-shadow .12s, transform .12s; }
+.popup-choice.decide-opt:hover, .popup-choice.decide-opt:focus-visible { border-color: var(--tone); box-shadow: 0 0 0 1px var(--tone), 0 8px 20px rgba(15, 23, 42, .1); transform: translateY(-1px); background: #fff; outline: 0; }
+.decide-thumb { display: grid; flex-shrink: 0; place-items: center; width: 54px; height: 96px; overflow: hidden; border: 2px solid #1e293b; border-radius: 10px; background: #f1f5f9; }
+.decide-thumb img { width: 100%; height: 100%; object-fit: cover; object-position: top; }
+.decide-wf { color: #94a3b8; }
+.decide-body { display: flex; min-width: 0; flex: 1; flex-direction: column; justify-content: center; gap: 2px; }
+.decide-if { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #94a3b8; }
+.decide-answer { font-size: 14px; font-weight: 700; line-height: 1.3; color: var(--tone); }
+.decide-goes { display: inline-flex; align-items: center; gap: 3px; margin-top: 4px; font-size: 11px; color: #94a3b8; }
+.decide-target { font-size: 14px; font-weight: 600; color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.decide-flow { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: #64748b; }
+.decide-opt kbd { position: absolute; top: 8px; right: 8px; min-width: 20px; padding: 1px 5px; border: 1px solid #e2e8f0; border-radius: 5px; background: #f8fafc; font-size: 11px; color: #64748b; text-align: center; }
+.decide-empty { padding: 12px 0; font-size: 13px; color: #64748b; }
+.decide-foot { padding: 10px 20px 14px; border-top: 1px solid #eef2f7; font-size: 12px; color: #94a3b8; }
+.decide-foot kbd { padding: 0 5px; border: 1px solid #e2e8f0; border-radius: 4px; background: #f8fafc; font-size: 11px; color: #64748b; }
+@keyframes decideFade { from { opacity: 0; } }
+@keyframes decideIn { from { opacity: 0; transform: translateY(8px) scale(.98); } }
+@media (prefers-reduced-motion: reduce) { .popup-choices.decide, .decide-card { animation: none; } }
+html.dark .popup-choices.decide { background: rgba(0, 0, 0, .5); }
+html.dark .fork-n { border-color: #1f2023; }
+/* the decision's name sits outside the popup, next to its → (where there is room); hidden while the card is open */
+.popup-nav-hint { top: 50%; right: auto; left: calc(100% + 30px); transform: translateY(-50%); flex-direction: row; }
+@media (max-width: 1499px) { .popup-nav-hint { display: none; } }
+.popup-card:has(.popup-choices.decide:not(.hidden)) .popup-nav,
+.popup-card:has(.popup-choices.decide:not(.hidden)) .popup-nav-hint { visibility: hidden; }
+html.dark .popup-nav.fork { background: #5e6ad2; border-color: #5e6ad2; color: #fff; box-shadow: 0 6px 18px rgba(0, 0, 0, .45); }
+html.dark .popup-nav.fork:hover { background: #6e79d6; border-color: #6e79d6; color: #fff; }
