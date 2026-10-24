@@ -771,7 +771,13 @@ $(function () {
     return `
       <section class="flow ${from ? 'path' : ''} ${fromScreen ? 'from-screen' : ''}" data-flow-id="${f.id}"
         ${fromScreen ? `data-from-screen="${fromScreen.id}"` : ''} style="${depth ? `--depth:${depth}` : ''}">
-        ${fromScreen ? `<svg class="elbow" aria-hidden="true"><path class="line"/><path class="head"/></svg>
+        ${fromScreen ? `<svg class="elbow" aria-hidden="true">
+            <path class="glow-bg"/>
+            <path class="line"/>
+            <path class="flow"/>
+            <circle class="port" r="4.5"/>
+            <path class="head"/>
+          </svg>
           <button class="elbow-grip" data-move-path="${f.id}" title="Drag onto another screen to start this flow from there"></button>` : ''}
         <div class="flow-head">
           <span class="flow-no ${from ? 'path' : ''}">${no}</span>
@@ -1057,8 +1063,41 @@ $(function () {
 
   // ---------------------------------------------------------------- screen paths: the "L" from a card down into its new flow
 
-  // Each screen path starts at the left, like the main row, and is joined to its source card by a dashed line:
-  // down from the card, left along the gutter, down again, then right into the path's first card.
+  function elbowPath(pts, radius = 16) {
+    let p = pts.filter((q, i) => !i || q[0] !== pts[i - 1][0] || q[1] !== pts[i - 1][1]);
+    p = p.filter((q, i) => {
+      if (i === 0 || i === p.length - 1) return true;
+      const prev = p[i - 1], next = p[i + 1];
+      if ((prev[0] === q[0] && q[0] === next[0]) || (prev[1] === q[1] && q[1] === next[1])) return false;
+      return true;
+    });
+    if (p.length < 2) return { d: '', head: '' };
+    let d = `M${p[0][0]} ${p[0][1]}`;
+    for (let i = 1; i < p.length - 1; i += 1) {
+      const [a, b, c] = [p[i - 1], p[i], p[i + 1]];
+      const r = Math.min(radius, Math.hypot(b[0] - a[0], b[1] - a[1]) / 2, Math.hypot(c[0] - b[0], c[1] - b[1]) / 2);
+      const s = (q, t) => [b[0] + Math.sign(q[0] - b[0]) * t, b[1] + Math.sign(q[1] - b[1]) * t];
+      const [x1, y1] = s(a, r);
+      const [x2, y2] = s(c, r);
+      d += `L${x1} ${y1}Q${b[0]} ${b[1]} ${x2} ${y2}`;
+    }
+    const [ex, ey] = p[p.length - 1];
+    const [fx, fy] = p[p.length - 2] || p[0];
+    d += `L${ex} ${ey}`;
+    const ang = Math.atan2(ey - fy, ex - fx);
+    const len = 9, w = 5.5;
+    const p1x = Math.round((ex - len * Math.cos(ang) + w * Math.sin(ang)) * 10) / 10;
+    const p1y = Math.round((ey - len * Math.sin(ang) - w * Math.cos(ang)) * 10) / 10;
+    const p2x = Math.round((ex - len * Math.cos(ang) - w * Math.sin(ang)) * 10) / 10;
+    const p2y = Math.round((ey - len * Math.sin(ang) + w * Math.cos(ang)) * 10) / 10;
+    const notchX = Math.round((ex - (len - 2.5) * Math.cos(ang)) * 10) / 10;
+    const notchY = Math.round((ey - (len - 2.5) * Math.sin(ang)) * 10) / 10;
+    const head = `M${ex} ${ey}L${p1x} ${p1y}L${notchX} ${notchY}L${p2x} ${p2y}Z`;
+    return { d, head };
+  }
+
+  // Each screen path starts at the left, like the main row, and is joined to its source card by a curved flowing wire:
+  // down from the card, smoothly curving along the gutter, down again, then entering the path's first card.
   function placeElbows() {
     $('#board .flow.from-screen').each((i, sec) => {
       const card = document.querySelector(`#board .card[data-id="${$(sec).data('from-screen')}"]`);
@@ -1073,11 +1112,33 @@ $(function () {
       const x = Math.min(Math.max(c.left + c.width / 2, row.left + 16), row.right - 16) - base.left;
       const top = c.bottom - base.top;
       const turn = top + 14; // run left through the gap under the parent row
-      const gutter = -12; // board padding, left of both rows
-      const y = f.top - base.top + 107; // card arrow height
+      const gutter = -14; // board padding, left of both rows
+      const y = f.top - base.top + 107; // card connector height
       const end = f.left - base.left - 4;
-      elbow.querySelector('.line').setAttribute('d', `M${x} ${top}V${turn}H${gutter}V${y}H${end}`);
-      elbow.querySelector('.head').setAttribute('d', `M${end - 6} ${y - 5}L${end} ${y}L${end - 6} ${y + 5}`);
+
+      const pts = [
+        [x, top],
+        [x, turn],
+        [gutter, turn],
+        [gutter, y],
+        [end, y],
+      ];
+      const { d, head } = elbowPath(pts, 16);
+
+      const glow = elbow.querySelector('.glow-bg');
+      if (glow) glow.setAttribute('d', d);
+      const line = elbow.querySelector('.line');
+      if (line) line.setAttribute('d', d);
+      const flow = elbow.querySelector('.flow');
+      if (flow) flow.setAttribute('d', d);
+      const port = elbow.querySelector('.port');
+      if (port) {
+        port.setAttribute('cx', x);
+        port.setAttribute('cy', top);
+      }
+      const headEl = elbow.querySelector('.head');
+      if (headEl) headEl.setAttribute('d', head);
+
       const grip = sec.querySelector('.elbow-grip');
       if (grip) Object.assign(grip.style, { left: `${x}px`, top: `${top}px` });
     });
@@ -4248,7 +4309,7 @@ $(function () {
       const { clientX: x, clientY: y } = ev;
       const bend = Math.max(40, Math.abs(y - y0) / 2);
       $svg.find('.line').attr('d', `M${x0} ${y0}C${x0} ${y0 - bend} ${x} ${y + bend} ${x} ${y}`);
-      $svg.find('.head').attr('d', `M${x - 5} ${y + 7}L${x} ${y}L${x + 5} ${y + 7}`);
+      $svg.find('.head').attr('d', `M${x} ${y}L${x - 6} ${y + 8}L${x} ${y + 6}L${x + 6} ${y + 8}Z`);
       const $card = $(document.elementFromPoint(x, y)).closest('#board .card:not(.cond)');
       const s = $card.length && findScreen($card.data('id'));
       const next = s && s.id !== flow.fromScreenId && !own.has(s.flowId) ? $card[0] : null;
@@ -4271,6 +4332,28 @@ $(function () {
     document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', up);
     document.addEventListener('pointercancel', up);
+  });
+
+  // Hovering on a parent screen card illuminates wires for subflows extending from it
+  $doc.on('mouseenter', '#board .card', function () {
+    const id = $(this).data('id');
+    if (id) $(`#board .flow[data-from-screen="${id}"]`).addClass('parent-screen-hovered');
+  });
+  $doc.on('mouseleave', '#board .card', function () {
+    const id = $(this).data('id');
+    if (id) $(`#board .flow[data-from-screen="${id}"]`).removeClass('parent-screen-hovered');
+  });
+
+  // Hovering on the elbow grip or from-screen tag illuminates the source card it extends from
+  $doc.on('mouseenter', '.flow.from-screen .elbow-grip, .flow.from-screen [data-locate]', function () {
+    const $flow = $(this).closest('.flow.from-screen');
+    const fromId = $flow.data('from-screen');
+    if (fromId) $(`#board .card[data-id="${fromId}"]`).addClass('source-screen-active');
+  });
+  $doc.on('mouseleave', '.flow.from-screen .elbow-grip, .flow.from-screen [data-locate]', function () {
+    const $flow = $(this).closest('.flow.from-screen');
+    const fromId = $flow.data('from-screen');
+    if (fromId) $(`#board .card[data-id="${fromId}"]`).removeClass('source-screen-active');
   });
 
   $doc.on('click', '[data-add-popup]', function () {
