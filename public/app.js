@@ -1264,6 +1264,17 @@ $(function () {
   window.addEventListener('resize', queueElbows);
   // flow rows scroll sideways on their own; scroll events don't bubble, so listen while capturing
   document.addEventListener('scroll', (e) => { if (e.target.classList && e.target.classList.contains('screens')) queueElbows(); }, true);
+  // On a first visit the font, the screen images and the styles arrive after the board is drawn and move the cards:
+  // draw the wires again whenever something under them settles or changes size (a reload had them cached already).
+  if (document.fonts) document.fonts.ready.then(queueElbows);
+  window.addEventListener('load', queueElbows);
+  document.addEventListener('load', (e) => { if (e.target.tagName === 'IMG' && e.target.closest('#board')) queueElbows(); }, true);
+  const wireSizes = window.ResizeObserver ? new ResizeObserver(queueElbows) : null;
+  const watchWires = () => {
+    if (!wireSizes) return;
+    wireSizes.disconnect();
+    document.querySelectorAll('#board, #board .screens, #board .screens > *').forEach((el) => wireSizes.observe(el));
+  };
 
   // ---------------------------------------------------------------- scroll / focus preservation across re-renders
 
@@ -1279,6 +1290,7 @@ $(function () {
   function afterRender(saved) {
     $('.screens').each((i, el) => { el.scrollLeft = saved[`flow-${$(el).data('flow')}`] || 0; });
     placeElbows();
+    watchWires();
     $('.bug-list').each((i, el) => {
       el.scrollTop = saved[`list-${$(el).closest('#popup').length}-${$(el).data('list')}`] || 0;
       const $new = $(el).children('.new');
