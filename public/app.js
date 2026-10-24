@@ -2033,6 +2033,129 @@ $(function () {
   }
 
 
+  // ---- convert existing flow into sketch diagram elements
+  function flowToSketch(root) {
+    if (!root || !root.screens || !root.screens.length) return [];
+    const { lanes, nodes } = diagramLayout(root);
+    const els = [];
+    const idMap = new Map();
+    const colW = 380;
+    const rowH = 260;
+
+    lanes.forEach((lane) => {
+      lane.flow.screens.forEach((s) => {
+        const id = 'sk_' + s.id;
+        idMap.set(s.id, id);
+        const node = nodes.get(s.id);
+        const isCond = isCondition(s);
+        const isPop = isPopup(s);
+        const type = isCond ? 'condition' : isPop ? 'popup' : 'screen';
+        const w = isCond ? SK.condW : SK.w;
+        const h = isCond ? SK.condH : SK.h;
+        const col = node ? node.col : 0;
+        const row = node ? node.row : lane.row;
+        const x = 100 + col * colW;
+        const y = 140 + row * rowH + (isCond ? -(SK.condH - SK.h) / 2 : 0);
+        els.push({
+          id,
+          type,
+          x,
+          y,
+          w,
+          h,
+          text: s.name,
+          color: isPop ? 'violet' : isCond ? 'yellow' : 'blue',
+          existing: true,
+          existingId: s.id,
+          stepNo: lane.no ? `${lane.no}.${col - lane.col + 1}` : '',
+        });
+      });
+    });
+
+    let arcIndex = 0;
+    lanes.forEach((lane) => {
+      lane.flow.screens.forEach((s, i) => {
+        const isCond = isCondition(s);
+        const next = lane.flow.screens[i + 1];
+
+        if (!isCond) {
+          if (next) {
+            els.push({
+              id: skId(),
+              type: 'arrow',
+              from: idMap.get(s.id),
+              to: idMap.get(next.id),
+              text: '',
+              existing: true,
+              bend: 0,
+            });
+          }
+        } else {
+          const branches = Array.isArray(s.branches) && s.branches.length ? s.branches : [{ label: 'Next' }];
+          let usedNext = false;
+          branches.forEach((b) => {
+            let targetId = b.targetId;
+            if (!targetId && !usedNext && next) {
+              targetId = next.id;
+              usedNext = true;
+            }
+            if (targetId && idMap.has(targetId)) {
+              const targetNode = nodes.get(targetId);
+              const thisNode = nodes.get(s.id);
+              const span = targetNode && thisNode ? Math.abs(targetNode.col - thisNode.col) : 1;
+              let bend = 0;
+              if (targetNode && thisNode && targetNode.row === thisNode.row && span > 1) {
+                bend = -150 - (arcIndex++ * 85) - Math.min(span, 5) * 15;
+              } else if (targetNode && thisNode && targetNode.row === thisNode.row && targetNode.col < thisNode.col) {
+                bend = -150 - (arcIndex++ * 85);
+              }
+              els.push({
+                id: skId(),
+                type: 'arrow',
+                from: idMap.get(s.id),
+                to: idMap.get(targetId),
+                text: b.label || '',
+                existing: true,
+                bend,
+              });
+            }
+          });
+          if (next && !usedNext) {
+            els.push({
+              id: skId(),
+              type: 'arrow',
+              from: idMap.get(s.id),
+              to: idMap.get(next.id),
+              text: 'Continue',
+              existing: true,
+              bend: 0,
+            });
+          }
+        }
+      });
+
+      // 3. Arrow from parent step into child lane
+      if (lane.from && lane.from.stepId && lane.flow.screens.length) {
+        const fromElId = idMap.get(lane.from.stepId);
+        const toElId = idMap.get(lane.flow.screens[0].id);
+        if (fromElId && toElId) {
+          const label = lane.from.branch ? (lane.from.branch.label || '') : '';
+          els.push({
+            id: skId(),
+            type: 'arrow',
+            from: fromElId,
+            to: toElId,
+            text: label,
+            existing: true,
+            bend: 0,
+          });
+        }
+      }
+    });
+
+    return els;
+  }
+
   // ---- reading the drawing
 
   function sketchPlan(flowName) {
@@ -2047,11 +2170,14 @@ $(function () {
     let loose = 0;
     sketch.els.filter((e) => e.type === 'arrow').forEach((a) => {
       if (byId.has(a.from) && byId.has(a.to) && a.from !== a.to) arrows.push(a);
-      else { loose += 1; skipped.add(a.id); }
+      else {
+        skipped.add(a.id);
+        if (!a.existing) loose += 1;
+      }
     });
     if (!shapes.length) return { steps: [], errors, warnings, bad, skipped, empty: true };
     if (loose) warnings.push(`${loose} arrow${loose === 1 ? ' is' : 's are'} not joined to a box at both ends, so ${loose === 1 ? 'it is' : 'they are'} skipped.`);
-    const unnamed = shapes.filter((e) => !skName(e));
+    const unnamed = shapes.filter((e) => !e.existing && !skName(e));
     unnamed.forEach((e) => bad.add(e.id));
     if (unnamed.length) errors.push(`${unnamed.length} box${unnamed.length === 1 ? ' has' : 'es have'} no name. Double-click a box to write its name.`);
 
@@ -2060,9 +2186,10 @@ $(function () {
     arrows.forEach((a) => { outs.get(a.from).push(a); ins.set(a.to, ins.get(a.to) + 1); });
     const leftTop = (p, q) => (p.x - q.x) || (p.y - q.y);
     const starts = shapes.filter((e) => !ins.get(e.id)).sort(leftTop);
-    if (starts.length > 1) {
-      starts.forEach((e) => bad.add(e.id));
-      errors.push(`Only the first screen can have no arrow coming in, but ${starts.length} boxes have none: ${starts.map(quote).join(', ')}. Join them with arrows, or delete the ones you don't need.`);
+    const newStarts = starts.filter((e) => !e.existing);
+    if (newStarts.length > 1 || (starts.length > 1 && newStarts.length > 0)) {
+      newStarts.forEach((e) => bad.add(e.id));
+      errors.push(`Only the first screen can have no arrow coming in, but ${newStarts.length} new boxes have none: ${newStarts.map(quote).join(', ')}. Join them with arrows, or delete the ones you don't need.`);
     }
     const start = starts[0] || shapes.slice().sort(leftTop)[0]; // all in a loop: start top-left
 
@@ -2072,6 +2199,8 @@ $(function () {
       const steps = [];
       for (let cur = first; cur && !placed.has(cur.id);) {
         const step = { key: cur.id, type: cur.type, name: skName(cur) };
+        if (cur.existingId) step.existingId = cur.existingId;
+        if (cur.existing) step.existing = true;
         placed.set(cur.id, step);
         steps.push(step);
         const out = outs.get(cur.id);
@@ -2084,7 +2213,9 @@ $(function () {
         if (rest.length) later.push({ step, screen: cur, out: rest, laneName });
         if (placed.has(next.to)) {
           skipped.add(next.id);
-          warnings.push(`The arrow ${quote(cur)} → ${quote(byId.get(next.to))} is skipped: a screen can only be in one place. To go back to a screen, point a condition's branch at it.`);
+          if (!cur.existing && !next.existing) {
+            warnings.push(`The arrow ${quote(cur)} → ${quote(byId.get(next.to))} is skipped: a screen can only be in one place. To go back to a screen, point a condition's branch at it.`);
+          }
           break;
         }
         cur = byId.get(next.to);
@@ -2095,7 +2226,7 @@ $(function () {
     while (later.length) {
       const item = later.shift();
       if (item.cond) {
-        if (item.out.some((a) => !skName(a))) warnings.push(`Name every arrow out of ${quote(item.cond)}: its text is the branch (e.g. Success). Double-click an arrow to write on it.`);
+        if (!item.cond.existing && item.out.some((a) => !skName(a))) warnings.push(`Name every arrow out of ${quote(item.cond)}: its text is the branch (e.g. Success). Double-click an arrow to write on it.`);
         const y = (a) => skCenter(byId.get(a.to))[1];
         item.step.branches = item.out.slice().sort((p, q) => y(p) - y(q)).map((a) => {
           const label = skName(a);
@@ -2106,7 +2237,7 @@ $(function () {
           }
           if (to.type === 'condition') {
             skipped.add(a.id);
-            warnings.push(`Branch “${label || '—'}” of ${quote(item.cond)} points at a condition, but a branch can only show a screen. It is left empty.`);
+            if (!item.cond.existing) warnings.push(`Branch “${label || '—'}” of ${quote(item.cond)} points at a condition, but a branch can only show a screen. It is left empty.`);
             return { label };
           }
           return { label, target: to.id };
@@ -2116,7 +2247,7 @@ $(function () {
           const to = byId.get(a.to);
           if (placed.has(to.id)) {
             skipped.add(a.id);
-            warnings.push(`The arrow ${quote(item.screen)} → ${quote(to)} is skipped: ${quote(to)} is already in the flow.`);
+            if (!item.screen.existing) warnings.push(`The arrow ${quote(item.screen)} → ${quote(to)} is skipped: ${quote(to)} is already in the flow.`);
             return null;
           }
           const name = skName(a) || `${item.laneName} › ${item.step.name}`;
@@ -2124,7 +2255,7 @@ $(function () {
         }).filter(Boolean);
       }
     }
-    const lost = shapes.filter((e) => !placed.has(e.id) && !bad.has(e.id));
+    const lost = shapes.filter((e) => !placed.has(e.id) && !bad.has(e.id) && !e.existing);
     lost.forEach((e) => skipped.add(e.id));
     if (lost.length) warnings.push(`Not joined to the flow, so skipped: ${lost.map(quote).join(', ')}.`);
     return { steps: root.steps, errors, warnings, bad, skipped, startId: start.id, placed };
@@ -2172,8 +2303,11 @@ $(function () {
       return `<foreignObject x="${x - 110}" y="${y - 13}" width="220" height="26"><div class="sk-pill"><span style="--tone:${skArrowColor(e)}">${esc(skName(e))}</span></div></foreignObject>`;
     }
     const inset = e.type === 'condition' ? { x: e.w / 4, y: e.h / 4 } : e.type === 'text' ? { x: 12, y: 10 } : { x: 8, y: 6 };
-    return `<foreignObject x="${e.x + inset.x}" y="${e.y + inset.y}" width="${Math.max(1, e.w - inset.x * 2)}" height="${Math.max(1, e.h - inset.y * 2)}">
-      <div class="sk-label ${e.type}">${esc(e.text)}</div></foreignObject>`;
+    const badge = e.existing && e.stepNo ? `<span class="sk-step-badge">${esc(e.stepNo)}</span>` : '';
+    const content = e.type === 'condition'
+      ? `<div class="sk-label condition">${badge}<span>${esc(e.text)}</span></div>`
+      : `<div class="sk-label ${e.type}">${badge}${esc(e.text)}</div>`;
+    return `<foreignObject x="${e.x + inset.x}" y="${e.y + inset.y}" width="${Math.max(1, e.w - inset.x * 2)}" height="${Math.max(1, e.h - inset.y * 2)}">${content}</foreignObject>`;
   }
 
   // the colour bar above what is selected (boxes and stickies)
@@ -2305,23 +2439,41 @@ $(function () {
     const f = skFlow();
     const plan = sketchPlan(skFlowName());
     const all = [...plan.placed ? plan.placed.values() : []];
-    const screens = all.filter((s) => s.type !== 'condition').length;
-    const conds = all.length - screens;
-    const paths = all.reduce((n, s) => n + (s.branches || []).filter((b) => b.path).length + (s.extends || []).length, 0);
+    const newShapes = sketch.els.filter((e) => SK_SHAPES.includes(e.type) && !e.existing);
+    const existingShapes = sketch.els.filter((e) => SK_SHAPES.includes(e.type) && e.existing);
+
+    const screens = (f ? newShapes : all).filter((s) => s.type !== 'condition').length;
+    const conds = (f ? newShapes.length : all.length) - screens;
+    const paths = (f ? all.filter((s) => !s.existing) : all).reduce((n, s) => n + (s.branches || []).filter((b) => b.path).length + (s.extends || []).length, 0);
     const list = (items, cls) => (items.length ? `<ul class="sk-notes ${cls}">${items.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : '');
     const focused = document.activeElement && document.activeElement.matches('[data-sk-name]');
+
+    const isCreateDisabled = plan.errors.length > 0 || (f ? newShapes.length === 0 : plan.empty);
+    const createBtnText = f
+      ? (newShapes.length ? `Add ${newShapes.length} step${newShapes.length === 1 ? '' : 's'} to flow` : 'Add to flow')
+      : 'Create flow';
+
+    const newStepsToOutline = f ? plan.steps.filter((s) => !s.existing) : plan.steps;
+
     $('#sketchBody .sk-side').html(`
-      ${f ? `<p class="text-sm text-slate-600">The steps are added after the last step of <b class="text-slate-900">${esc(f.name)}</b>.</p>`
+      ${f ? (existingShapes.length ? `
+        <div class="sk-flow-banner">
+          <div class="flex items-center gap-1.5 mb-1">
+            <span class="inline-block w-2 h-2 rounded-full bg-indigo-500 shrink-0"></span>
+            <span class="sk-flow-banner-title truncate">${esc(f.name)}</span>
+          </div>
+          <p class="sk-flow-banner-desc">${existingShapes.length} existing step${existingShapes.length === 1 ? '' : 's'} on canvas. Select any box and click <b>+</b> to extend, or pick <b>Screen</b> (R) to draw.</p>
+        </div>` : `<p class="text-sm text-slate-600">The steps are added after the last step of <b class="text-slate-900">${esc(f.name)}</b>.</p>`)
     : `<label class="block"><span class="field-label">Flow name</span>
           <input class="input w-full" data-sk-name value="${esc(sketch.name || '')}" placeholder="e.g. Sign Up, Add Money" maxlength="200" autocomplete="off"></label>`}
       <div>
         <p class="sk-h">Will be created</p>
-        ${plan.empty ? '<p class="text-sm text-slate-500">Nothing yet. Draw a box to start.</p>'
-    : `<p class="mb-2 text-xs text-slate-500">${screens} screen${screens === 1 ? '' : 's'} · ${conds} condition${conds === 1 ? '' : 's'} · ${paths} path${paths === 1 ? '' : 's'}</p>${skOutline(plan.steps)}`}
+        ${(f ? newShapes.length === 0 : plan.empty) ? '<p class="text-sm text-slate-500">Nothing yet. Draw a box to start.</p>'
+    : `<p class="mb-2 text-xs text-slate-500">${screens} screen${screens === 1 ? '' : 's'} · ${conds} condition${conds === 1 ? '' : 's'} · ${paths} path${paths === 1 ? '' : 's'}</p>${skOutline(newStepsToOutline)}`}
       </div>
-      ${list(plan.errors, 'error')}
-      ${list(plan.warnings, 'warn')}
-      <button class="btn-primary w-full justify-center" data-sk-create ${plan.empty || plan.errors.length ? 'disabled' : ''}>${f ? 'Add to flow' : 'Create flow'}</button>
+      ${f && newShapes.length === 0 ? '' : list(plan.errors, 'error')}
+      ${f && newShapes.length === 0 ? '' : list(plan.warnings, 'warn')}
+      <button class="btn-primary w-full justify-center" data-sk-create ${isCreateDisabled ? 'disabled' : ''}>${createBtnText}</button>
       <div class="sk-legend">
         <p class="sk-h">How it reads</p>
         <p><span class="sk-ico screen"></span> Box = screen</p>
@@ -2387,8 +2539,19 @@ $(function () {
     let saved = null;
     try { saved = JSON.parse(storage('get', key) || 'null'); } catch (e) { saved = null; }
     const m = allModules.find((x) => x.id === (target.moduleId || (findFlow(target.flowId) || {}).moduleId));
+    const targetFlow = target.flowId ? findFlow(target.flowId) : null;
+    let initialEls = [];
+    if (targetFlow && targetFlow.screens && targetFlow.screens.length) {
+      if (!saved || !Array.isArray(saved.els) || !saved.els.length || !saved.els.some((e) => e.existing)) {
+        initialEls = flowToSketch(targetFlow);
+      } else {
+        initialEls = saved.els;
+      }
+    } else if (saved && Array.isArray(saved.els)) {
+      initialEls = saved.els;
+    }
     Object.assign(sketch, {
-      open: true, target, key, els: saved && Array.isArray(saved.els) ? saved.els : [], name: (saved && saved.name) || '',
+      open: true, target, key, els: initialEls, name: (saved && saved.name) || '',
       sel: new Set(), tool: 'select', past: [], future: [], editing: null, drag: null, space: false, hoverPlus: -1, hoverArrow: null, hoverInsert: false,
       insertMenu: null, born: null, overlayKey: null,
     });
@@ -2415,6 +2578,7 @@ $(function () {
             ${SK_TOOLS.map((t) => `<button class="sk-tool" data-sk-tool="${t.id}" title="${t.title} — ${t.key.toUpperCase()}${t.no ? ` or ${t.no}` : ''}">${icon(t.icon, 18)}${t.no ? `<span class="sk-key">${t.no}</span>` : ''}</button>`).join('')}
           </div>
           <div class="sk-island sk-corner">
+            ${f && f.screens.length ? `<button class="sk-tool" data-sk-reload-flow title="Reload original flow diagram">${icon('diagram', 16)}</button>` : ''}
             <button class="sk-tool" data-sk-undo title="Undo — Ctrl+Z">${icon('undo', 16)}</button>
             <button class="sk-tool" data-sk-redo title="Redo — Ctrl+Shift+Z">${icon('redo', 16)}</button>
             <span class="sk-sep"></span>
@@ -2883,6 +3047,16 @@ $(function () {
     skZoomTo(step ? sketch.zoom * (step > 0 ? 1.1 : 1 / 1.1) : 1);
   });
   $doc.on('click', '[data-sk-fit]', () => { skFit(); skDraw(); });
+  $doc.on('click', '[data-sk-reload-flow]', function () {
+    const f = skFlow();
+    if (!f || !f.screens || !f.screens.length) return;
+    skRemember();
+    sketch.els = flowToSketch(f);
+    sketch.sel = new Set();
+    skFit();
+    skChanged();
+    toast('Flow diagram reloaded');
+  });
   $doc.on('click', '[data-sk-clear]', () => {
     if (!sketch.els.length) return;
     dialog.confirm({
@@ -2931,8 +3105,13 @@ $(function () {
       toast('Name the flow first');
       return;
     }
+    const newCount = sketch.els.filter((x) => plan.placed.has(x.id) && !x.existing).length;
+    if (f && newCount === 0) {
+      toast('No new steps to add');
+      return;
+    }
     const steps = plan.steps;
-    const count = sketch.els.filter((x) => plan.placed.has(x.id)).length;
+    const count = newCount || sketch.els.filter((x) => plan.placed.has(x.id)).length;
     const req = f
       ? api('POST', `/api/flows/${f.id}/sketch`, { steps }, this)
       : api('POST', `/api/modules/${sketch.target.moduleId}/sketch`, { name, steps }, this);

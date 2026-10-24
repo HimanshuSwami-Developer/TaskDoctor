@@ -740,10 +740,19 @@ async function buildSketch(client, req, root, steps) {
     let first = null;
     for (const step of list) {
       if (!step || typeof step !== 'object') throw new HttpError(400, 'Invalid sketch');
-      if ((count += 1) > SKETCH_MAX) throw new HttpError(400, `A sketch can create up to ${SKETCH_MAX} steps`);
-      const id = randomUUID();
       const type = step.type === 'condition' ? 'condition' : 'screen';
       const key = text(step.key, 64);
+      if (step.existingId) {
+        if (key) made.set(key, { id: step.existingId, type });
+        if (!first) first = { id: step.existingId, type };
+        for (const ext of Array.isArray(step.extends) ? step.extends : []) {
+          const path = await insertFlow(flow, text(ext && ext.name) || `${flow.name} › ${step.name}`, { screenId: step.existingId });
+          await lane(path, ext.steps, depth + 1);
+        }
+        continue;
+      }
+      if ((count += 1) > SKETCH_MAX) throw new HttpError(400, `A sketch can create up to ${SKETCH_MAX} steps`);
+      const id = randomUUID();
       if (key) made.set(key, { id, type });
       if (!first) first = { id, type };
       if (type === 'condition') {
