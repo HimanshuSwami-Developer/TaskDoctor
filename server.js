@@ -262,10 +262,23 @@ function password(value) {
   return value.slice(0, 200);
 }
 
+// with when each login last signed in and whether it is signed in now (Admin page)
 app.get('/api/users', route(async (req, res) => {
   need(req, 'super');
-  const { rows } = await db.query('SELECT * FROM users WHERE NOT is_deleted ORDER BY created_at');
-  res.json(rows.map(toUser));
+  const { rows } = await db.query(
+    `SELECT u.*, (SELECT max(s.created_at) FROM sessions s WHERE s.user_id = u.id) AS last_sign_in,
+            (SELECT count(*)::int FROM sessions s WHERE s.user_id = u.id AND s.expires_at > now()) AS active_sessions
+     FROM users u WHERE NOT u.is_deleted ORDER BY u.created_at`);
+  res.json(rows.map((r) => ({ ...toUser(r), lastSignIn: r.last_sign_in, signedIn: r.active_sessions > 0 })));
+}));
+
+// Sign a login out on every device (not you: that would be Sign out)
+app.post('/api/users/:id/signout', route(async (req, res) => {
+  need(req, 'super');
+  const user = await live('users', req.params.id, '*');
+  if (user.id === req.user.id) throw new HttpError(400, 'Use Sign out for your own login');
+  await expireSessions(user.id, req.user.id);
+  res.json({ ok: true });
 }));
 
 app.post('/api/users', route(async (req, res) => {

@@ -60,6 +60,12 @@ $(function () {
     filter: 'M3 4h18l-7 8.5V19l-4 2v-8.5z',
     panel: 'M3 3h18v18H3zM9 3v18',
     chat: 'M21 11.5a8.4 8.4 0 0 1-9 8.4 8.6 8.6 0 0 1-3.8-.9L3 21l1.9-5.2A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z',
+    home: 'M3 10.5 12 3l9 7.5M5 9v11h5v-6h4v6h5V9',
+    shield: 'M12 2 4 5v6c0 5 3.4 9.3 8 11 4.6-1.7 8-6 8-11V5z',
+    logout: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9',
+    menu: 'M3 6h18M3 12h18M3 18h18',
+    sidebar: 'M3 3h18v18H3zM9 3v18M16 10l-2 2 2 2',
+    tag: 'M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8zM7.5 7.5h.01',
     fork: 'M12 3v6M12 9l-6 6v5M12 9l6 6v5M3.5 17.5 6 20l2.5-2.5M15.5 17.5 18 20l2.5-2.5',
     clock: 'M12 7v5l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z',
   };
@@ -183,7 +189,7 @@ $(function () {
     edit: '.add-comment, [data-pen], [data-action="writer"], [data-remove-person], [data-bugs], [data-flip], [data-open-sheet], .issues-panel',
   };
   function applyAccess() {
-    const $root = $('#products, #summary, #account, #tabs, #board, #popupBody, #sheetBody, #bugsBody, #videoBody, #diagramBody');
+    const $root = $('#products, #summary, #account, #sbNav, #tabs, #board, #popupBody, #sheetBody, #bugsBody, #videoBody, #diagramBody');
     Object.entries(NEEDS).forEach(([level, selector]) => { if (!can(level)) $root.find(selector).remove(); });
     if (!can('developer')) {
       $root.find('[data-upload]').closest('label').remove();
@@ -657,16 +663,56 @@ $(function () {
     if (!modules.some((m) => m.id === activeId)) activeId = modules[0] ? modules[0].id : null;
   }
 
+  // ---------------------------------------------------------------- the sidebar
+  // Apps (each with its own colour and initials), pages, issue counts and your account. The arrow at the top folds it
+  // into an icon rail (kept in this browser, set before the page shows: index.html); on a phone it is a drawer.
+
+  const APP_COLORS = ['#4f46e5', '#0891b2', '#db2777', '#ea580c', '#16a34a', '#7c3aed', '#0d9488', '#ca8a04'];
+  const appColor = (p) => APP_COLORS[[...p.id].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 0) % APP_COLORS.length];
+  const appInitials = (name) => (String(name).trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join('') || '?').toUpperCase();
+  const sbItem = ({ attrs = '', ico, label, on = false, extra = '', cls = '', title = label }) => `<button class="sb-item ${on ? 'on' : ''} ${cls}" ${attrs} title="${esc(title)}">
+      <span class="sb-ico">${ico}</span><span class="sb-label">${label}</span>${extra}</button>`;
+
   function renderProducts() {
-    const current = products.find((p) => p.id === productId);
-    $('#products').html(
-      products.map((p) =>
-        `<button class="product ${p.id === productId ? 'active' : ''}" data-product="${p.id}">${esc(p.name)}</button>`).join('') +
-      (current ? `
-        <button class="icon-btn" data-rename-product="${current.id}" title="Rename product">${icon('edit', 14)}</button>
-        <button class="icon-btn danger" data-delete-product="${current.id}" title="Delete product">${icon('trash', 14)}</button>` : '') +
-      '<button class="tab-add" data-action="add-product">+ Add product</button>');
+    $('#products').html(products.map((p) => `
+      <div class="sb-row ${p.id === productId ? 'on' : ''}">
+        <button class="sb-item app ${p.id === productId ? 'on' : ''}" data-product="${p.id}" title="${esc(p.name)}">
+          <span class="sb-app" style="--app:${appColor(p)}">${esc(appInitials(p.name))}</span><span class="sb-label">${esc(p.name)}</span>
+          ${p.version ? `<span class="sb-count mono">${esc(p.version.replace(/^v(?=\d)/i, ''))}</span>` : ''}</button>
+        ${p.id === productId ? `<span class="sb-tools">
+          <button class="icon-btn sm" data-rename-product="${p.id}" title="Rename ${esc(p.name)}">${icon('edit', 12)}</button>
+          <button class="icon-btn sm danger" data-delete-product="${p.id}" title="Delete ${esc(p.name)}">${icon('trash', 12)}</button></span>` : ''}
+      </div>`).join('')
+      + sbItem({ attrs: 'data-action="add-product"', ico: icon('plus', 15), label: 'Add product', cls: 'muted' }));
   }
+
+  const sbCollapsed = () => document.documentElement.classList.contains('sb-collapsed');
+  function showSidebarToggle() {
+    const folded = sbCollapsed();
+    $('[data-sidebar-toggle]').html(icon(folded ? 'right' : 'left', 16)).attr('title', folded ? 'Expand the sidebar' : 'Collapse the sidebar')
+      .attr('aria-label', folded ? 'Expand the sidebar' : 'Collapse the sidebar');
+    $('[data-sidebar-open]').html(icon('menu', 18));
+  }
+  showSidebarToggle();
+  $doc.on('click', '[data-sidebar-toggle]', () => {
+    document.documentElement.classList.toggle('sb-collapsed');
+    storage('set', 'sidebar', sbCollapsed() ? 'collapsed' : 'open');
+    $('#sidebar details[open]').prop('open', false);
+    showSidebarToggle();
+  });
+  // phone: a drawer over the page, closed by the backdrop, Escape or going somewhere
+  const closeDrawer = () => $('body').removeClass('sb-open');
+  $doc.on('click', '[data-sidebar-open]', () => $('body').addClass('sb-open'));
+  $doc.on('click', '[data-sidebar-close]', closeDrawer);
+  $doc.on('click', '#sidebar .sb-item:not([data-teams-summary]), #sidebar a.sb-item', () => { if (window.innerWidth < 900) closeDrawer(); });
+  $doc.on('keydown', (e) => { if (e.key === 'Escape' && $('body').hasClass('sb-open')) closeDrawer(); });
+  // which page is open: the board, Sheets or Sanity
+  const markNav = () => {
+    $('[data-action="home"].sb-item').toggleClass('on', !sheetsView && !sanity && !adminView);
+    $('[data-action="admin"]').toggleClass('on', Boolean(adminView));
+    $('[data-action="sheets"]').toggleClass('on', Boolean(sheetsView));
+    $('[data-action="sanity"]').toggleClass('on', Boolean(sanity));
+  };
 
   function render(opts = {}) {
     const saved = captureScroll();
@@ -680,10 +726,11 @@ $(function () {
     const count = (st) => issues.filter((c) => c.status === st).length;
     const openIssues = issues.filter((c) => !c.resolved).length;
     const shown = statuses.filter((x) => !x.deleted || count(x.id));
+    const badge = (n) => `<span class="sb-count ${n ? 'has' : ''}">${n}</span>`;
     $('#summary').html(
-      shown.map((x) => `<button class="stat" data-bugs="${esc(x.id)}" title="${esc(x.label)} issues"><span class="dot st st-${x.color}"></span>${esc(x.label)} <b>${count(x.id)}</b></button>`).join('') +
-      `<button class="stat" data-bugs="" title="All open issues"><span class="dot dot-issues"></span>Open issues <b>${openIssues}</b></button>` +
-      '<button class="tab-add" data-action="manage-statuses">Statuses</button>');
+      sbItem({ attrs: 'data-bugs=""', ico: '<span class="sb-dot dot-issues"></span>', label: 'Open issues', extra: badge(openIssues), cls: 'strong', title: `Open issues: ${openIssues}` })
+      + shown.map((x) => sbItem({ attrs: `data-bugs="${esc(x.id)}"`, ico: `<span class="sb-dot dot st st-${x.color}"></span>`, label: esc(x.label), extra: badge(count(x.id)), title: `${x.label}: ${count(x.id)}` })).join('')
+      + sbItem({ attrs: 'data-action="manage-statuses"', ico: icon('tag', 15), label: 'Statuses', cls: 'muted', title: 'Manage statuses' }));
 
     $('#tabs').html(productId ? modules.map((m) =>
       `<button class="tab ${m.id === activeId ? 'active' : ''}" data-tab="${m.id}">${esc(m.name)}<span class="count">${onlyScreens(allScreens([m])).length}</span></button>`
@@ -3737,22 +3784,27 @@ $(function () {
   // ---------------------------------------------------------------- account + sign in
 
   function renderAccount() {
-    if (!me) { $('#account').empty(); return; }
+    if (!me) { $('#account, #sbNav').empty(); return; }
     const current = products.find((p) => p.id === productId);
     const version = current && current.version ? current.version.replace(/^v(?=\d)/i, '') : '';
+    $('#sbNav').html(`
+      <button class="sb-write" data-action="writer" title="Write an issue on any screen">${icon('plus', 16)}<span class="sb-label">Write issue</span></button>
+      <a href="/" class="sb-item ${!sheetsView && !sanity && !adminView ? 'on' : ''}" data-action="home" title="Board: modules, flows and screens"><span class="sb-ico">${icon('home', 16)}</span><span class="sb-label">Board</span></a>
+      ${sbItem({ attrs: 'data-action="sheets"', ico: icon('grid', 16), label: 'Sheets', on: Boolean(sheetsView), title: 'Sheets: typed columns, formulas, links to flows and screens, Excel in and out' })}
+      ${sbItem({ attrs: 'data-action="sanity"', ico: icon('check', 16), label: 'Sanity', on: Boolean(sanity), title: 'Daily sanity checklist of this app' })}
+      ${sbItem({ attrs: 'data-action="done"', ico: icon('note', 16), label: 'Done today', title: 'What you finished today, shared on Teams' })}
+      <a class="sb-item" href="/api/export" title="Download every task as an Excel sheet"><span class="sb-ico">${icon('download', 16)}</span><span class="sb-label">Excel export</span></a>
+      ${sbItem({ attrs: 'data-action="admin"', ico: icon('shield', 16), label: 'Users & access', on: Boolean(adminView), title: 'Admin: logins, passwords and access' })}`);
     $('#account').html(`
-      ${version ? `<button class="version-tag" data-action="sanity-logs" title="Present version of ${esc(current.name)}: the latest version tested in Sanity. Opens the sanity logs.">v${esc(version)}</button>` : ''}
-      <span class="account" title="${esc(ACCESS[me.access].hint)}">${icon('user', 14)} ${esc(me.name || me.username)}
-        <span class="access-tag access-${me.access}">${ACCESS[me.access].label}</span></span>
-      <button class="btn-secondary px-3 py-1 text-xs ${sheetsView ? 'on' : ''}" data-action="sheets" title="Your own sheets: typed columns, links to flows and screens, Excel in and out">${icon('grid', 12)} Sheets</button>
-      <button class="btn-secondary px-3 py-1 text-xs ${sanity ? 'on' : ''}" data-action="sanity" title="Daily sanity checklist of this app">${icon('check', 12)} Sanity</button>
-      <button class="btn-secondary px-3 py-1 text-xs" data-action="done" title="What you finished today, shared on Teams">${icon('note', 12)} Done today</button>
-      <button class="btn-primary px-3 py-1 text-xs" data-action="writer" title="Write an issue on any screen">${icon('plus', 12)} Write issue</button>
-      <a class="btn-secondary px-3 py-1 text-xs" href="/api/export" title="Download every task as an Excel sheet">${icon('download', 12)} Excel</a>
-      <button class="btn-secondary px-3 py-1 text-xs" data-action="admin">Admin</button>
-      ${teamsAccount()}
-      ${themeButton()}
-      <button class="tab-add" data-action="logout">Sign out</button>`);
+      ${version ? `<button class="sb-version" data-action="sanity-logs" title="Present version of ${esc(current.name)}: the latest version tested in Sanity. Opens the sanity logs.">
+        <span class="sb-ico">${icon('tag', 14)}</span><span class="sb-label">${esc(current.name)} <b>v${esc(version)}</b></span></button>` : ''}
+      <div class="sb-tools-row">${teamsAccount()}${themeButton()}</div>
+      <div class="sb-user" title="${esc(ACCESS[me.access].hint)}">
+        <span class="sb-avatar">${esc(appInitials(me.name || me.username))}</span>
+        <span class="sb-label min-w-0 flex-1"><span class="block truncate text-sm font-semibold text-slate-900">${esc(me.name || me.username)}</span>
+          <span class="access-tag access-${me.access}">${ACCESS[me.access].label}</span></span>
+        <button class="icon-btn sb-logout" data-action="logout" title="Sign out">${icon('logout', 16)}</button>
+      </div>`);
   }
   // Your own Teams (public/graph.js): connect your Microsoft account once, then FlowTrace sends as you: direct
   // messages, posts in your channels, and a message to people when you give them an issue or change its status.
@@ -3761,8 +3813,8 @@ $(function () {
     if (!g.configured()) return '';
     const acc = g.account();
     return `<details class="sheet-share teams-account">
-      <summary class="btn-secondary px-3 py-1 text-xs ${acc ? 'on' : ''}" title="${acc ? `Teams: connected as ${esc(acc.username)}` : 'Connect your Microsoft Teams'}">
-        ${icon('chat', 12)} Teams${acc ? '<span class="teams-dot"></span>' : ''}</summary>
+      <summary class="sb-item ${acc ? 'on' : ''}" data-teams-summary title="${acc ? `Teams: connected as ${esc(acc.username)}` : 'Connect your Microsoft Teams'}">
+        <span class="sb-ico">${icon('chat', 16)}${acc ? '<span class="teams-dot"></span>' : ''}</span><span class="sb-label">Teams</span></summary>
       <div class="sheet-share-pop">
         ${acc ? `
           <p class="text-sm font-semibold text-slate-900">Teams connected</p>
@@ -3833,71 +3885,186 @@ $(function () {
   });
   $doc.on('click', '[data-action="logout"]', () => api('POST', '/api/logout').always(() => location.reload()));
 
-  // ---------------------------------------------------------------- admin dashboard (super admins): logins + app access
+  // ---------------------------------------------------------------- admin (super admins): its own page, like Sheets
+  // People with a login: who they are, what they can do (access) and which apps they open. Summary cards on top, a
+  // list to search and filter, and a panel from the right to make or change a login. A new login (or a new password)
+  // ends on its credentials, to copy and send to the person: the password is shown only then.
+  // The address (#admin) keeps the page after a refresh.
 
   let users = [];
-  let editing = null; // user being edited, null = new login
+  // { q, access: '' | level, app: '' | product id, panel: null | { id: user id | null, reset, created: { username, password } } }
+  let adminView = null;
+
+  const ago = (iso) => {
+    if (!iso) return '';
+    const min = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+    if (min < 1) return 'just now';
+    if (min < 60) return `${min} min ago`;
+    if (min < 60 * 24) return `${Math.round(min / 60)} h ago`;
+    if (min < 60 * 24 * 30) return `${Math.round(min / 1440)} d ago`;
+    return fmtDate(iso);
+  };
+  const appNamesOf = (x) => (x.allProducts ? ['All apps'] : x.productIds.map((id) => (products.find((p) => p.id === id) || {}).name).filter(Boolean));
+  // a password that reads well when sent: no 0 / O / 1 / l / I
+  function newPassword() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+    const marks = '@#$%&*!?';
+    const rnd = new Uint32Array(14);
+    crypto.getRandomValues(rnd);
+    const s = [...rnd.slice(0, 12)].map((n) => chars[n % chars.length]);
+    s.splice(4, 0, marks[rnd[12] % marks.length]);
+    s.splice(9, 0, String(2 + (rnd[13] % 8)));
+    return s.join('');
+  }
+
+  const loadUsers = () => api('GET', '/api/users').done((list) => { users = list; if (adminView) renderAdmin(); });
+
+  function openAdmin() {
+    loadUsers().done(() => {
+      if (sheetsView) closeSheets();
+      if (sanity) closeSanity();
+      adminView = adminView || { q: '', access: '', app: '', panel: null };
+      $('#board, #tabs').addClass('hidden');
+      $('#adminPage').removeClass('hidden');
+      renderAdmin();
+      markNav();
+      history.replaceState(null, '', `${location.pathname}${location.search}#admin`);
+      window.scrollTo(0, 0);
+    });
+  }
+  function closeAdmin() {
+    adminView = null;
+    $('#adminPage').addClass('hidden').empty();
+    $('#board, #tabs').removeClass('hidden');
+    unlockScroll();
+    markNav();
+    history.replaceState(null, '', location.pathname + location.search);
+  }
+
+  function adminRows() {
+    const { q, access, app } = adminView;
+    const s = q.trim().toLowerCase();
+    return users.filter((x) => (!access || x.access === access)
+      && (!app || x.allProducts || x.access === 'super' || x.productIds.includes(app))
+      && (!s || [x.name, x.username, x.teamsEmail, ...appNamesOf(x)].some((t) => String(t || '').toLowerCase().includes(s))));
+  }
 
   function renderAdmin() {
-    const u = users.find((x) => x.id === editing) || null;
-    const access = u ? u.access : 'view';
-    const all = u ? u.allProducts : false;
-    const appNames = (x) => (x.allProducts ? 'All apps' : x.productIds.map((id) => (products.find((p) => p.id === id) || {}).name).filter(Boolean).join(', ') || 'No apps');
-    $('#adminBody').html(`
-      <div class="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
-        <h3 class="min-w-0 flex-1 text-base font-semibold text-slate-900">Logins and access</h3>
-        <button class="icon-btn" data-close-admin title="Close">${icon('close', 18)}</button>
-      </div>
-      <div class="grid gap-5 p-5 md:grid-cols-[1fr_340px]">
-        <div class="min-w-0">
-          <div class="admin-list">
-            ${users.map((x) => `
-              <div class="admin-row ${x.id === editing ? 'on' : ''}">
-                <div class="min-w-0 flex-1">
-                  <p class="truncate text-sm font-medium text-slate-900">${esc(x.name || x.username)} ${x.id === me.id ? '<span class="text-xs font-normal text-slate-400">(you)</span>' : ''}</p>
-                  <p class="truncate text-xs text-slate-500"><span class="font-mono">${esc(x.username)}</span> · ${esc(appNames(x))}</p>
-                </div>
-                ${x.sanityTester ? '<span class="access-tag sanity-tag">Sanity</span>' : ''}
-                <span class="access-tag access-${x.access}">${ACCESS[x.access].label}</span>
-                <button class="icon-btn" data-admin-edit="${x.id}" title="Edit">${icon('edit', 14)}</button>
-                ${x.id === me.id ? '<span class="w-7"></span>' : `<button class="icon-btn danger" data-admin-delete="${x.id}" title="Delete login">${icon('trash', 14)}</button>`}
-              </div>`).join('')}
-          </div>
+    const v = adminView;
+    const list = adminRows();
+    const count = (k) => users.filter((x) => x.access === k).length;
+    const stat = (label, n, hint, tone) => `<div class="adm-stat ${tone}"><p class="adm-stat-n">${n}</p><p class="adm-stat-l">${label}</p><p class="adm-stat-h">${hint}</p></div>`;
+    $('#adminPage').html(`<div class="adm-page">
+      <div class="adm-head">
+        <div class="min-w-0 flex-1">
+          <h2 class="adm-title">${icon('shield', 20)} Users &amp; access</h2>
+          <p class="text-sm text-slate-500">Make logins, choose what each person can do and which apps they can open.</p>
         </div>
-        <form id="adminForm" class="space-y-3" autocomplete="off">
-          <h4 class="text-sm font-semibold text-slate-900">${u ? `Edit ${esc(u.username)}` : 'New login'}</h4>
-          <label class="block"><span class="field-label">Username</span>
-            <input class="input w-full" name="username" value="${esc(u ? u.username : '')}" ${u ? 'disabled' : ''} placeholder="e.g. priya.qa" maxlength="40"></label>
-          <label class="block"><span class="field-label">Name</span>
+        <button class="btn-primary" data-admin-new>${icon('plus', 14)} New user</button>
+      </div>
+      <div class="adm-stats">
+        ${stat('Logins', users.length, `${count('super')} super admin${count('super') === 1 ? '' : 's'}`, 'indigo')}
+        ${stat('Signed in now', users.filter((x) => x.signedIn).length, 'on at least one device', 'green')}
+        ${stat('Sanity testers', users.filter((x) => x.sanityTester || ['tester', 'developer', 'super'].includes(x.access)).length, 'can run the daily sanity', 'amber')}
+        ${stat('No Teams email', users.filter((x) => !x.teamsEmail).length, 'cannot be @mentioned', 'slate')}
+      </div>
+      <div class="adm-card">
+        <div class="adm-toolbar">
+          <div class="adm-search">${icon('filter', 14)}<input type="search" placeholder="Search name, username, email or app" value="${esc(v.q)}" data-admin-q></div>
+          <div class="adm-chips">
+            <button class="adm-chip ${!v.access ? 'on' : ''}" data-admin-access="">All <b>${users.length}</b></button>
+            ${Object.entries(ACCESS).filter(([k]) => count(k)).map(([k, a]) => `<button class="adm-chip ${v.access === k ? 'on' : ''}" data-admin-access="${k}">${a.label} <b>${count(k)}</b></button>`).join('')}
+          </div>
+          <select class="input py-1 text-sm" data-admin-app><option value="">Any app</option>${products.map((p) => `<option value="${p.id}" ${v.app === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="adm-table">
+            <thead><tr><th>User</th><th>Access</th><th>Apps</th><th>Teams email</th><th>Last sign-in</th><th></th></tr></thead>
+            <tbody>${list.map((x) => {
+              const apps = appNamesOf(x);
+              return `<tr class="${v.panel && v.panel.id === x.id ? 'on' : ''}">
+                <td><div class="flex items-center gap-3">
+                  <span class="adm-avatar">${esc(appInitials(x.name || x.username))}${x.signedIn ? '<i class="adm-online" title="Signed in now"></i>' : ''}</span>
+                  <div class="min-w-0"><p class="truncate font-semibold text-slate-900">${esc(x.name || x.username)}${x.id === me.id ? ' <span class="text-xs font-normal text-slate-400">(you)</span>' : ''}</p>
+                    <p class="truncate font-mono text-xs text-slate-500">${esc(x.username)}</p></div></div></td>
+                <td><span class="access-tag access-${x.access}" title="${esc(ACCESS[x.access].hint)}">${ACCESS[x.access].label}</span>${x.sanityTester ? ' <span class="access-tag sanity-tag">Sanity</span>' : ''}</td>
+                <td><div class="adm-apps">${apps.slice(0, 3).map((n) => `<span class="adm-app">${esc(n)}</span>`).join('')}${apps.length > 3 ? `<span class="adm-app more" title="${esc(apps.slice(3).join(', '))}">+${apps.length - 3}</span>` : ''}${apps.length ? '' : '<span class="text-xs text-slate-400">No apps</span>'}</div></td>
+                <td class="text-xs">${x.teamsEmail ? esc(x.teamsEmail) : '<span class="text-slate-400">—</span>'}</td>
+                <td class="whitespace-nowrap text-xs text-slate-500">${x.signedIn ? '<span class="adm-on">● Online</span> · ' : ''}${x.lastSignIn ? esc(ago(x.lastSignIn)) : 'Never'}</td>
+                <td><div class="adm-actions">
+                  <button class="icon-btn" data-admin-edit="${x.id}" title="Edit">${icon('edit', 14)}</button>
+                  <button class="icon-btn" data-admin-reset="${x.id}" title="Reset password">${icon('lock', 14)}</button>
+                  ${x.id === me.id ? '' : `<button class="icon-btn" data-admin-signout="${x.id}" title="Sign out on every device" ${x.signedIn ? '' : 'disabled'}>${icon('logout', 14)}</button>
+                  <button class="icon-btn danger" data-admin-delete="${x.id}" title="Delete login">${icon('trash', 14)}</button>`}
+                </div></td></tr>`;
+            }).join('')}</tbody>
+          </table>
+          ${list.length ? '' : `<div class="adm-empty">${icon('user', 22)}<p>${users.length ? 'Nobody matches the search or filters.' : 'No logins yet.'}</p></div>`}
+        </div>
+        <p class="adm-foot">${list.length} of ${users.length} login${users.length === 1 ? '' : 's'}</p>
+      </div>
+      <div class="adm-backdrop ${v.panel ? 'show' : ''}" data-admin-close></div>
+      <aside class="adm-panel ${v.panel ? 'show' : ''}">${v.panel ? adminPanel() : ''}</aside>
+    </div>`);
+    if (v.panel) syncAppBoxes();
+  }
+
+  // the panel: a login's form, or the credentials of one just made (or given a new password)
+  function adminPanel() {
+    const { panel } = adminView;
+    if (panel.created) {
+      const c = panel.created;
+      return `<div class="adm-panel-head"><h3>${panel.id ? 'New password set' : 'Login created'}</h3><button class="icon-btn" data-admin-close title="Close">${icon('close', 18)}</button></div>
+        <div class="adm-panel-body">
+          <div class="adm-done">${icon('check', 22)}</div>
+          <p class="text-center text-sm text-slate-600">Send these to <b>${esc(c.name || c.username)}</b>. The password is shown only now.</p>
+          <div class="adm-cred">
+            ${[['Address', location.origin], ['Username', c.username], ['Password', c.password]].map(([k, val]) => `
+              <div class="adm-cred-row"><span>${k}</span><code>${esc(val)}</code><button type="button" class="icon-btn sm" data-admin-copy="${esc(val)}" title="Copy ${k.toLowerCase()}">${icon('copy', 13)}</button></div>`).join('')}
+          </div>
+          <button class="btn-primary w-full justify-center" data-admin-copy-all>${icon('copy', 14)} Copy login details</button>
+          <button class="btn-secondary mt-2 w-full justify-center" data-admin-close>Done</button>
+        </div>`;
+    }
+    const u = users.find((x) => x.id === panel.id) || null;
+    const access = u ? u.access : 'view';
+    const self = u && u.id === me.id;
+    return `<form id="adminForm" autocomplete="off" class="flex h-full flex-col">
+      <div class="adm-panel-head"><h3>${u ? `Edit ${esc(u.name || u.username)}` : 'New user'}</h3><button type="button" class="icon-btn" data-admin-close title="Close">${icon('close', 18)}</button></div>
+      <div class="adm-panel-body">
+        <section class="adm-sec"><h4>Account</h4>
+          <label class="block"><span class="field-label">Username <span class="font-normal text-slate-400">(they sign in with it)</span></span>
+            <input class="input w-full font-mono" name="username" value="${esc(u ? u.username : '')}" ${u ? 'disabled' : ''} placeholder="e.g. priya.qa" maxlength="40"></label>
+          <label class="block"><span class="field-label">Full name</span>
             <input class="input w-full" name="name" value="${esc(u ? u.name : '')}" placeholder="e.g. Priya Sharma" maxlength="80"></label>
-          <label class="block"><span class="field-label">${u ? 'New password' : 'Password'}</span>
-            <input class="input w-full" type="password" name="password" autocomplete="new-password" placeholder="${u ? 'Leave blank to keep the current one' : 'At least 8 characters'}"></label>
-          <div><span class="field-label">Access</span>
-            ${Object.entries(ACCESS).map(([k, a]) => `
-              <label class="access-opt">
-                <input type="radio" name="access" value="${k}" class="mt-0.5 accent-indigo-600" ${k === access ? 'checked' : ''} ${u && u.id === me.id && k !== 'super' ? 'disabled' : ''}>
-                <span><span class="text-sm font-medium text-slate-900">${a.label}</span><span class="block text-xs text-slate-500">${a.hint}</span></span>
-              </label>`).join('')}
-          </div>
-          <label class="access-opt">
-            <input type="checkbox" name="sanityTester" class="mt-0.5 h-4 w-4 accent-indigo-600" ${u && u.sanityTester ? 'checked' : ''}>
-            <span><span class="text-sm font-medium text-slate-900">Sanity tester</span><span class="block text-xs text-slate-500">On top of the access above: can run the daily sanity checklist (Done / Failed, review, version and time). Testers, developers and super admins always can.</span></span>
-          </label>
-          <label class="block"><span class="field-label">Teams email <span class="font-normal text-slate-400">(optional, to @mention them)</span></span>
+          <label class="block"><span class="field-label">Teams email <span class="font-normal text-slate-400">(to @mention and message them)</span></span>
             <input class="input w-full" name="teamsEmail" value="${esc(u ? u.teamsEmail : '')}" placeholder="e.g. priya@company.com" maxlength="120"></label>
-          <div><span class="field-label">Apps this login can open</span>
-            <label class="flex items-center gap-2 py-1 text-sm"><input type="checkbox" name="allProducts" class="h-4 w-4 accent-indigo-600" ${all ? 'checked' : ''}> All apps (also new ones)</label>
-            ${products.map((p) => `
-              <label class="flex items-center gap-2 py-1 pl-6 text-sm"><input type="checkbox" name="productIds" value="${p.id}" class="h-4 w-4 accent-indigo-600" ${u && u.productIds.includes(p.id) ? 'checked' : ''}> ${esc(p.name)}</label>`).join('') || '<p class="pl-6 text-xs text-slate-400">No apps yet</p>'}
-          </div>
-          <p class="dialog-error hidden"></p>
-          <div class="flex justify-end gap-2 pt-1">
-            ${u ? '<button type="button" class="btn-secondary" data-admin-new>Cancel</button>' : ''}
-            <button class="btn-primary">${u ? 'Save changes' : 'Create login'}</button>
-          </div>
-        </form>
-      </div>`);
-    syncAppBoxes();
+        </section>
+        <section class="adm-sec"><h4>Password ${u && !panel.reset ? '<span class="font-normal text-slate-400">(leave empty to keep it)</span>' : ''}</h4>
+          <div class="adm-pass"><input class="input w-full font-mono" type="text" name="password" autocomplete="new-password" placeholder="${u ? 'New password' : 'At least 8 characters'}" value="${esc(panel.password || '')}">
+            <button type="button" class="btn-secondary" data-admin-generate title="Make a strong password">${icon('flip', 13)} Generate</button></div>
+          <p class="mt-1 text-xs text-slate-400">${u ? 'A new password signs them out on their other devices.' : 'You will see it once more after saving, to send it.'}</p>
+        </section>
+        <section class="adm-sec"><h4>Access</h4>
+          <div class="adm-access">${Object.entries(ACCESS).map(([k, a]) => `
+            <label class="adm-acc"><input type="radio" name="access" value="${k}" ${k === access ? 'checked' : ''} ${self && k !== 'super' ? 'disabled' : ''}>
+              <span><b>${a.label}</b><small>${a.hint}</small></span></label>`).join('')}</div>
+          <label class="adm-switch"><input type="checkbox" name="sanityTester" ${u && u.sanityTester ? 'checked' : ''}><span class="adm-toggle"></span>
+            <span><b>Sanity tester</b><small>On top of the access above: runs the daily sanity checklist. Testers, developers and super admins always can.</small></span></label>
+        </section>
+        <section class="adm-sec"><h4>Apps</h4>
+          <label class="adm-switch"><input type="checkbox" name="allProducts" ${u && u.allProducts ? 'checked' : ''}><span class="adm-toggle"></span>
+            <span><b>All apps</b><small>Also apps added later. Super admins always see every app.</small></span></label>
+          <div class="teams-picks pills mt-2" data-admin-apps>${products.map((p) => `
+            <label class="teams-pick"><input type="checkbox" name="productIds" value="${p.id}" ${u && u.productIds.includes(p.id) ? 'checked' : ''}><span class="sb-app sm" style="--app:${appColor(p)}">${esc(appInitials(p.name))}</span>${esc(p.name)}</label>`).join('') || '<p class="text-xs text-slate-400">No apps yet</p>'}</div>
+        </section>
+        <p class="dialog-error hidden"></p>
+      </div>
+      <div class="adm-panel-foot">
+        <button type="button" class="btn-secondary" data-admin-close>Cancel</button>
+        <button class="btn-primary">${u ? 'Save changes' : 'Create user'}</button>
+      </div>
+    </form>`;
   }
 
   // Super admins and "All apps" logins see every app, so the single-app boxes don't apply.
@@ -3906,33 +4073,40 @@ $(function () {
     const isSuper = $f.find('[name=access]:checked').val() === 'super';
     $f.find('[name=allProducts]').prop('disabled', isSuper);
     if (isSuper) $f.find('[name=allProducts]').prop('checked', true);
-    $f.find('[name=productIds]').prop('disabled', $f.find('[name=allProducts]').is(':checked'));
+    const all = $f.find('[name=allProducts]').is(':checked');
+    $f.find('[name=productIds]').prop('disabled', all);
+    $f.find('[data-admin-apps]').toggleClass('off', all);
   }
-
-  const loadUsers = () => api('GET', '/api/users').done((list) => { users = list; renderAdmin(); });
-
-  function openAdmin() {
-    editing = null;
-    loadUsers().done(() => {
-      $('#adminModal').removeClass('hidden');
-      $('body').addClass('overflow-hidden');
-    });
-  }
-
-  function closeAdmin() {
-    $('#adminModal').addClass('hidden');
-    unlockScroll();
-  }
+  const openPanel = (panel) => { adminView.panel = panel; renderAdmin(); setTimeout(() => $('#adminForm input:not(:disabled)').first().trigger('focus'), 220); };
+  const closePanel = () => { adminView.panel = null; renderAdmin(); };
+  const copy = (textValue, what) => navigator.clipboard.writeText(textValue).then(() => toast(`${what} copied`), () => dialog.alert(textValue, what));
 
   $doc.on('click', '[data-action="admin"]', openAdmin);
-  $doc.on('click', '[data-close-admin]', closeAdmin);
-  $('#adminModal').on('mousedown', function (e) { if (e.target === this) closeAdmin(); });
-  $doc.on('click', '[data-admin-edit]', function () { editing = $(this).data('admin-edit'); renderAdmin(); });
-  $doc.on('click', '[data-admin-new]', () => { editing = null; renderAdmin(); });
+  $doc.on('click', '[data-admin-close]', closePanel);
+  $doc.on('click', '[data-admin-new]', () => openPanel({ id: null, password: newPassword() }));
+  $doc.on('click', '[data-admin-edit]', function () { openPanel({ id: $(this).data('admin-edit') }); });
+  $doc.on('click', '[data-admin-reset]', function () { openPanel({ id: $(this).data('admin-reset'), reset: true, password: newPassword() }); });
+  $doc.on('click', '[data-admin-generate]', () => { $('#adminForm [name=password]').val(newPassword()).trigger('select'); });
+  $doc.on('input', '[data-admin-q]', function () {
+    adminView.q = this.value;
+    const at = this.selectionStart;
+    renderAdmin();
+    const box = $('[data-admin-q]')[0];
+    box.focus(); box.setSelectionRange(at, at);
+  });
+  $doc.on('click', '[data-admin-access]', function () { adminView.access = $(this).data('admin-access'); renderAdmin(); });
+  $doc.on('change', '[data-admin-app]', function () { adminView.app = this.value; renderAdmin(); });
   $doc.on('change', '#adminForm [name=access], #adminForm [name=allProducts]', syncAppBoxes);
+  $doc.on('click', '[data-admin-copy]', function () { copy(String($(this).data('admin-copy')), 'Copied'); });
+  $doc.on('click', '[data-admin-copy-all]', () => {
+    const c = adminView.panel.created;
+    copy(`FlowTrace login\nAddress: ${location.origin}\nUsername: ${c.username}\nPassword: ${c.password}`, 'Login details');
+  });
   $doc.on('submit', '#adminForm', function (e) {
     e.preventDefault();
     const $f = $(this);
+    const { panel } = adminView;
+    const editing = panel.id;
     const body = {
       name: $f.find('[name=name]').val().trim(),
       access: $f.find('[name=access]:checked').val(),
@@ -3946,14 +4120,22 @@ $(function () {
     if (!editing) body.username = $f.find('[name=username]').val().trim();
     const $err = $f.find('.dialog-error').addClass('hidden');
     const self = editing === me.id;
-    api(editing ? 'PATCH' : 'POST', editing ? `/api/users/${editing}` : '/api/users', body, null, QUIET)
-      .done(() => {
-        toast(editing ? 'Saved' : 'Login created');
-        editing = null;
+    api(editing ? 'PATCH' : 'POST', editing ? `/api/users/${editing}` : '/api/users', body, $f.find('.btn-primary')[0], QUIET)
+      .done((u) => {
+        // a new login or a new password: show the credentials to send; else back to the list
+        adminView.panel = pass && !self ? { id: editing, created: { username: u.username, name: u.name, password: pass } } : null;
+        toast(editing ? 'Saved' : 'User created');
         loadUsers();
         if (self) load();
       })
       .fail((xhr) => $err.text(errorText(xhr)).removeClass('hidden'));
+  });
+  $doc.on('click', '[data-admin-signout]', function () {
+    const u = users.find((x) => x.id === $(this).data('admin-signout'));
+    dialog.confirm({
+      title: `Sign ${u.name || u.username} out?`, message: 'They are signed out on every device and have to sign in again.', confirmText: 'Sign out',
+      onConfirm: () => api('POST', `/api/users/${u.id}/signout`, null, null, QUIET).done(() => { toast('Signed out everywhere'); loadUsers(); }),
+    });
   });
   $doc.on('click', '[data-admin-delete]', function () {
     const u = users.find((x) => x.id === $(this).data('admin-delete'));
@@ -3962,7 +4144,10 @@ $(function () {
       message: 'They will be signed out and cannot sign in again. Their issues and history stay.',
       confirmText: 'Delete',
       danger: true,
-      onConfirm: () => api('DELETE', `/api/users/${u.id}`, null, null, QUIET).done(() => { if (editing === u.id) editing = null; loadUsers(); }),
+      onConfirm: () => api('DELETE', `/api/users/${u.id}`, null, null, QUIET).done(() => {
+        if (adminView.panel && adminView.panel.id === u.id) adminView.panel = null;
+        loadUsers();
+      }),
     });
   });
 
@@ -4431,7 +4616,7 @@ $(function () {
   // ← → step through the flow while the popup is on top and nothing is being typed
   $doc.on('keydown', (e) => {
     if (!openId || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || $(e.target).is('input, textarea, select, [contenteditable]')) return;
-    if (dialog.isOpen() || sheetId || videoFlowId || bugsView || $('#copyModal, #writerModal, #statusModal, #adminModal, #doneModal, #sheetsModal, #sanityLogModal').not('.hidden').length) return;
+    if (dialog.isOpen() || sheetId || videoFlowId || bugsView || $('#copyModal, #writerModal, #statusModal, #doneModal, #sheetsModal, #sanityLogModal').not('.hidden').length) return;
     const s = findScreen(openId);
     const { prev, next } = s ? popupSiblings(s) : {};
     const to = e.key === 'ArrowLeft' ? prev : next;
@@ -4869,7 +5054,7 @@ $(function () {
     else if (doneView) closeDone();
     else if (!$('#statusModal').hasClass('hidden')) closeStatuses();
     else if (bugsView) closeBugs();
-    else if (!$('#adminModal').hasClass('hidden')) closeAdmin();
+    else if (adminView && adminView.panel) { adminView.panel = null; renderAdmin(); }
     else if (videoFlowId) closeVideo();
     else if (!$('#writerModal').hasClass('hidden')) closeWriter();
     else if (sheetId) closeSheet();
@@ -4913,7 +5098,7 @@ $(function () {
     if (doneView) closeDone();
     if (!$('#statusModal').hasClass('hidden')) closeStatuses();
     if (bugsView) closeBugs();
-    if (!$('#adminModal').hasClass('hidden')) closeAdmin();
+    if (adminView) closeAdmin();
     if (videoFlowId) closeVideo();
     if (!$('#writerModal').hasClass('hidden')) closeWriter();
     if (sheetId) closeSheet();
@@ -4932,7 +5117,8 @@ $(function () {
     const h = new URLSearchParams(location.hash.slice(1));
     if (![...h.keys()].length) return;
     history.replaceState(null, '', location.pathname + location.search);
-    if (h.get('flow')) showFlow(h.get('flow'));
+    if (h.has('admin')) { if (can('super')) openAdmin(); }
+    else if (h.get('flow')) showFlow(h.get('flow'));
     else if (h.get('screen')) showScreen(h.get('screen'));
     else if (h.get('sheet')) api('GET', `/api/sheets/${encodeURIComponent(h.get('sheet'))}`).done((x) => openSheets(x.productId, x.id));
     else if (h.get('sheets')) {
@@ -4982,9 +5168,10 @@ $(function () {
       renderSanity();
       // the page takes the board's place; the address keeps it, so a refresh or a shared link comes back here
       if (sheetsView) closeSheets();
+      if (adminView) closeAdmin();
       $('#board, #tabs').addClass('hidden');
       $('#sanityPage').removeClass('hidden');
-      $('[data-action="sanity"]').addClass('on');
+      markNav();
       history.replaceState(null, '', `${location.pathname}${location.search}#sanity=${encodeURIComponent(pid)}${sanity.view === 'logs' ? '&view=logs' : ''}`);
       if (fresh) window.scrollTo(0, 0);
     });
@@ -4995,7 +5182,7 @@ $(function () {
     sanity = null;
     $('#sanityPage').addClass('hidden').empty();
     $('#board, #tabs').removeClass('hidden');
-    $('[data-action="sanity"]').removeClass('on');
+    markNav();
     history.replaceState(null, '', location.pathname + location.search);
   }
 
@@ -5567,6 +5754,7 @@ $(function () {
     if (!pid) { dialog.alert('Add an app first.', 'No app'); return; }
     api('GET', `/api/sheets?product=${encodeURIComponent(pid)}`).done((d) => {
       if (sanity) closeSanity();
+      if (adminView) closeAdmin();
       const keep = sheetsView && sheetsView.productId === pid ? sheetsView : {};
       sheetsView = {
         productId: pid, list: d.sheets, people: d.people, canCreate: d.canCreate, teams: d.teams, doc: null,
@@ -5576,7 +5764,7 @@ $(function () {
       $('#board, #tabs').addClass('hidden');
       $('#sheetsPage').removeClass('hidden');
       $('body').addClass('sheets-open');
-      $('[data-action="sheets"]').addClass('on');
+      markNav();
       if (!keep.productId) window.scrollTo(0, 0);
       if (id) openSheetDoc(id); else renderSheets();
     });
@@ -5604,7 +5792,7 @@ $(function () {
     $('#sheetsPage').addClass('hidden').empty();
     $('#board, #tabs').removeClass('hidden');
     $('body').removeClass('sheets-open');
-    $('[data-action="sheets"]').removeClass('on');
+    markNav();
     history.replaceState(null, '', location.pathname + location.search);
   }
 
