@@ -9,7 +9,8 @@
  * The sign-in is kept in this browser (localStorage) until you disconnect, so later messages need no popup.
  *
  * window.flowGraph: setup(config), ready(), account(), connect(), disconnect(), autoDm(on?),
- *                   sendDirect(people, card), chatsList(), sendChat(chatId, card),
+ *                   sendDirect(people, card, file), chatsList(), sendChat(chatId, card, file),
+ *                   allow(kind), uploadFile({ name, type, base64 })   (an Excel put on your OneDrive, attached to messages)
  *                   notify({ card, people })   (quiet: only when connected and auto messages are on; never a popup)
  */
 window.flowGraph = (() => {
@@ -19,6 +20,8 @@ window.flowGraph = (() => {
     direct: ['User.Read', 'Chat.Create', 'ChatMessage.Send'],
     chats: ['User.Read', 'User.ReadBasic.All', 'Chat.ReadBasic', 'ChatMessage.Send'], // User.ReadBasic.All: @mentions
   };
+  // sending a file: everything above too, so one sign-in covers the whole send
+  SCOPES.files = [...new Set([...SCOPES.direct, ...SCOPES.chats, 'Files.ReadWrite'])];
   const PREF = 'taskSheet.teamsAutoDm';
 
   let config = null;
@@ -157,7 +160,16 @@ window.flowGraph = (() => {
 
   // A chat message: one Adaptive Card, or HTML from the server ({ html, mentions }: tables show like ones pasted from Excel).
   // @mentions in HTML need each person's Microsoft id, looked up by their Teams email; one not found stays a plain name.
-  async function cardMessage(card, tok) {
+  // file (optional): { id, name, url } from uploadFile, shown under the message as a file
+  async function cardMessage(card, tok, file) {
+    const withFile = (msg) => (file ? {
+      ...msg,
+      body: { ...msg.body, content: `${msg.body.content}<attachment id="${file.id}"></attachment>` },
+      attachments: [...(msg.attachments || []), { id: file.id, contentType: 'reference', contentUrl: file.url, name: file.name }],
+    } : msg);
+    return withFile(await bodyOf(card, tok));
+  }
+  async function bodyOf(card, tok) {
     if (!card || typeof card.html !== 'string') {
       return {
         body: { contentType: 'html', content: '<attachment id="flowtrace"></attachment>' },
@@ -179,7 +191,7 @@ window.flowGraph = (() => {
     'user@odata.bind': `${GRAPH}/users('${encodeURIComponent(who)}')`,
   });
 
-  async function directTo(tok, people, card) {
+  async function directTo(tok, people, card, file) {
     const self = await whoAmI(tok);
     const mine = [self.mail, self.userPrincipalName].filter(Boolean).map((x) => x.toLowerCase());
     const results = [];
@@ -189,7 +201,7 @@ window.flowGraph = (() => {
       try {
         // a 1:1 chat is found again if it already exists, so this does not make a new chat each time
         const chat = await call(tok, 'POST', '/chats', { chatType: 'oneOnOne', members: [member(self.id), member(p.email)] });
-        await call(tok, 'POST', `/chats/${encodeURIComponent(chat.id)}/messages`, await cardMessage(card, tok));
+        await call(tok, 'POST', `/chats/${encodeURIComponent(chat.id)}/messages`, await cardMessage(card, tok, file));
         results.push({ name: p.name, ok: true });
       } catch (err) {
         results.push({ name: p.name, ok: false, error: err.status === 404 ? `${p.email} is not a Teams user` : err.message });
@@ -199,8 +211,27 @@ window.flowGraph = (() => {
   }
 
   /** A direct message to each person [{ name, email }] → [{ name, ok, error }] (signs in when needed) */
-  async function sendDirect(people, card) {
-    return directTo(await token('direct', true), people, card);
+  async function sendDirect(people, card, file) {
+    return directTo(await token(file ? 'files' : 'direct', true), people, card, file);
+  }
+
+  /** Sign in with the rights for kind (a popup when needed): call it straight from the click */
+  const allow = (kind) => token(kind, true);
+
+  /** An Excel from the server ({ name, type, base64 }) → your OneDrive (FlowTrace folder), openable by people in your
+   *  organisation → { id, name, url } to attach to messages */
+  async function uploadFile(f) {
+    const tok = await token('files', true);
+    const bytes = Uint8Array.from(atob(f.base64), (ch) => ch.charCodeAt(0));
+    const res = await fetch(`${GRAPH}/me/drive/root:/FlowTrace/${encodeURIComponent(f.name)}:/content?@microsoft.graph.conflictBehavior=rename`, {
+      method: 'PUT', headers: { Authorization: `Bearer ${tok}`, 'Content-Type': f.type }, body: bytes,
+    });
+    const item = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(`The Excel could not be put on your OneDrive (${(item && item.error && item.error.message) || `HTTP ${res.status}`})`);
+    // a view link for the organisation; when it is not allowed, people see it only if you share it yourself
+    await call(tok, 'POST', `/me/drive/items/${item.id}/createLink`, { type: 'view', scope: 'organization' }).catch(() => null);
+    // Teams knows a OneDrive file by the GUID in its eTag
+    return { id: (/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(item.eTag || '') || [])[1] || item.id, name: item.name, url: item.webUrl };
   }
 
   /** Issue notices: quietly message the people, only when connected with auto messages on → results or null */
@@ -227,10 +258,10 @@ window.flowGraph = (() => {
       .sort((a, b) => a.name.localeCompare(b.name));
   }
   /** A message in one of your chats → the Teams message ({ id, createdDateTime, … }) */
-  async function sendChat(chatId, card) {
-    const tok = await token('chats', true);
-    return call(tok, 'POST', `/chats/${encodeURIComponent(chatId)}/messages`, await cardMessage(card, tok));
+  async function sendChat(chatId, card, file) {
+    const tok = await token(file ? 'files' : 'chats', true);
+    return call(tok, 'POST', `/chats/${encodeURIComponent(chatId)}/messages`, await cardMessage(card, tok, file));
   }
 
-  return { setup, configured, ready, account, autoDm, connect, disconnect, sendDirect, notify, chatsList, sendChat };
+  return { setup, configured, ready, account, autoDm, connect, disconnect, sendDirect, notify, chatsList, sendChat, allow, uploadFile };
 })();

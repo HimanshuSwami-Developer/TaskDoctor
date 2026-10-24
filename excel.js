@@ -12,9 +12,19 @@
  * - colours are what Excel shows: the cell's fill and font colour (fixed, theme colours of this workbook with their
  *   tint, or the old indexed palette), then conditional formatting on top (cell value, text contains, formulas,
  *   blanks, duplicates, colour scales), like Excel does
- * - a dropdown keeps the fill / text colour each value has; other cells keep their own fill, text colour and bold
+ * - a dropdown keeps the fill / text colour each value has; other cells keep their own fill, text colour and bold.
+ *   An option no row uses yet still gets the colour a conditional format would give it (how Excel and Google
+ *   Sheets colour dropdowns), and a TRUE / FALSE list is a checkbox
+ * - Excel 2010+ and Google Sheets keep some dropdowns and conditional formats in the worksheet's <extLst> (a list on
+ *   another worksheet, a rule that looks at another worksheet); ExcelJS skips those, so they are read from the XML
+ * - a column worked out by the same formula in every row (=C2*D2, =IF(E2="Done",…), =SUM(C2:F2)) becomes a formula
+ *   column ([Qty] * [Price]) that keeps working in FlowTrace, with the number format it had (%, ₹, dates, decimals).
+ *   Formulas that look at other rows, other worksheets or functions FlowTrace doesn't have keep their results instead
+ * - .csv files are read too (no colours or dropdowns there)
  */
+const { Readable } = require('stream');
 const ExcelJS = require('exceljs');
+const JSZip = require('jszip');
 const DataValidationsXform = require('exceljs/lib/xlsx/xform/sheet/data-validations-xform');
 
 // ExcelJS spreads a data validation over every cell it covers, so a whole-column dropdown (B2:B1048576) would make
@@ -34,7 +44,8 @@ DataValidationsXform.prototype.parseClose = function parseClose(name) {
 const MAX_SHEETS = 10;
 const MAX_COLUMNS = 100;
 const MAX_ROWS = 5000;
-const MAX_OPTIONS = 30; // what a dropdown column can hold
+const MAX_OPTIONS = 100; // what a dropdown column can hold
+const MAX_OPTION = 80; // characters of one option
 const TAG_HEX = { slate: '#64748b', amber: '#d97706', sky: '#0284c7', indigo: '#4f46e5', violet: '#7c3aed', pink: '#db2777', red: '#dc2626', teal: '#0d9488', green: '#16a34a' };
 
 // ---------------------------------------------------------------- colours
@@ -168,239 +179,13 @@ function cellPlain(cell) {
 
 // ---------------------------------------------------------------- conditional formatting
 //
-// Formulas of conditional formats are worked out with a small evaluator: references (relative to the top-left
-// cell of the format's range), text / numbers / TRUE / FALSE, = <> < > <= >= & + - * / ^ %, and the functions
-// people use in them (AND, OR, NOT, IF, SEARCH, FIND, LEFT, RIGHT, MID, LEN, ISBLANK, ISNUMBER, COUNTIF, TODAY …).
+// Formulas of conditional formats are worked out by public/formula.js (Excel's formula language, the same one formula
+// columns use): references relative to the top-left cell of the format's range, other worksheets too.
 // Anything it cannot read counts as "no match".
 
-class XlError { constructor(code) { this.code = code; } }
-const ERR = new XlError('#VALUE!');
-const isErr = (v) => v instanceof XlError;
-const DAY = 86400000;
-const EPOCH = Date.UTC(1899, 11, 30);
-const serial = (d) => (d.getTime() - EPOCH) / DAY;
-const today = () => { const n = new Date(); return Math.floor((Date.UTC(n.getFullYear(), n.getMonth(), n.getDate()) - EPOCH) / DAY); };
+const F = require('./public/formula');
 
-// value as Excel compares it: dates are numbers, empty is ''
-const xlValue = (v) => (v instanceof Date ? serial(v) : v);
-const toNum = (v) => {
-  if (isErr(v)) return v;
-  if (typeof v === 'number') return v;
-  if (typeof v === 'boolean') return v ? 1 : 0;
-  if (v === '' || v === null || v === undefined) return 0;
-  const n = Number(String(v).replace(/,/g, ''));
-  return Number.isFinite(n) ? n : ERR;
-};
-const toStr = (v) => (isErr(v) ? v : typeof v === 'boolean' ? (v ? 'TRUE' : 'FALSE') : v === null || v === undefined ? '' : String(v));
-const toBool = (v) => (isErr(v) ? v : typeof v === 'boolean' ? v : typeof v === 'number' ? v !== 0 : /^true$/i.test(String(v)) ? true : /^false$/i.test(String(v)) ? false : v === '' ? false : ERR);
-
-// Excel's comparison: numbers before text before booleans, text without case; an empty cell is 0 / '' / FALSE
-function compare(a, b) {
-  const kind = (v) => (typeof v === 'number' ? 0 : typeof v === 'boolean' ? 2 : 1);
-  let x = a;
-  let y = b;
-  if (x === '' && typeof y === 'number') x = 0;
-  if (y === '' && typeof x === 'number') y = 0;
-  if (x === '' && typeof y === 'boolean') x = false;
-  if (y === '' && typeof x === 'boolean') y = false;
-  if (kind(x) !== kind(y)) return kind(x) - kind(y);
-  if (typeof x === 'string') { x = x.toLowerCase(); y = y.toLowerCase(); }
-  return x < y ? -1 : x > y ? 1 : 0;
-}
-
-function tokenize(src) {
-  const out = [];
-  const re = /\s*(?:("(?:[^"]|"")*")|((?:'[^']+'|[A-Za-z_][\w.]*)!)?(\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?)(?![\w(])|(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|([A-Za-z_][\w.]*)|(<>|<=|>=|[-+*/^&=<>(),;%]))/y;
-  let m;
-  let at = 0;
-  while (at < src.length) {
-    re.lastIndex = at;
-    m = re.exec(src);
-    if (!m || m.index !== at || m[0] === '') {
-      if (/^\s*$/.test(src.slice(at))) break;
-      return null;
-    }
-    at = re.lastIndex;
-    if (m[1] !== undefined) out.push({ t: 'str', v: m[1].slice(1, -1).replace(/""/g, '"') });
-    else if (m[3] !== undefined) out.push({ t: 'ref', v: m[3], sheet: m[2] ? m[2].slice(0, -1).replace(/^'|'$/g, '') : null });
-    else if (m[4] !== undefined) out.push({ t: 'num', v: Number(m[4]) });
-    else if (m[5] !== undefined) out.push({ t: 'name', v: m[5].toUpperCase().replace(/^_XLFN\./, '') });
-    else out.push({ t: 'op', v: m[6] === ';' ? ',' : m[6] });
-  }
-  return out;
-}
-
-const FUNCTIONS = {
-  AND: (args) => { let r = true; for (const a of args.flat()) { const b = toBool(a); if (isErr(b)) return b; r = r && b; } return r; },
-  OR: (args) => { let r = false; for (const a of args.flat()) { const b = toBool(a); if (isErr(b)) return b; r = r || b; } return r; },
-  NOT: ([a]) => { const b = toBool(a); return isErr(b) ? b : !b; },
-  IF: ([c, a = true, b = false]) => { const x = toBool(c); return isErr(x) ? x : x ? a : b; },
-  IFERROR: ([a, b]) => (isErr(a) ? b : a),
-  ISERROR: ([a]) => isErr(a),
-  ISERR: ([a]) => isErr(a),
-  ISNUMBER: ([a]) => typeof a === 'number',
-  ISTEXT: ([a]) => typeof a === 'string' && a !== '',
-  ISBLANK: ([a]) => a === '',
-  ISNA: () => false,
-  SEARCH: ([find, within, start = 1]) => {
-    const i = toStr(within).toLowerCase().indexOf(toStr(find).toLowerCase(), toNum(start) - 1);
-    return i < 0 ? ERR : i + 1;
-  },
-  FIND: ([find, within, start = 1]) => { const i = toStr(within).indexOf(toStr(find), toNum(start) - 1); return i < 0 ? ERR : i + 1; },
-  LEFT: ([s, n = 1]) => toStr(s).slice(0, toNum(n)),
-  RIGHT: ([s, n = 1]) => { const x = toStr(s); const k = toNum(n); return k ? x.slice(-k) : ''; },
-  MID: ([s, a, n]) => toStr(s).substr(toNum(a) - 1, toNum(n)),
-  LEN: ([s]) => toStr(s).length,
-  LOWER: ([s]) => toStr(s).toLowerCase(),
-  UPPER: ([s]) => toStr(s).toUpperCase(),
-  TRIM: ([s]) => toStr(s).trim().replace(/\s+/g, ' '),
-  EXACT: ([a, b]) => toStr(a) === toStr(b),
-  VALUE: ([a]) => toNum(a),
-  ABS: ([a]) => Math.abs(toNum(a)),
-  INT: ([a]) => Math.floor(toNum(a)),
-  MOD: ([a, b]) => { const x = toNum(a); const y = toNum(b); return y ? x - y * Math.floor(x / y) : ERR; },
-  ROUND: ([a, n = 0]) => Math.round(toNum(a) * 10 ** toNum(n)) / 10 ** toNum(n),
-  ROUNDDOWN: ([a, n = 0]) => Math.trunc(toNum(a) * 10 ** toNum(n)) / 10 ** toNum(n),
-  ROUNDUP: ([a, n = 0]) => { const k = 10 ** toNum(n); const x = toNum(a) * k; return (x < 0 ? Math.floor(x) : Math.ceil(x)) / k; },
-  FLOOR: ([a, s = 1]) => Math.floor(toNum(a) / toNum(s)) * toNum(s),
-  CEILING: ([a, s = 1]) => Math.ceil(toNum(a) / toNum(s)) * toNum(s),
-  EDATE: ([a, m]) => { const d = new Date(EPOCH + toNum(a) * DAY); d.setUTCMonth(d.getUTCMonth() + toNum(m)); return (d.getTime() - EPOCH) / DAY; },
-  TODAY: () => today(),
-  NOW: () => (Date.now() - EPOCH) / DAY,
-  DATE: ([y, m, d]) => (Date.UTC(toNum(y), toNum(m) - 1, toNum(d)) - EPOCH) / DAY,
-  YEAR: ([a]) => new Date(EPOCH + toNum(a) * DAY).getUTCFullYear(),
-  MONTH: ([a]) => new Date(EPOCH + toNum(a) * DAY).getUTCMonth() + 1,
-  DAY: ([a]) => new Date(EPOCH + toNum(a) * DAY).getUTCDate(),
-  WEEKDAY: ([a]) => new Date(EPOCH + toNum(a) * DAY).getUTCDay() + 1,
-  ROW: (args, ctx) => ctx.r,
-  COLUMN: (args, ctx) => ctx.c,
-  TRUE: () => true,
-  FALSE: () => false,
-  COUNTIF: ([range, crit]) => {
-    const list = Array.isArray(range) ? range : [range];
-    const m = /^(<>|<=|>=|=|<|>)?(.*)$/s.exec(typeof crit === 'string' ? crit : '');
-    const op = typeof crit === 'string' && m[1] ? m[1] : '=';
-    const want = typeof crit === 'string' ? (m[2] !== '' && Number.isFinite(Number(m[2])) ? Number(m[2]) : m[2]) : crit;
-    const like = typeof want === 'string' && /[*?]/.test(want) ? new RegExp(`^${want.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`, 'i') : null;
-    return list.filter((v) => {
-      if (like) return op === '=' ? like.test(toStr(v)) : !like.test(toStr(v));
-      const d = compare(v, want);
-      return { '=': d === 0, '<>': d !== 0, '<': d < 0, '>': d > 0, '<=': d <= 0, '>=': d >= 0 }[op];
-    }).length;
-  },
-};
-FUNCTIONS.COUNTA = ([range]) => (Array.isArray(range) ? range : [range]).filter((v) => v !== '').length;
-FUNCTIONS.SUM = (args) => args.flat().reduce((t, v) => t + (typeof v === 'number' ? v : 0), 0);
-
-// Evaluate one formula for a cell. ctx: { r, c, top, left, value(r, c) }
-function evaluate(formula, ctx) {
-  const tokens = tokenize(String(formula).replace(/^=/, ''));
-  if (!tokens) return ERR;
-  let i = 0;
-  const peek = () => tokens[i];
-  const isOp = (v) => peek() && peek().t === 'op' && peek().v === v;
-  const cellAt = (ref) => {
-    const m = /^(\$?)([A-Z]{1,3})(\$?)(\d+)$/i.exec(ref);
-    const c = colNumber(m[2]);
-    const r = +m[4];
-    return { r: m[3] ? r : r + ctx.r - ctx.top, c: m[1] ? c : c + ctx.c - ctx.left };
-  };
-  function primary() {
-    const t = tokens[i++];
-    if (!t) return ERR;
-    if (t.t === 'str' || t.t === 'num') return t.v;
-    if (t.t === 'ref') {
-      if (t.sheet) return ERR; // other worksheets are not followed
-      const [a, b] = t.v.split(':');
-      const x = cellAt(a);
-      if (!b) return ctx.value(x.r, x.c);
-      const y = cellAt(b);
-      const list = [];
-      for (let r = Math.min(x.r, y.r); r <= Math.min(Math.max(x.r, y.r), ctx.lastRow); r += 1) {
-        for (let c = Math.min(x.c, y.c); c <= Math.max(x.c, y.c); c += 1) list.push(ctx.value(r, c));
-      }
-      return list;
-    }
-    if (t.t === 'name') {
-      if (isOp('(')) {
-        i += 1;
-        const args = [];
-        if (!isOp(')')) {
-          do { if (args.length) i += 1; args.push(isOp(',') || isOp(')') ? '' : comparison()); } while (isOp(','));
-        }
-        if (!isOp(')')) return ERR;
-        i += 1;
-        const fn = FUNCTIONS[t.v];
-        return fn ? fn(args, ctx) : ERR;
-      }
-      if (t.v === 'TRUE') return true;
-      if (t.v === 'FALSE') return false;
-      return ERR; // named ranges are not followed
-    }
-    if (t.v === '(') {
-      const v = comparison();
-      if (!isOp(')')) return ERR;
-      i += 1;
-      return v;
-    }
-    if (t.v === '-') { const v = toNum(primary()); return isErr(v) ? v : -v; }
-    if (t.v === '+') return primary();
-    return ERR;
-  }
-  function postfix() {
-    let v = primary();
-    while (isOp('%')) { i += 1; v = toNum(v); if (!isErr(v)) v /= 100; }
-    return v;
-  }
-  function power() {
-    let v = postfix();
-    while (isOp('^')) { i += 1; const b = toNum(postfix()); const a = toNum(v); v = isErr(a) ? a : isErr(b) ? b : a ** b; }
-    return v;
-  }
-  function product() {
-    let v = power();
-    while (isOp('*') || isOp('/')) {
-      const op = tokens[i++].v;
-      const a = toNum(v);
-      const b = toNum(power());
-      v = isErr(a) ? a : isErr(b) ? b : op === '*' ? a * b : b === 0 ? ERR : a / b;
-    }
-    return v;
-  }
-  function sum() {
-    let v = product();
-    while (isOp('+') || isOp('-')) {
-      const op = tokens[i++].v;
-      const a = toNum(v);
-      const b = toNum(product());
-      v = isErr(a) ? a : isErr(b) ? b : op === '+' ? a + b : a - b;
-    }
-    return v;
-  }
-  function concat() {
-    let v = sum();
-    while (isOp('&')) { i += 1; const b = toStr(sum()); const a = toStr(v); v = isErr(a) ? a : isErr(b) ? b : a + b; }
-    return v;
-  }
-  function comparison() {
-    let v = concat();
-    while (peek() && peek().t === 'op' && ['=', '<>', '<', '>', '<=', '>='].includes(peek().v)) {
-      const op = tokens[i++].v;
-      const b = concat();
-      if (isErr(v)) return v;
-      if (isErr(b)) return b;
-      const d = compare(Array.isArray(v) ? v[0] : v, Array.isArray(b) ? b[0] : b);
-      v = { '=': d === 0, '<>': d !== 0, '<': d < 0, '>': d > 0, '<=': d <= 0, '>=': d >= 0 }[op];
-    }
-    return v;
-  }
-  try {
-    const v = comparison();
-    return i === tokens.length ? v : ERR;
-  } catch (err) {
-    return ERR;
-  }
-}
+const { evaluate, compare, toStr, toBool, isErr, xlValue } = F;
 
 const CELL_IS = {
   equal: (v, a) => compare(v, a) === 0,
@@ -414,9 +199,11 @@ const CELL_IS = {
 };
 
 // The conditional formats of a worksheet, ready to apply: look(r, c) → { bg, fg, b } (only what a rule sets)
-function conditionalFormats(ws, theme, value, lastRow) {
+// extra: formats read from <extLst>; sheet(name) → value(r, c) of another worksheet.
+// look(r, c, as) answers for the cell as if it held `as` (a dropdown option no row uses yet).
+function conditionalFormats(ws, theme, value, lastRow, extra = [], sheet = null) {
   const rules = [];
-  (ws.conditionalFormattings || []).forEach((cf) => {
+  [...(ws.conditionalFormattings || []), ...extra].forEach((cf) => {
     const ranges = String(cf.ref || '').split(/\s+/).map(parseRange).filter(Boolean);
     if (!ranges.length) return;
     (cf.rules || []).forEach((rule) => rules.push({ rule, ranges, top: ranges[0].top, left: ranges[0].left }));
@@ -483,9 +270,12 @@ function conditionalFormats(ws, theme, value, lastRow) {
     return stops[stops.length - 1].hex;
   }
 
-  function matches(x, r, c) {
+  function matches(x, r, c, as) {
     const { rule } = x;
-    const ctx = { r, c, top: x.top, left: x.left, value: (rr, cc) => xlValue(value(rr, cc)), lastRow };
+    const ctx = {
+      r, c, top: x.top, left: x.left, lastRow, sheet,
+      value: (rr, cc) => (as !== undefined && rr === r && cc === c ? as : xlValue(value(rr, cc))),
+    };
     const v = ctx.value(r, c);
     const f = rule.formulae || [];
     switch (rule.type) {
@@ -534,16 +324,16 @@ function conditionalFormats(ws, theme, value, lastRow) {
     }
   }
 
-  return (r, c) => {
+  return (r, c, as) => {
     const out = {};
     for (const x of rules) {
       if (!x.ranges.some((g) => inRange(g, r, c))) continue;
       if (x.rule.type === 'colorScale') {
-        if (!out.bg) { const hex = scaleColour(x, xlValue(value(r, c))); if (hex) out.bg = hex; }
+        if (!out.bg) { const hex = scaleColour(x, as !== undefined ? as : xlValue(value(r, c))); if (hex) out.bg = hex; }
         continue;
       }
       if (x.rule.type === 'dataBar' || x.rule.type === 'iconSet') continue;
-      if (!matches(x, r, c)) continue;
+      if (!matches(x, r, c, as)) continue;
       const style = x.rule.style || {};
       const bg = fillColour(style.fill, theme, true);
       const fg = colour(style.font && style.font.color, theme);
@@ -558,11 +348,13 @@ function conditionalFormats(ws, theme, value, lastRow) {
 
 // ---------------------------------------------------------------- dropdown lists (data validation)
 
-// [{ range, options }] of a worksheet's "list" validations, options read from the list, a range or a name
-function listValidations(ws, book) {
+// [{ range, options }] of a worksheet's "list" validations, options read from the list, a range or a name;
+// extra: [[address, { type, formulae }]] read from <extLst>
+// sources (optional): Map(worksheet name → [ranges]) gets the ranges the lists are read from
+function listValidations(ws, book, extra = [], sources = null) {
   const model = (ws.dataValidations && ws.dataValidations.model) || {};
   const out = [];
-  Object.entries(model).forEach(([addr, dv]) => {
+  [...Object.entries(model), ...extra].forEach(([addr, dv]) => {
     if (!dv || dv.type !== 'list' || !dv.formulae || !dv.formulae[0]) return;
     const range = parseRange(addr.replace(/^range:/, ''));
     if (!range) return;
@@ -578,7 +370,8 @@ function listValidations(ws, book) {
       const sheet = m && (m[1] ? book.getWorksheet(m[1]) : ws);
       const g = m && parseRange(m[2]);
       if (sheet && g) {
-        for (let r = g.top; r <= Math.min(g.bottom, g.top + 200); r += 1) {
+        if (sources) sources.set(sheet.name, [...(sources.get(sheet.name) || []), g]);
+        for (let r = g.top; r <= Math.min(g.bottom, g.top + 500); r += 1) {
           for (let c = g.left; c <= Math.min(g.right, g.left + 20); c += 1) {
             const v = cellPlain(sheet.getCell(r, c));
             options.push(v instanceof Date ? v.toISOString().slice(0, 10) : String(v));
@@ -633,10 +426,14 @@ function columnFrom(name, values, colored, people, listOptions) {
   const strings = filled.map(asText);
   const distinct = [...new Set(strings)];
   const short = distinct.every((s) => s.length <= 40 && !s.includes('\n'));
+  // a TRUE / FALSE list is a checkbox (Google Sheets' checkboxes)
+  if (listOptions && listOptions.every((o) => /^(true|false)$/i.test(o))) {
+    return { type: 'checkbox', cell: (v) => (v === '' ? '' : v === true || /^true$/i.test(String(v))) };
+  }
   // a dropdown in Excel stays a dropdown, with every option it has (also ones no row uses yet)
-  if (listOptions && short) {
-    const options = [...new Set([...listOptions.map((o) => o.slice(0, 40)), ...distinct])];
-    if (options.length <= MAX_OPTIONS) return { type: 'select', options, cell: (v) => (v === '' ? '' : asText(v)) };
+  if (listOptions && distinct.every((s) => s.length <= MAX_OPTION && !s.includes('\n'))) {
+    const options = [...new Set([...listOptions.map((o) => o.slice(0, MAX_OPTION)), ...distinct])];
+    if (options.length <= MAX_OPTIONS) return { type: 'select', options, cell: (v) => (v === '' ? '' : asText(v).slice(0, MAX_OPTION)) };
   }
   if (filled.every((v) => typeof v === 'boolean' || YES.test(String(v)) || NO.test(String(v)))) {
     return { type: 'checkbox', cell: (v) => (v === '' ? '' : v === true || YES.test(String(v))) };
@@ -659,13 +456,190 @@ const commonest = (list) => {
   return (Object.entries(counts).sort((a, b) => b[1] - a[1])[0] || [null])[0];
 };
 
+// ---------------------------------------------------------------- <extLst>: what ExcelJS skips
+
+const unxml = (t) => String(t).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+const attrs = (t) => Object.fromEntries([...String(t).matchAll(/([\w:]+)="([^"]*)"/g)].map((m) => [m[1].replace(/^\w+:/, ''), unxml(m[2])]));
+// <color rgb="FF9C0006"/> | theme="4" tint="0.4" | indexed="10" → an ExcelJS colour
+function xmlColour(t) {
+  if (!t) return undefined;
+  const a = attrs(t);
+  if (a.rgb) return { argb: a.rgb };
+  if (a.theme !== undefined) return { theme: +a.theme, ...(a.tint ? { tint: +a.tint } : {}) };
+  if (a.indexed !== undefined) return { indexed: +a.indexed };
+  return undefined;
+}
+// a conditional format's own style (<x14:dxf>) → { fill, font } as ExcelJS gives them
+function xmlDxf(t) {
+  const fill = /<(?:\w+:)?fill>([\s\S]*?)<\/(?:\w+:)?fill>/.exec(t);
+  const font = /<(?:\w+:)?font>([\s\S]*?)<\/(?:\w+:)?font>/.exec(t);
+  const style = {};
+  if (fill) {
+    const bg = /<(?:\w+:)?bgColor\s([^>]*?)\/?>/.exec(fill[1]);
+    const fg = /<(?:\w+:)?fgColor\s([^>]*?)\/?>/.exec(fill[1]);
+    style.fill = { type: 'pattern', pattern: 'solid', bgColor: xmlColour(bg && bg[1]), fgColor: xmlColour(fg && fg[1]) };
+  }
+  if (font) {
+    const c = /<(?:\w+:)?color\s([^>]*?)\/?>/.exec(font[1]);
+    style.font = { color: xmlColour(c && c[1]), bold: /<(?:\w+:)?b(?:\s+val="(?:1|true)")?\s*\/>/.test(font[1]) };
+  }
+  return style;
+}
+
+/**
+ * Per worksheet name: { validations: [[address, { type, formulae }]], formats: [{ ref, rules }] } of its <extLst>.
+ * Read straight from the file's XML; an unreadable file gives nothing (the rest of the import still works).
+ */
+async function extLists(buffer) {
+  const out = new Map();
+  try {
+    const zip = await JSZip.loadAsync(buffer);
+    const read = (path) => (zip.file(path) ? zip.file(path).async('string') : Promise.resolve(''));
+    const [book, rels] = await Promise.all([read('xl/workbook.xml'), read('xl/_rels/workbook.xml.rels')]);
+    const targets = Object.fromEntries([...rels.matchAll(/<Relationship\s([^>]*?)\/?>/g)].map((m) => attrs(m[1])).map((a) => [a.Id, a.Target]));
+    for (const m of book.matchAll(/<sheet\s([^>]*?)\/?>/g)) {
+      const a = attrs(m[1]);
+      const target = targets[a.id];
+      if (!target) continue;
+      const xml = await read(target.startsWith('/') ? target.slice(1) : `xl/${target}`);
+      const ext = (/<extLst>([\s\S]*)<\/extLst>/.exec(xml) || [])[1];
+      if (!ext) continue;
+      const validations = [...ext.matchAll(/<x14:dataValidation\s([^>]*)>([\s\S]*?)<\/x14:dataValidation>/g)].map((v) => {
+        const formula = /<x14:formula1>\s*<xm:f>([\s\S]*?)<\/xm:f>/.exec(v[2]);
+        const sqref = /<xm:sqref>([\s\S]*?)<\/xm:sqref>/.exec(v[2]);
+        return sqref && formula ? sqref[1].trim().split(/\s+/).map((addr) => [addr, { type: attrs(v[1]).type, formulae: [unxml(formula[1])] }]) : [];
+      }).flat();
+      const formats = [...ext.matchAll(/<x14:conditionalFormatting[^>]*>([\s\S]*?)<\/x14:conditionalFormatting>/g)].map((cf) => {
+        const ref = (/<xm:sqref>([\s\S]*?)<\/xm:sqref>/.exec(cf[1]) || [])[1];
+        const rules = [...cf[1].matchAll(/<x14:cfRule\s([^>]*)>([\s\S]*?)<\/x14:cfRule>/g)].map((r) => {
+          const ra = attrs(r[1]);
+          if (['dataBar', 'iconSet'].includes(ra.type)) return null; // ExcelJS reads these (and they have no colour here)
+          return {
+            type: ra.type, operator: ra.operator, priority: +ra.priority || 0, stopIfTrue: ra.stopIfTrue === '1', text: ra.text,
+            formulae: [...r[2].matchAll(/<xm:f>([\s\S]*?)<\/xm:f>/g)].map((f) => unxml(f[1])),
+            style: xmlDxf((/<x14:dxf>([\s\S]*?)<\/x14:dxf>/.exec(r[2]) || [, ''])[1]),
+          };
+        }).filter(Boolean);
+        return ref && rules.length ? { ref: ref.trim(), rules } : null;
+      }).filter(Boolean);
+      out.set(a.name, { validations, formats });
+    }
+  } catch (err) {
+    console.error('Excel import (extLst):', err.message);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- formulas and number formats
+
+// An Excel number format → how a formula column shows its result: { kind, decimals, symbol } ({} = as it comes)
+function formatOf(numFmt) {
+  const first = String(numFmt || '').split(';')[0];
+  const quoted = (/"([₹$€£¥]|Rs\.?|INR)\s*"/.exec(first) || [])[1]; // "₹"#,##0.00
+  const f = first.replace(/"[^"]*"/g, '').replace(/\[(?!\$)[^\]]*\]/g, '');
+  if (!f || /^general$/i.test(f) || f === '@') return {};
+  const decimals = ((/\.([0#]+)/.exec(f) || [, ''])[1]).length;
+  if (f.includes('%')) return { kind: 'percent', decimals };
+  if (/[dy]/i.test(f) || (/m/i.test(f) && !/[hs]/i.test(f))) return { kind: 'date' };
+  const symbol = quoted || (/\[\$([^\]-]+)/.exec(f) || /([₹$€£¥])/.exec(f) || [])[1];
+  if (symbol) return { kind: 'currency', decimals, symbol };
+  return /[0#]/.test(f) ? { kind: 'number', decimals } : {};
+}
+
+/**
+ * An Excel formula of a cell in row r → a formula column's ({@k} for the k-th imported column), or null when it
+ * looks anywhere but its own row (other rows, other worksheets, whole columns, named ranges). key(excelColumn) →
+ * { k, percent } or null for a column that was not imported. A percent column holds 0–100 here (0–1 in Excel).
+ */
+function columnFormula(formula, r, key) {
+  const src = String(formula || '').replace(/^=/, '');
+  let out = '';
+  let fail = false;
+  // outside "text", one reference (or same-row range) at a time
+  const ref = /^((?:'[^']+'|[A-Za-z_][\w.]*)!)?\$?([A-Za-z]{1,3})\$?(\d+)(?::\$?([A-Za-z]{1,3})\$?(\d+))?(?![\w(!])/;
+  for (let k = 0; k < src.length && !fail;) {
+    const ch = src[k];
+    if (ch === '"') {
+      const close = (() => { let j = k + 1; while (j < src.length) { if (src[j] === '"' && src[j + 1] === '"') j += 2; else if (src[j] === '"') return j; else j += 1; } return -1; })();
+      if (close < 0) return null;
+      out += src.slice(k, close + 1);
+      k = close + 1;
+      continue;
+    }
+    const prev = src[k - 1] || '';
+    const m = /[\w.$]/.test(prev) ? null : ref.exec(src.slice(k));
+    if (m) {
+      if (m[1] || +m[3] !== r || (m[5] && +m[5] !== r)) { fail = true; break; }
+      const from = F.colNumber(m[2]);
+      const to = m[4] ? F.colNumber(m[4]) : from;
+      const keys = [];
+      for (let c = Math.min(from, to); c <= Math.max(from, to); c += 1) {
+        const x = key(c);
+        if (x) keys.push(x.percent ? `({@${x.k}}/100)` : `{@${x.k}}`);
+        else if (!m[4]) { fail = true; break; } // a single cell of a column that was left out
+      }
+      if (!keys.length) fail = true;
+      out += keys.join(',');
+      k += m[0].length;
+      continue;
+    }
+    out += ch;
+    k += 1;
+  }
+  if (fail) return null;
+  const tokens = F.tokenize(out);
+  // only references to its own row, and functions FlowTrace has
+  if (!tokens || tokens.some((t) => t.t === 'ref' || (t.t === 'name' && !F.FUNCTIONS[t.v] && !['TRUE', 'FALSE'].includes(t.v)))) return null;
+  return out;
+}
+const VOLATILE = /\b(TODAY|NOW|RAND|RANDBETWEEN)\s*\(/i;
+
+// Columns worked out by one formula in every row become formula columns: the formula (by column) must be the same
+// in each row and give what Excel worked out (cached results), else the column keeps its values.
+function formulaColumns(columns, { rowNos, formulaAt, formats, body, key }) {
+  columns.forEach((col, k) => {
+    if (!rowNos.length) return;
+    const each = rowNos.map((r) => (formulaAt(r, col.excel) ? columnFormula(formulaAt(r, col.excel), r, key) : null));
+    if (each.some((f) => !f) || new Set(each).size !== 1) return;
+    const formula = each[0];
+    // check it against Excel's results, with the cells as FlowTrace holds them (volatile formulas can't be checked)
+    const temp = columns.map((c, j) => ({ ...c, id: `@${j}`, type: j === k ? 'formula' : c.type, formula: j === k ? formula : c.formula }));
+    const same = (a, b) => {
+      const x = b instanceof Date ? F.serial(b) : b;
+      if (x === '' || x === undefined) return true; // never worked out (a file saved without results)
+      if (F.isErr(a)) return false;
+      if (typeof x === 'number') return Math.abs(F.toNum(a) - x) < 1e-6 * Math.max(1, Math.abs(x));
+      if (typeof x === 'boolean') return a === x;
+      return F.toStr(a) === String(x);
+    };
+    if (!VOLATILE.test(formula)) {
+      const wrong = body.some((_, row) => {
+        const cells = Object.fromEntries(temp.map((c) => [c.id, c.values[row]]));
+        // people are matched to logins on import; a formula sees the name that was written
+        temp.forEach((c) => { if (c.type === 'person') cells[c.id] = c.raw[row]; });
+        const out = F.computeRow(temp.map((c) => (c.type === 'person' ? { ...c, type: 'text' } : c)), cells, null, row + 1);
+        return !same(out[`@${k}`], col.raw[row]);
+      });
+      if (wrong) return;
+    }
+    const fmt = formats.map((f) => f[col.excel - 1]).find(Boolean);
+    let format = formatOf(fmt);
+    if (!format.kind && col.raw.some((v) => v instanceof Date)) format = { kind: 'date' };
+    Object.assign(col, {
+      type: 'formula', formula, format, options: [], colors: {}, fonts: {},
+      values: col.values.map(() => ''),
+      looks: col.cellLooks, // a formula's cells keep their own colours
+    });
+  });
+}
+
 // ---------------------------------------------------------------- one worksheet
 
 /**
  * → { name, header, columns: [{ name, type, options, colors, fonts, width, values }], rows: [[value]], styles: [[{ bg, fg, b } | null]],
  *     skipped: [names of empty columns] }; null when it has no data
  */
-function readWorksheet(ws, { people, tags, theme, book }) {
+function readWorksheet(ws, { people, tags, theme, book, ext = { validations: [], formats: [] } }) {
   const width = Math.min(ws.columnCount, MAX_COLUMNS);
   const height = ws.rowCount;
   if (!width || !height) return null;
@@ -725,8 +699,16 @@ function readWorksheet(ws, { people, tags, theme, book }) {
   }
 
   const lastRow = Math.min(height, bodyFrom + MAX_ROWS * 2);
-  const conditional = conditionalFormats(ws, theme, value, lastRow);
-  const lists = listValidations(ws, book);
+  // another worksheet's cells, for rules that look there
+  const others = new Map();
+  const sheetOf = (name) => {
+    const other = book.getWorksheet(name);
+    if (!other) return null;
+    if (!others.has(name)) others.set(name, (r, c) => xlValue(cellPlain(other.getCell(r, c))));
+    return others.get(name);
+  };
+  const conditional = conditionalFormats(ws, theme, value, lastRow, ext.formats, sheetOf);
+  const lists = listValidations(ws, book, ext.validations);
 
   // a cell's look: its own fill / font (a merged cell takes its first cell's), conditional formats on top
   const lookOf = (r, c) => {
@@ -741,28 +723,35 @@ function readWorksheet(ws, { people, tags, theme, book }) {
   const body = [];
   const looks = [];
   const formats = [];
+  const rowNos = []; // the Excel row of each body row
+  // the formula of a cell ('' for none, or a merged cell's copy)
+  const formulaAt = (r, c) => { const x = at(r, c); return x.slave ? '' : String(x.cell.formula || ''); };
   for (let r = bodyFrom; r <= height && body.length < MAX_ROWS; r += 1) {
     const vals = rowValues(r);
-    if (vals.every((v) => v === '')) continue;
+    if (vals.every((v) => v === '') && !vals.some((v, i) => formulaAt(r, i + 1))) continue;
     body.push(vals);
+    rowNos.push(r);
     looks.push(vals.map((v, i) => (v === '' ? null : lookOf(r, i + 1))));
-    formats.push(vals.map((v, i) => (typeof v === 'number' ? String(ws.getCell(r, i + 1).numFmt || '') : '')));
+    formats.push(vals.map((v, i) => (typeof v === 'number' || v instanceof Date ? String(ws.getCell(r, i + 1).numFmt || '') : '')));
   }
 
   const used = new Map();
   const columns = [];
   const skipped = [];
+  const imported = new Map(); // Excel column → { k: index in columns, percent }
   for (let i = 0; i < width; i += 1) {
     const column = ws.getColumn(i + 1);
     let colValues = body.map((row) => row[i]);
-    if (colValues.every((v) => v === '')) { // an empty column is left out
+    const hasFormula = rowNos.some((r) => formulaAt(r, i + 1));
+    if (colValues.every((v) => v === '') && !hasFormula) { // an empty column is left out
       if (headers[i]) skipped.push(headers[i]);
       continue;
     }
     let name = String(headers[i] || '').replace(/\s+/g, ' ').trim().slice(0, 60) || `Column ${column.letter}`;
-    // percentages: 0.25 shown as 25%
+    // percentages: 0.25 shown as 25% (not for formulas: they keep Excel's 0–1 and show it as a %)
     const numeric = colValues.map((v, k) => (typeof v === 'number' ? formats[k][i] : null)).filter((x) => x !== null);
-    if (numeric.length && numeric.every((f) => f.includes('%')) && colValues.every((v) => v === '' || typeof v === 'number')) {
+    const percent = !hasFormula && numeric.length && numeric.every((f) => f.includes('%')) && colValues.every((v) => v === '' || typeof v === 'number');
+    if (percent) {
       colValues = colValues.map((v) => (v === '' ? '' : Math.round(v * 100 * 1e6) / 1e6));
       if (!name.includes('%')) name = `${name.slice(0, 56)} (%)`;
     }
@@ -774,22 +763,32 @@ function readWorksheet(ws, { people, tags, theme, book }) {
     const list = lists.find((x) => x.range.left <= i + 1 && x.range.right >= i + 1 && x.range.bottom >= bodyFrom && x.range.top <= bodyFrom + body.length);
     const col = columnFrom(name, colValues, cellLooks.some((l) => l && (l.bg || l.fg)), people, list && list.options);
 
-    // dropdown values keep the colour they have in Excel, else the app's status tag of that name (as text colour)
+    // dropdown values keep the colour they have in Excel; an option no row uses gets what the conditional formats
+    // would give it in the column; else the app's status tag of that name (as text colour)
     const colors = {};
     const fonts = {};
     if (col.type === 'select') {
+      const top = rowNos[0] || bodyFrom;
       col.options.forEach((o) => {
         const mine = cellLooks.filter((l, k) => l && colValues[k] !== '' && col.cell(colValues[k]) === o);
-        const bg = commonest(mine.map((l) => l.bg));
-        const fg = commonest(mine.filter((l) => !bg || l.bg === bg).map((l) => l.fg));
+        let bg = commonest(mine.map((l) => l.bg));
+        let fg = commonest(mine.filter((l) => !bg || l.bg === bg).map((l) => l.fg));
+        if (!mine.length || (!bg && !fg)) {
+          const as = asNumber(o) !== null ? asNumber(o) : o;
+          const cf = conditional(top, i + 1, as);
+          bg = bg || bgOf(cf.bg);
+          fg = fg || fgOf(cf.fg);
+        }
         const tag = tags.find((t) => t.label.toLowerCase() === o.toLowerCase());
         if (bg) colors[o] = bg;
         if (fg) fonts[o] = fg;
         else if (!bg && tag && TAG_HEX[tag.color]) fonts[o] = TAG_HEX[tag.color];
       });
     }
+    imported.set(i + 1, { k: columns.length, percent: Boolean(percent) });
     const longest = Math.max(name.length, ...colValues.map((v) => (v instanceof Date ? 11 : String(v).split('\n')[0].length)));
     columns.push({
+      excel: i + 1, raw: colValues, cellLooks,
       name, type: col.type, options: (col.options || []).slice(0, MAX_OPTIONS), colors, fonts,
       width: Math.max(90, Math.min(420, Math.round(column.width ? column.width * 7.5 + 12 : longest * 7.5 + 28))),
       values: colValues.map(col.cell),
@@ -798,10 +797,11 @@ function readWorksheet(ws, { people, tags, theme, book }) {
     });
   }
   if (!columns.length) return null;
+  formulaColumns(columns, { rowNos, formulaAt, formats, body, key: (c) => imported.get(c) || null });
   return {
     name: ws.name,
     header: head,
-    columns: columns.map(({ looks: l, ...c }) => c),
+    columns: columns.map(({ looks: l, excel: e, raw, cellLooks: cl, ...c }) => c),
     rows: body.map((_, k) => columns.map((c) => c.values[k])),
     styles: body.map((_, k) => columns.map((c) => c.looks[k])),
     skipped,
@@ -809,12 +809,28 @@ function readWorksheet(ws, { people, tags, theme, book }) {
 }
 
 /** An .xlsx file (Buffer) → the worksheets with data, read as above. people: logins of the app, tags: status tags. */
-async function readWorkbook(buffer, { people, tags }) {
+// csv: the file is comma separated text (no colours, dropdowns or formulas)
+async function readWorkbook(buffer, { people, tags, csv = false }) {
   const book = new ExcelJS.Workbook();
-  await book.xlsx.load(buffer);
+  // csv values stay text: the column types read numbers and dates from it (ExcelJS would shift dates by the timezone)
+  if (csv) await book.csv.read(Readable.from(buffer.toString('utf8').replace(/^\uFEFF/, '')), { map: (v) => (v === '' ? null : v) });
+  else await book.xlsx.load(buffer);
   const theme = themeOf(book);
-  return book.worksheets.filter((ws) => ws.state === 'visible' || !ws.state).slice(0, MAX_SHEETS)
-    .map((ws) => readWorksheet(ws, { people, tags, theme, book })).filter(Boolean);
+  const ext = csv ? new Map() : await extLists(buffer);
+  // a worksheet that only holds the options of dropdowns (a "Lists" sheet) is not a sheet of its own
+  const sources = new Map();
+  book.worksheets.forEach((ws) => listValidations(ws, book, (ext.get(ws.name) || {}).validations || [], sources));
+  const onlyLists = (ws) => {
+    const ranges = sources.get(ws.name);
+    if (!ranges) return false;
+    let inside = true;
+    ws.eachRow((row) => row.eachCell((cell) => {
+      if (cellPlain(cell) !== '' && !ranges.some((g) => inRange(g, cell.row, cell.col))) inside = false;
+    }));
+    return inside;
+  };
+  return book.worksheets.filter((ws) => (ws.state === 'visible' || !ws.state) && !onlyLists(ws)).slice(0, MAX_SHEETS)
+    .map((ws) => readWorksheet(ws, { people, tags, theme, book, ext: ext.get(ws.name) })).filter(Boolean);
 }
 
 module.exports = { readWorkbook, cellPlain, MAX_ROWS };

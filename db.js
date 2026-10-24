@@ -275,6 +275,17 @@ CREATE INDEX IF NOT EXISTS sheet_rows_sheet_idx ON sheet_rows(sheet_id);
 ALTER TABLE sheet_columns ADD COLUMN IF NOT EXISTS fonts jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE sheet_rows ADD COLUMN IF NOT EXISTS styles jsonb NOT NULL DEFAULT '{}'::jsonb;
 
+-- Formula columns: worked out from the other cells of the row (formula keeps columns by id: {id} * {id}, so a
+-- renamed column keeps working); format says how a result shows: { kind: number | percent | currency | date, decimals, symbol }
+ALTER TABLE sheet_columns DROP CONSTRAINT IF EXISTS sheet_columns_type_check;
+ALTER TABLE sheet_columns ADD CONSTRAINT sheet_columns_type_check
+  CHECK (type IN ('text', 'number', 'date', 'select', 'checkbox', 'person', 'flow', 'screen', 'formula'));
+ALTER TABLE sheet_columns ADD COLUMN IF NOT EXISTS formula text NOT NULL DEFAULT '';
+ALTER TABLE sheet_columns ADD COLUMN IF NOT EXISTS format jsonb NOT NULL DEFAULT '{}'::jsonb;
+
+-- People a sheet is shared with to view only (a private sheet is then seen by the owner, editors and viewers)
+ALTER TABLE sheets ADD COLUMN IF NOT EXISTS viewers text[] NOT NULL DEFAULT '{}';
+
 -- A submitted sanity: kept for good (the checklist itself resets every day). rows is a copy of the sheet as it was
 -- submitted: [{ heading, module, state, review, cells: { columnName: value }, checkedBy }]; testers = who ticked rows.
 CREATE TABLE IF NOT EXISTS sanity_logs (

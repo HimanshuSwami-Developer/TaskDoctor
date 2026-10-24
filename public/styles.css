@@ -882,6 +882,31 @@ html.dark .flow.parent-screen-hovered > .elbow .line {
 .sheet-table .sc-pick { width: 32px; min-width: 32px; padding: 6px 0; text-align: center; vertical-align: middle; }
 .teams-picks { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 4px; }
 .teams-pick { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #334155; }
+/* Teams-like "To:" field: picked people as chips, typed to find more */
+.tpick { position: relative; margin-top: 4px; }
+.tpick-box { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-height: 38px; padding: 4px 8px; border: 1px solid #cbd5e1; border-bottom: 2px solid #cbd5e1; border-radius: 6px; background: #fff; cursor: text; transition: border-color .15s; }
+.tpick-box:focus-within { border-bottom-color: #6264a7; }
+.tpick-to { margin-right: 2px; font-size: 13px; color: #64748b; }
+.tpick-input { flex: 1; min-width: 120px; padding: 3px 2px; border: 0; outline: 0; background: transparent; font-size: 13px; color: #0f172a; }
+.tp-av { display: inline-grid; flex-shrink: 0; place-items: center; width: 22px; height: 22px; border-radius: 50%; color: #fff; font-size: 10px; font-weight: 600; letter-spacing: .02em; }
+.tp-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 220px; padding: 2px 4px 2px 2px; border-radius: 99px; background: #e8ebfa; color: #33344a; font-size: 13px; font-weight: 500; }
+.tp-chip button { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; color: #6264a7; }
+.tp-chip button:hover { background: #c5cbfa; }
+.tpick-menu { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 20; max-height: 15rem; overflow-y: auto; padding: 4px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; box-shadow: 0 12px 32px rgba(15, 23, 42, .18); }
+.tp-opt { display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 8px; border-radius: 6px; text-align: left; font-size: 13px; color: #1e293b; }
+.tp-opt .tp-av { width: 30px; height: 30px; font-size: 12px; }
+.tp-opt.on, .tp-opt:hover { background: #eef0fb; }
+.tp-sub { display: block; font-size: 11px; color: #94a3b8; }
+.tp-empty { padding: 10px; text-align: center; font-size: 13px; color: #94a3b8; }
+/* columns as toggle pills */
+.teams-picks.pills { gap: 6px; }
+.pills .teams-pick { padding: 3px 10px; border: 1px solid #cbd5e1; border-radius: 99px; background: #fff; cursor: pointer; user-select: none; }
+.pills .teams-pick input { display: none; }
+.pills .teams-pick:has(input:checked) { border-color: #6264a7; background: #e8ebfa; color: #33344a; font-weight: 500; }
+/* the whole sheet as an Excel file */
+.tp-file { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; cursor: pointer; }
+.tp-file:has(input:checked) { border-color: #107c41; background: #f0faf4; }
+.tp-xls { display: grid; flex-shrink: 0; place-items: center; width: 34px; height: 34px; border-radius: 6px; background: #107c41; color: #fff; font-size: 10px; font-weight: 700; }
 .sheets-layout { flex: 1; min-height: 0; display: grid; grid-template-columns: 230px minmax(0, 1fr); }
 .sheets-side { display: flex; flex-direction: column; gap: 6px; padding: 12px; border-right: 1px solid #e2e8f0; background: #f8fafc; overflow-y: auto; }
 .sheets-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border-radius: 6px; font-size: 13px; font-weight: 500; color: #334155; }
@@ -1031,3 +1056,31 @@ body.sheets-open .site-footer { display: none; }
   .site-footer-top, .site-footer-bottom { flex-direction: column; align-items: flex-start; }
   .site-footer-quote { text-align: left; }
 }
+
+/* formula columns: worked out, not typed */
+.sc-formula { min-height: 32px; padding: 7px 8px; background: #fafaff; color: #312e81; font-variant-numeric: tabular-nums; white-space: pre-wrap; word-break: break-word; cursor: default; }
+.sc-formula.num { text-align: right; }
+.sc-formula.err { color: #dc2626; font-weight: 600; }
+.col-types { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.col-type { display: inline-flex; align-items: center; gap: 4px; padding: 4px 12px; border: 1px solid #cbd5e1; border-radius: 99px; background: #fff; font-size: 13px; color: #475569; }
+.col-type:hover { border-color: #a5b4fc; }
+.col-type.on { border-color: #4f46e5; background: #eef2ff; color: #3730a3; font-weight: 600; }
+.fx-mark { font-style: italic; font-family: Georgia, serif; color: #4f46e5; }
+.fx-box { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; }
+.fx-box:focus-within { border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79, 70, 229, .15); }
+.fx-eq { padding-top: 2px; font-family: Georgia, serif; font-style: italic; font-weight: 700; color: #4f46e5; }
+.fx-input { flex: 1; min-height: 44px; border: 0; outline: 0; resize: vertical; background: transparent; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: #0f172a; }
+.fx-preview { padding: 8px 10px; border-radius: 8px; background: #f8fafc; font-size: 12px; }
+.fx-row { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; }
+.fx-row b { font-variant-numeric: tabular-nums; color: #0f172a; }
+.fx-bad { color: #dc2626; font-weight: 600; }
+.fx-ok { color: #15803d; }
+.fx-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+.fx-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px 2px 3px; border: 1px solid #e2e8f0; border-radius: 99px; background: #f8fafc; font-size: 12px; color: #334155; }
+.fx-chip:hover { border-color: #a5b4fc; background: #eef2ff; }
+.fx-chip.fn { padding: 2px 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.fx-more summary { cursor: pointer; font-size: 12px; font-weight: 600; color: #4f46e5; }
+.fx-example { display: flex; width: 100%; align-items: baseline; gap: 10px; padding: 4px 8px; border-radius: 6px; text-align: left; font-size: 12px; color: #334155; }
+.fx-example:hover { background: #eef2ff; }
+.fx-example b { flex-shrink: 0; width: 92px; font-weight: 500; }
+.fx-example code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #4338ca; }
