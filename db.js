@@ -333,6 +333,23 @@ ALTER TABLE done_items ADD COLUMN IF NOT EXISTS closed_at timestamptz;
 ALTER TABLE done_items ADD COLUMN IF NOT EXISTS closed_by text REFERENCES users(id);
 CREATE INDEX IF NOT EXISTS done_items_shared_idx ON done_items USING gin (shared_with);
 
+-- The to-do points someone notes down in an app (their own list, open ones carry over day to day). Ticking one moves
+-- it to "done today": a done_items entry is made with its text and screens, and done_item_id points at it
+-- (taking the tick back removes that entry again).
+CREATE TABLE IF NOT EXISTS done_todos (
+  id            text PRIMARY KEY,
+  user_id       text NOT NULL REFERENCES users(id),
+  product_id    text NOT NULL REFERENCES products(id),
+  text          text NOT NULL,
+  screen_ids    text[] NOT NULL DEFAULT '{}',
+  done_item_id  text REFERENCES done_items(id),
+  done_at       timestamptz,
+  is_deleted    boolean NOT NULL DEFAULT false,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS done_todos_user_idx ON done_todos(product_id, user_id) WHERE NOT is_deleted;
+ALTER TABLE done_items ADD COLUMN IF NOT EXISTS todo_id text REFERENCES done_todos(id);
+
 -- Issues sent on Teams: where to ('app' = the app's webhook channel, 'mine' = one of the sender's own chats, a person
 -- or a group chat, 'direct' = chats with people) and how it went. A chat is kept by its Graph id (names can repeat);
 -- destination is the name shown, e.g. "Development Team". Messages sent from the browser (Graph) are reported back
@@ -359,6 +376,34 @@ CREATE TABLE IF NOT EXISTS presence (
   last_seen_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- Roles & permissions per app (project). dev_permissions: what Developers may do in this app, set by its admins:
+-- { create, viewAll, status, assign, edit } (true / false; missing = the default in server.js)
+ALTER TABLE products ADD COLUMN IF NOT EXISTS dev_permissions jsonb NOT NULL DEFAULT '{}'::jsonb;
+-- The Developer who owns an issue: only they (of the Developers) may change it. assignees stays the list of names shown.
+ALTER TABLE comments ADD COLUMN IF NOT EXISTS developer_id text REFERENCES users(id);
+CREATE INDEX IF NOT EXISTS comments_developer_idx ON comments(developer_id);
+-- The issue workflow: Pending → In Progress → Release for Testing → Verified → Complete (closed); a failed test goes
+-- Release for Testing → Reopened → In Progress. Added once (the order of the existing tags is kept); existing issues
+-- get as owner the first Developer login named in their assignees.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM statuses WHERE id = 'progress') THEN
+    UPDATE statuses SET sort_order = sort_order * 10; -- room between the existing tags
+    INSERT INTO statuses (id, label, color, sort_order) VALUES
+      ('progress', 'In Progress', 'violet', (SELECT coalesce(min(sort_order), 10) FROM statuses WHERE id = 'testing') - 5),
+      ('verified', 'Verified', 'teal', (SELECT coalesce(max(sort_order), 10) FROM statuses WHERE id = 'testing') + 5),
+      ('reopened', 'Reopened', 'red', (SELECT coalesce(max(sort_order), 0) FROM statuses) + 10)
+    ON CONFLICT (id) DO NOTHING;
+    UPDATE comments c SET developer_id = (
+      SELECT u.id FROM users u
+      WHERE u.access = 'developer' AND NOT u.is_deleted
+        AND lower(coalesce(nullif(u.name, ''), u.username)) IN (SELECT lower(x) FROM unnest(c.assignees) x)
+      ORDER BY u.created_at LIMIT 1
+    )
+    WHERE c.developer_id IS NULL AND cardinality(c.assignees) > 0;
+  END IF;
+END $$;
+
 -- Audit columns on every table: who created / last changed a row and when. created_by / updated_by are the
 -- signed-in user (NULL for rows made by the server itself, e.g. the seeded statuses or the first super admin).
 -- updated_at starts as created_at for old rows and is kept current by a trigger on every UPDATE.
@@ -372,7 +417,7 @@ DO $$
 DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['products', 'modules', 'flows', 'screens', 'comments', 'statuses', 'users', 'sessions',
-                          'sanity_items', 'sanity_runs', 'sanity_results', 'sanity_columns', 'sanity_logs', 'done_items',
+                          'sanity_items', 'sanity_runs', 'sanity_results', 'sanity_columns', 'sanity_logs', 'done_items', 'done_todos',
                           'sheets', 'sheet_columns', 'sheet_rows', 'teams_shares'] LOOP
     EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS created_by text REFERENCES users(id)', t);
     EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS updated_by text REFERENCES users(id)', t);

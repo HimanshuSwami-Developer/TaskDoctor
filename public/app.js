@@ -52,6 +52,7 @@ $(function () {
     arrow: 'M4 12h15M13 6l6 6-6 6',
     type: 'M4 7V4h16v3M9 20h6M12 4v16',
     undo: 'M9 14 4 9l5-5M4 9h11a5 5 0 0 1 0 10h-3',
+    list: 'M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01',
     redo: 'M15 14l5-5-5-5M20 9H9a5 5 0 0 0 0 10h3',
     fit: 'M3 8V3h5M16 3h5v5M21 16v5h-5M8 21H3v-5',
     sticky: 'M4 4h16v10l-6 6H4zM14 20v-6h6',
@@ -166,22 +167,57 @@ $(function () {
   const ACCESS = {
     view: { label: 'View only', hint: 'Can see screens and flow videos in their apps. Cannot see issues or change anything.' },
     edit: { label: 'Update tasks', hint: 'Can add and update issues (status, priority, assignees, remarks). Cannot change screens, images or videos.' },
-    tester: { label: 'Tester', hint: 'Can add and update issues and move them to any status (Pending, Release for Testing, Complete …). Cannot change screens, images or videos.' },
-    developer: { label: 'Developer', hint: 'Update tasks, plus add, rename and delete modules, flows, screens, popups and conditions (with their branch paths), extend a new flow from a screen, drag screens into a new order, and upload screen images. Can only move an issue between Pending and Release for Testing.' },
+    tester: { label: 'Tester', hint: 'Adds issues and assigns them to developers; verifies fixes, closes them or reopens a failed one (any status). Cannot change screens, images or videos.' },
+    developer: { label: 'Developer', hint: 'Update tasks, plus add, rename and delete modules, flows, screens, popups and conditions (with their branch paths), extend a new flow from a screen, drag screens into a new order, and upload screen images. On issues: only the ones assigned to them, Pending → In Progress → Release for Testing, as the app allows (Project settings).' },
     full: { label: 'Full', hint: 'Can do everything inside their apps: create, edit and delete modules, flows, screens and issues.' },
     super: { label: 'Super admin', hint: 'Everything in every app, plus this admin dashboard and the status tags.' },
   };
   const can = (level) => Boolean(me) && LEVELS[me.access] >= LEVELS[level];
-  // Developers only switch issues between these two statuses (the server enforces it too)
-  const DEV_STATUSES = ['pending', 'testing'];
-  const statusLocked = (id) => Boolean(me) && me.access === 'developer' && !DEV_STATUSES.includes(id);
+  // ---- roles & permissions on issues (the same rules as server.js, which enforces them; here they only decide what
+  // is offered). Per app its admins choose what Developers may do (Project settings → Roles & permissions):
+  // create, viewAll, status (move their issues Pending → In Progress → Release for Testing), assign, edit.
+  // A Developer only changes issues they own (issue.developerId); Testers verify, close and reopen; admins do all.
+  const DEV_PERMISSIONS = { create: true, viewAll: true, status: true, assign: false, edit: true };
+  const DEV_STATUSES = ['pending', 'progress', 'testing']; // where a Developer may move an issue they own
+  const DEV_FROM = [...DEV_STATUSES, 'reopened'];
+  const isDev = () => Boolean(me) && me.access === 'developer';
+  const isAppAdmin = () => Boolean(me) && (me.access === 'super' || me.access === 'full');
+  const devPerms = (pid = productId) => ({ ...DEV_PERMISSIONS, ...((products.find((p) => p.id === pid) || {}).devPermissions || {}) });
+  // the app a screen (and so its issues) belongs to
+  const appOfScreen = (screenId) => {
+    const sc = findScreen(screenId);
+    const f = sc && findFlow(sc.flowId);
+    const m = f && allModules.find((x) => x.id === f.moduleId);
+    return (m && m.productId) || productId;
+  };
+  // an issue is "mine" when I own it or my name is among its assignees
+  const myNames = () => (me ? [me.name, me.username].filter(Boolean).map((n) => n.toLowerCase()) : []);
+  const isMine = (c) => Boolean(me) && (c.developerId === me.id || (c.assignees || []).some((n) => myNames().includes(String(n).toLowerCase())));
+  /** What I may do to one issue → { status: ids I may move it to (null = any), edit, assign, why } */
+  function issueRights(c) {
+    if (!isDev()) return { status: null, edit: true, assign: true, why: '' };
+    const p = devPerms(appOfScreen(c.screenId));
+    const owner = c.developerId === me.id;
+    const why = !owner ? (c.developerId ? 'Only the developer this issue is assigned to can change it' : 'Unassigned: a tester or admin assigns it')
+      : !DEV_FROM.includes(c.status) ? 'A tester or admin changes a verified or closed issue' : '';
+    return {
+      status: owner && p.status && DEV_FROM.includes(c.status) ? DEV_STATUSES : [],
+      edit: owner && p.edit,
+      assign: owner && p.assign,
+      why: why || (!p.status ? 'Developers cannot change status in this app (Project settings)' : ''),
+    };
+  }
+  // may I add issues in this app?
+  const canCreateIssues = (pid = productId) => can('edit') && (!isDev() || devPerms(pid).create);
+  // statuses a new issue may start in
+  const statusLocked = (id) => isDev() && !DEV_STATUSES.includes(id);
 
   // Controls that need a higher level are removed; lower logins get read-only inputs.
   // edit / tester = issues only; developer adds to that modules, flows, screens, conditions, images and card order;
   // full adds videos, copying, screen paths and flow order. View-only logins don't see issues at all.
   const NEEDS = {
     super: '[data-action="add-product"], [data-rename-product], [data-delete-product], [data-action="manage-statuses"], [data-action="admin"]',
-    full: `[data-move-flow], [data-copy-screen], [data-delete-comment], [data-remove-video], [data-move-path]`,
+    full: `[data-app-settings], [data-move-flow], [data-copy-screen], [data-delete-comment], [data-remove-video], [data-move-path]`,
     developer: `[data-action="add-module"], [data-rename-module], [data-delete-module], [data-remove-image], [data-action="add-flow"], [data-rename-flow], [data-delete-flow],
       .add-screen, .dg-add-end, .dg-plus, [data-edit-screen], [data-delete-screen],
       [data-add-condition], [data-insert-condition], [data-rename-condition], [data-cond-tool], [data-add-branch], [data-remove-branch], [data-extend-path], [data-extend-screen],
@@ -197,7 +233,9 @@ $(function () {
     }
     if (!can('full')) $root.find('[data-upload-video]').closest('label').remove();
     if (!can('edit')) $root.find('[data-status], [data-resolve], [data-field], [data-cycle-priority], .people-input').prop('disabled', true);
-    if (statusLocked('complete')) $root.find('[data-resolve]').prop('disabled', true).attr('title', 'Developers cannot mark issues fixed');
+    if (isDev() && !products.some((x) => devPerms(x.id).create)) $root.find('[data-action="writer"]').remove();
+    // Developers: no "add issue" where the app doesn't allow it
+    if (isDev() && !devPerms().create) $root.find('.add-comment').remove();
   }
 
   // ---------------------------------------------------------------- loading indicators
@@ -538,13 +576,14 @@ $(function () {
   const fileInput = (s) => `<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden" data-upload="${s.id}">`;
 
   // Status of one issue. An issue still on a removed status keeps showing it until another one is picked.
-  // Developers get Pending / Release for Testing only, and a locked select on an issue in any other status.
+  // A Developer gets Pending / In Progress / Release for Testing on an issue they own (and may move), else it's locked.
   function statusSelect(c, extra = '') {
     const current = statusOf(c.status);
-    const locked = statusLocked(c.status);
-    const list = locked ? [] : settableStatuses();
+    const r = issueRights(c);
+    const locked = Boolean(r.status) && !r.status.length;
+    const list = locked ? [] : activeStatuses().filter((x) => !r.status || r.status.includes(x.id));
     const options = list.some((x) => x.id === current.id) ? list : [current, ...list];
-    const title = locked ? 'Developers can only move issues between Pending and Release for Testing' : dateText(c);
+    const title = locked ? r.why : dateText(c);
     return `<select class="status st-${current.color} ${extra}" data-status="${c.id}" title="${esc(title)}" ${locked ? 'disabled' : ''}>
       ${options.map((x) => `<option value="${esc(x.id)}" ${x.id === c.status ? 'selected' : ''}>${esc(x.label)}${x.deleted ? ' (removed)' : ''}</option>`).join('')}
     </select>`;
@@ -553,11 +592,31 @@ $(function () {
   // Several people per issue: chips + a text box (Enter or comma adds, × removes).
   // data-people holds the issue id when the chips save straight away (issue sheet); empty in add forms.
   const chip = (name) => `<span class="person">${esc(name)}<button type="button" data-remove-person title="Remove">${icon('close', 10)}</button></span>`;
-  const peopleBox = (names, commentId = '', extra = '') => `
-    <div class="people ${extra}" data-people="${commentId}">
-      ${(names || []).map(chip).join('')}
-      <input class="people-input" placeholder="${names && names.length ? 'Add person' : commentId ? 'Unassigned' : 'Assign to'}" maxlength="60" autocomplete="off">
+  // locked: shown, not changeable (a Developer on an issue they may not reassign)
+  const peopleBox = (names, commentId = '', extra = '', locked = false) => `
+    <div class="people ${extra} ${locked ? 'locked' : ''}" data-people="${commentId}" ${locked ? 'title="Only a tester, an admin or the issue\'s developer (when allowed) can reassign it"' : ''}>
+      ${(names || []).map(locked ? (n) => `<span class="person">${esc(n)}</span>` : chip).join('')}
+      ${locked ? '' : `<input class="people-input" placeholder="${names && names.length ? 'Add person' : commentId ? 'Unassigned' : 'Assign to'}" maxlength="60" autocomplete="off">`}
     </div>`;
+
+  // the Developer who owns an issue (only they, of the Developers, may change it)
+  function ownerName(c) {
+    if (!c.developerId) return '';
+    if (me && c.developerId === me.id) return me.name || me.username;
+    const u = (appPeople.get(appOfScreen(c.screenId)) || []).find((x) => x.id === c.developerId);
+    return u ? u.name : (c.assignees || [])[0] || 'Developer';
+  }
+  const ownerChip = (c) => (c.developerId
+    ? `<span class="owner-chip ${me && c.developerId === me.id ? 'me' : ''}" title="Assigned developer: only they (or a tester / admin) can change this issue">${icon('user', 11)}${esc(ownerName(c))}${me && c.developerId === me.id ? ' · you' : ''}</span>`
+    : (c.resolved ? '' : '<span class="owner-chip none" title="No developer owns this issue yet: a tester or admin assigns it">No developer</span>'));
+  // the owner as a choice (issue sheet): the Developer logins of the app
+  function ownerSelect(c) {
+    const r = issueRights(c);
+    const devs = (appPeople.get(appOfScreen(c.screenId)) || []).filter((u) => u.access === 'developer');
+    const opts = devs.some((u) => u.id === c.developerId) || !c.developerId ? devs : [{ id: c.developerId, name: ownerName(c) }, ...devs];
+    return `<select class="input mb-1 w-full text-xs" data-owner="${c.id}" title="Assigned developer" ${r.assign ? '' : 'disabled'}>
+      <option value="">No developer</option>${opts.map((u) => `<option value="${esc(u.id)}" ${u.id === c.developerId ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select>`;
+  }
   const chipsOf = ($box) => $box.find('.person').map((i, el) => $(el).text().trim()).get();
   // chips plus anything typed but not yet added
   const peopleOf = ($box) => [...new Set(chipsOf($box).concat(($box.find('.people-input').val() || '').split(',').map((x) => x.trim()).filter(Boolean)))];
@@ -570,19 +629,24 @@ $(function () {
 
   // ---------------------------------------------------------------- issues (card back + popup)
 
+  // "Fixed" (Complete): Testers and admins close issues, never a Developer
+  const mayClose = (c) => { const r = issueRights(c); return !r.status || r.status.includes('complete'); };
+
   function issueRow(c, big) {
     const p = prio(c);
     const full = big || expanded.has(c.id);
+    const r = issueRights(c);
     return `
       <li class="bug ${p} ${c.resolved ? 'is-fixed' : ''} ${c.id === flashId ? 'new' : ''} ${big && c.box && !c.resolved && boxKey(c.box) === pickedArea ? 'picked' : ''}" data-issue="${c.id}">
-        <input type="checkbox" class="mt-0.5 accent-indigo-600" data-resolve="${c.id}" ${c.resolved ? 'checked' : ''} title="Mark fixed">
+        <input type="checkbox" class="mt-0.5 accent-indigo-600" data-resolve="${c.id}" ${c.resolved ? 'checked' : ''} ${mayClose(c) ? 'title="Mark fixed"' : 'disabled title="A tester or admin closes issues"'}>
         <div class="min-w-0 flex-1">
           <div class="bug-meta">
-            <button class="prio-tag ${p}" data-cycle-priority="${c.id}" title="Change priority"><span class="dot bg-${p}"></span>${PRIORITY[p].label}</button>
+            <button class="prio-tag ${p}" data-cycle-priority="${c.id}" ${r.edit ? 'title="Change priority"' : `disabled title="${esc(r.why || 'Developers cannot edit issue details here')}"`}><span class="dot bg-${p}"></span>${PRIORITY[p].label}</button>
             ${areaTag(c)}
             ${c.box && !c.resolved ? `<button class="mark-chip" data-show-mark="${c.id}" title="Show the marked area">${icon('pen', 11)}</button>` : ''}
             ${statusSelect(c, 'sm')}
-            ${(c.assignees || []).map((n) => `<span class="assignee">${esc(n)}</span>`).join('')}
+            ${ownerChip(c)}
+            ${(c.assignees || []).filter((n) => n !== ownerName(c)).map((n) => `<span class="assignee">${esc(n)}</span>`).join('')}
             ${c.remarks && !full ? `<span class="text-slate-400" title="Has remarks">${icon('note', 12)}</span>` : ''}
           </div>
           <p class="bug-text ${full ? '' : 'clamp'}" ${big ? '' : `data-expand="${c.id}"`}>${esc(c.text)}</p>
@@ -681,6 +745,7 @@ $(function () {
           <span class="sb-app" style="--app:${appColor(p)}">${esc(appInitials(p.name))}</span><span class="sb-label">${esc(p.name)}</span>
           ${p.version ? `<span class="sb-count mono">${esc(p.version.replace(/^v(?=\d)/i, ''))}</span>` : ''}</button>
         ${p.id === productId ? `<span class="sb-tools">
+          <button class="icon-btn sm" data-app-settings="${p.id}" title="Project settings: roles & permissions">${icon('shield', 12)}</button>
           <button class="icon-btn sm" data-rename-product="${p.id}" title="Rename ${esc(p.name)}">${icon('edit', 12)}</button>
           <button class="icon-btn sm danger" data-delete-product="${p.id}" title="Delete ${esc(p.name)}">${icon('trash', 12)}</button></span>` : ''}
       </div>`).join('')
@@ -728,8 +793,10 @@ $(function () {
     const openIssues = issues.filter((c) => !c.resolved).length;
     const shown = statuses.filter((x) => !x.deleted || count(x.id));
     const badge = (n) => `<span class="sb-count ${n ? 'has' : ''}">${n}</span>`;
+    const myOpen = issues.filter((c) => !c.resolved && isMine(c)).length;
     $('#summary').html(
-      sbItem({ attrs: 'data-bugs=""', ico: '<span class="sb-dot dot-issues"></span>', label: 'Open issues', extra: badge(openIssues), cls: 'strong', title: `Open issues: ${openIssues}` })
+      sbItem({ attrs: 'data-bugs="" data-scope="mine"', ico: icon('user', 15), label: 'My issues', extra: badge(myOpen), cls: 'strong', title: `Open issues assigned to you: ${myOpen}` })
+      + sbItem({ attrs: 'data-bugs="" data-scope="all"', ico: '<span class="sb-dot dot-issues"></span>', label: 'Open issues', extra: badge(openIssues), title: `Open issues: ${openIssues}` })
       + shown.map((x) => sbItem({ attrs: `data-bugs="${esc(x.id)}"`, ico: `<span class="sb-dot dot st st-${x.color}"></span>`, label: esc(x.label), extra: badge(count(x.id)), title: `${x.label}: ${count(x.id)}` })).join('')
       + sbItem({ attrs: 'data-action="manage-statuses"', ico: icon('tag', 15), label: 'Statuses', cls: 'muted', title: 'Manage statuses' }));
 
@@ -1245,24 +1312,26 @@ $(function () {
 
   function sheetRow(c) {
     const p = prio(c);
+    const r = issueRights(c);
+    const ro = r.edit ? '' : `disabled title="${esc(r.why || 'Developers cannot edit issue details in this app')}"`;
     return `
       <div class="sheet-row ${p} ${c.resolved ? 'is-fixed' : ''} ${c.id === flashId ? 'new' : ''}">
         <label class="flex items-center gap-2 pt-2 text-xs font-medium text-slate-500">
-          <input type="checkbox" class="h-4 w-4 accent-indigo-600" data-resolve="${c.id}" ${c.resolved ? 'checked' : ''}>
+          <input type="checkbox" class="h-4 w-4 accent-indigo-600" data-resolve="${c.id}" ${c.resolved ? 'checked' : ''} ${mayClose(c) ? '' : 'disabled title="A tester or admin closes issues"'}>
           <span class="md:hidden">Fixed</span>
         </label>
         <div><span class="cell-label">Priority</span>
-          <select class="input w-full text-sm" data-field="priority" data-id="${c.id}">${priorityOptions(p)}</select></div>
+          <select class="input w-full text-sm" data-field="priority" data-id="${c.id}" ${ro}>${priorityOptions(p)}</select></div>
         <div><span class="cell-label">Area</span>
-          <select class="input w-full text-sm" data-field="area" data-id="${c.id}">${areaOptions(c.area)}</select></div>
+          <select class="input w-full text-sm" data-field="area" data-id="${c.id}" ${ro}>${areaOptions(c.area)}</select></div>
         <div><span class="cell-label">Status</span>
           ${statusSelect(c, 'w-full')}<span class="date mt-1 block">${dateText(c)}</span></div>
         <div><span class="cell-label">Issue</span>
-          <textarea class="input cell-text w-full text-sm ${c.resolved ? 'text-slate-400 line-through' : ''}" rows="1" data-field="text" data-id="${c.id}">${esc(c.text)}</textarea></div>
+          <textarea class="input cell-text w-full text-sm ${c.resolved ? 'text-slate-400 line-through' : ''}" rows="1" data-field="text" data-id="${c.id}" ${ro}>${esc(c.text)}</textarea></div>
         <div><span class="cell-label">Assigned to</span>
-          ${peopleBox(c.assignees, c.id, 'text-sm')}</div>
+          ${ownerSelect(c)}${peopleBox(c.assignees, c.id, 'text-sm', !r.assign)}</div>
         <div><span class="cell-label">Remarks</span>
-          <textarea class="input cell-text w-full text-sm" rows="1" data-field="remarks" data-id="${c.id}">${esc(c.remarks || '')}</textarea></div>
+          <textarea class="input cell-text w-full text-sm" rows="1" data-field="remarks" data-id="${c.id}" ${ro}>${esc(c.remarks || '')}</textarea></div>
         <div class="flex items-center justify-between gap-2 pt-2 text-xs text-slate-400 md:flex-col md:items-end md:pt-1">
           <span>${fmtDate(c.createdAt)}</span>
           <button class="icon-btn danger" data-delete-comment="${c.id}" title="Delete">${icon('trash', 14)}</button>
@@ -3688,13 +3757,20 @@ $(function () {
 
   // ---------------------------------------------------------------- issues by status (header counts open this)
 
+  // scope: 'mine' (issues I own or am assigned to) or 'all' (every issue of the app I may see); status filters within it
+  const showsAll = () => !isDev() || devPerms().viewAll;
   function renderBugs() {
     const { status, filter } = bugsView;
     if (!productId) { closeBugs(); return; }
-    const rows = [];
+    if (!showsAll()) bugsView.scope = 'mine';
+    const { scope } = bugsView;
+    const every = [];
     modules.forEach((m) => m.flows.forEach((f) => onlyScreens(f.screens).forEach((s) => {
-      sortIssues(s.comments).forEach((c) => { if (!status || c.status === status) rows.push({ c, s, f, m }); });
+      sortIssues(s.comments).forEach((c) => every.push({ c, s, f, m }));
     })));
+    const inScope = every.filter(({ c }) => scope !== 'mine' || isMine(c));
+    const rows = inScope.filter(({ c }) => !status || c.status === status);
+    const scopeCount = (k) => every.filter(({ c }) => (k !== 'mine' || isMine(c)) && (!status || c.status === status)).length;
     const counts = { open: rows.filter((x) => !x.c.resolved).length, fixed: rows.filter((x) => x.c.resolved).length, all: rows.length };
     // a single status needs no Open / Fixed split
     const list = status ? rows : rows.filter(({ c }) => filter === 'all' || (filter === 'open' ? !c.resolved : c.resolved));
@@ -3708,10 +3784,16 @@ $(function () {
       <div class="flex flex-wrap items-center gap-3 border-b border-slate-200 px-5 py-4">
         <div class="min-w-0 flex-1">
           <h3 class="flex items-center gap-2 text-lg font-semibold text-slate-900">
-            ${tag ? `<span class="dot st st-${tag.color}"></span>${esc(tag.label)} issues` : 'All issues'}
+            ${tag ? `<span class="dot st st-${tag.color}"></span>${esc(tag.label)}` : ''} ${scope === 'mine' ? 'My issues' : tag ? 'issues' : 'All issues'}
           </h3>
           <p class="text-sm text-slate-500">${list.length} issue${list.length === 1 ? '' : 's'} on ${screenCount} screen${screenCount === 1 ? '' : 's'}</p>
         </div>
+        <div class="seg" title="${showsAll() ? '' : 'Developers see only their own issues in this app'}">
+          ${[['mine', 'My issues'], ['all', 'All issues']].map(([k, label]) => `<button data-bugs-scope="${k}" class="${scope === k ? 'on' : ''}" ${k === 'all' && !showsAll() ? 'disabled' : ''}>${label} (${scopeCount(k)})</button>`).join('')}
+        </div>
+        <select class="input py-1 text-sm" data-bugs-status title="Status">
+          <option value="">Any status</option>${activeStatuses().map((x) => `<option value="${esc(x.id)}" ${x.id === status ? 'selected' : ''}>${esc(x.label)} (${inScope.filter(({ c }) => c.status === x.id).length})</option>`).join('')}
+        </select>
         ${status ? '' : `<div class="seg">
           ${[['open', 'Open'], ['fixed', 'Fixed'], ['all', 'All']].map(([k, label]) =>
             `<button data-bugs-filter="${k}" class="${filter === k ? 'on' : ''}">${label} (${counts[k]})</button>`).join('')}
@@ -3734,15 +3816,16 @@ $(function () {
             <div class="flex flex-col items-start gap-1"><span class="prio-tag ${p}"><span class="dot bg-${p}"></span>${PRIORITY[p].label}</span>${areaTag(c)}</div>
             <div>${statusSelect(c, 'w-full')}<span class="date mt-1 block">${dateText(c)}</span></div>
             <p class="text-sm ${c.resolved ? 'text-slate-400 line-through' : 'text-slate-700'}">${esc(c.text)}${c.remarks ? `<span class="remark">${esc(c.remarks)}</span>` : ''}</p>
-            <div class="flex flex-wrap gap-1">${(c.assignees || []).map((n) => `<span class="person">${esc(n)}</span>`).join('') || '<span class="text-xs text-slate-400">Unassigned</span>'}</div>
+            <div class="flex flex-wrap gap-1">${ownerChip(c)}${(c.assignees || []).filter((n) => n !== ownerName(c)).map((n) => `<span class="person">${esc(n)}</span>`).join('')}</div>
             <button class="icon-btn border border-slate-200 bg-white" data-go-screen="${s.id}" title="Go to screen">${icon('link', 14)}</button>
           </div>`;
         }).join('') || `<p class="py-12 text-center text-sm text-slate-400">No ${status || filter === 'all' ? '' : `${filter} `}issues</p>`}
       </div>`);
   }
 
-  function openBugs(status) {
-    bugsView = { status, filter: 'open' };
+  // scope: 'mine' | 'all' (Developers start on their own issues)
+  function openBugs(status, scope) {
+    bugsView = { status, filter: 'open', scope: scope || (isDev() ? 'mine' : 'all') };
     renderBugs();
     applyAccess();
     $('#bugsModal').removeClass('hidden');
@@ -3917,6 +4000,82 @@ $(function () {
       .fail((xhr) => $err.text(errorText(xhr)).removeClass('hidden'));
   });
   $doc.on('click', '[data-action="logout"]', () => api('POST', '/api/logout').always(() => location.reload()));
+
+  // ---------------------------------------------------------------- project settings → roles & permissions
+  // Per app (project): what each role may do with its issues. Admin and Tester are fixed (shown for reference);
+  // the Developer switches are this app's own and save at once (the server enforces them on every request).
+
+  const DEV_SWITCHES = [
+    ['create', 'Can create issues', 'Add bugs on the screens of this app. Off: the “Add issue” boxes and Write issue are hidden for Developers.'],
+    ['viewAll', 'Can view all issues of the project', 'See every issue of this app, from Testers, Admins and other Developers. Off: only the issues assigned to them.'],
+    ['status', 'Can update issue status', 'Move their own issues Pending → In Progress → Release for Testing (and a reopened one back into progress).'],
+    ['assign', 'Can assign issues', 'Hand an issue they own to another person or developer. Unassigned issues are always assigned by a Tester or Admin.'],
+    ['edit', 'Can edit issue details', 'Change the text, priority, area and remarks of their own issues.'],
+  ];
+  const ROLE_RULES = {
+    admin: ['Everything on every issue of the app: create, assign, edit, delete', 'Any status, including Verified, Complete and Reopened', 'Sets these permissions'],
+    tester: ['Creates issues and assigns them to a developer', 'Verifies fixes that are Released for Testing', 'Closes verified issues (Complete) or reopens a failed fix', 'Any status on any issue of the app'],
+  };
+  let settingsApp = null;
+  let settingsRole = 'developer';
+
+  function renderSettings() {
+    const p = products.find((x) => x.id === settingsApp);
+    if (!p) { closeSettings(); return; }
+    const perms = devPerms(p.id);
+    const flow = [['pending', 'Developer'], ['progress', 'Developer'], ['testing', 'Developer'], ['verified', 'Tester'], ['complete', 'Tester']];
+    const pill = (id) => { const st = statusOf(id); return `<span class="wf-pill"><span class="dot st st-${st.color}"></span>${esc(st.label)}</span>`; };
+    $('#settingsBody').html(`
+      <div class="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
+        <span class="sb-app" style="--app:${appColor(p)}">${esc(appInitials(p.name))}</span>
+        <div class="min-w-0 flex-1">
+          <h3 class="truncate text-base font-semibold text-slate-900">${esc(p.name)} · Project settings</h3>
+          <p class="text-xs text-slate-500">Roles &amp; permissions on this app's issues</p>
+        </div>
+        <button class="icon-btn" data-close-settings title="Close">${icon('close', 18)}</button>
+      </div>
+      <div class="space-y-5 px-5 py-4">
+        <div>
+          <span class="field-label">Issue workflow</span>
+          <div class="wf-line">${flow.map(([id, who], k) => `${k ? `<span class="wf-arrow" title="${k <= 2 ? 'Developer' : 'Tester'}">${icon('right', 12)}</span>` : ''}${pill(id)}`).join('')}</div>
+          <p class="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">Fix failed? ${pill('testing')}${icon('right', 11)}${pill('reopened')}${icon('right', 11)}${pill('progress')}
+            <span>· Developers move their issues up to Release for Testing; Testers verify, close or reopen.</span></p>
+        </div>
+        <div>
+          <div class="seg">${[['admin', 'Admin'], ['tester', 'Tester'], ['developer', 'Developer']].map(([k, label]) => `<button data-settings-role="${k}" class="${settingsRole === k ? 'on' : ''}">${label}</button>`).join('')}</div>
+          ${settingsRole === 'developer' ? `
+            <p class="mt-3 text-xs text-slate-500">Developers only ever change issues assigned to them. Viewing an issue never lets them change it.</p>
+            <div class="mt-2 space-y-1">${DEV_SWITCHES.map(([k, label, hint]) => `
+              <label class="adm-switch perm-row"><input type="checkbox" data-perm="${k}" ${perms[k] ? 'checked' : ''}><span class="adm-toggle"></span>
+                <span><b>${label}</b><small>${hint}</small></span></label>`).join('')}</div>`
+          : `<ul class="role-rules">${ROLE_RULES[settingsRole].map((x) => `<li>${icon('check', 13)}${esc(x)}</li>`).join('')}</ul>
+             <p class="mt-2 text-xs text-slate-400">${settingsRole === 'admin' ? 'Full and Super admin logins' : 'Tester and “Update tasks” logins'} · set per login in Users &amp; access</p>`}
+        </div>
+      </div>`);
+  }
+  function openSettings(pid) {
+    settingsApp = pid;
+    settingsRole = 'developer';
+    renderSettings();
+    $('#settingsModal').removeClass('hidden');
+    $('body').addClass('overflow-hidden');
+  }
+  function closeSettings() {
+    settingsApp = null;
+    $('#settingsModal').addClass('hidden');
+    unlockScroll();
+  }
+  $doc.on('click', '[data-app-settings]', function () { openSettings($(this).data('app-settings')); });
+  $doc.on('click', '[data-close-settings]', closeSettings);
+  $('#settingsModal').on('mousedown', function (e) { if (e.target === this) closeSettings(); });
+  $doc.on('click', '[data-settings-role]', function () { settingsRole = $(this).data('settings-role'); renderSettings(); });
+  $doc.on('change', '[data-perm]', function () {
+    const box = this;
+    const p = products.find((x) => x.id === settingsApp);
+    api('PUT', `/api/products/${encodeURIComponent(settingsApp)}/permissions`, { [$(box).data('perm')]: box.checked }, box, QUIET)
+      .done((r) => { p.devPermissions = r.devPermissions; toast('Permissions saved'); render(); })
+      .fail(() => { box.checked = !box.checked; });
+  });
 
   // ---------------------------------------------------------------- who is online (presence.js, a WebSocket)
   // Every tab keeps a socket open and says every 30 s whether you used it (key, click, mouse, scroll) in the last
@@ -4363,12 +4522,15 @@ $(function () {
   }
 
   // One issue as a card: where (app, flow, screen) / priority, issue, status / who (assign, remarks)
+  // the apps this login may add issues in (a Developer only where the app allows it)
+  const writableApps = () => products.filter((p) => canCreateIssues(p.id));
   function writerRow(at) {
     const field = (label, html) => `<label class="block min-w-0"><span class="field-label">${label}</span>${html}</label>`;
+    const apps = writableApps();
     const $row = $(`
       <div class="writer-row" data-product="${at.productId || ''}" data-flow="${at.flowId || ''}" data-screen="${at.screenId || ''}">
-        <div class="writer-line where ${products.length > 1 ? 'multi' : ''}">
-          ${products.length > 1 ? field('App', `<select class="input w-full" name="product">${products.map((p) =>
+        <div class="writer-line where ${apps.length > 1 ? 'multi' : ''}">
+          ${apps.length > 1 ? field('App', `<select class="input w-full" name="product">${apps.map((p) =>
             `<option value="${p.id}" ${p.id === at.productId ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>`) : ''}
           ${field('Flow name', '<select class="input w-full" name="flow"></select>')}
           ${field('Screen name', '<select class="input w-full" name="screen"></select>')}
@@ -4395,7 +4557,9 @@ $(function () {
   const growIssue = (el) => { el.style.height = 'auto'; el.style.height = `${el.scrollHeight + 2}px`; };
 
   function openWriter() {
-    writer.productId = products.some((p) => p.id === writer.productId) ? writer.productId : productId;
+    const apps = writableApps();
+    if (!apps.length) { dialog.alert('You cannot add issues in your apps. An admin can allow it in Project settings → Roles & permissions.', 'Write issue'); return; }
+    writer.productId = apps.some((p) => p.id === writer.productId) ? writer.productId : apps.some((p) => p.id === productId) ? productId : apps[0].id;
     // start from the module on screen
     const m = modules.find((x) => x.id === activeId);
     if (writer.productId === productId && m && !m.flows.some((f) => f.id === writer.flowId)) writer.flowId = m.flows[0] && m.flows[0].id;
@@ -4633,11 +4797,16 @@ $(function () {
     remove({ title: 'Delete this issue?', message: `“${c.text.length > 80 ? `${c.text.slice(0, 80)}…` : c.text}” will be deleted. This cannot be undone.`, url: `/api/comments/${c.id}` });
   });
 
+  // a refused change (the server checks every one) puts the issue back as it was
   $doc.on('change', '[data-status]', function () {
-    api('PATCH', `/api/comments/${$(this).data('status')}`, { status: $(this).val() }).done(load);
+    api('PATCH', `/api/comments/${$(this).data('status')}`, { status: $(this).val() }).done(load).fail(load);
   });
   $doc.on('change', '[data-resolve]', function () {
-    api('PATCH', `/api/comments/${$(this).data('resolve')}`, { resolved: this.checked }).done(load);
+    api('PATCH', `/api/comments/${$(this).data('resolve')}`, { resolved: this.checked }).done(load).fail(load);
+  });
+  // the issue's developer: the one before loses the right to change it, the new one gets it
+  $doc.on('change', '[data-owner]', function () {
+    api('PATCH', `/api/comments/${$(this).data('owner')}`, { developerId: this.value || null }).done((r) => { toast('Developer assigned'); load(); if (r && r.notify) teamsNotify(r.notify); }).fail(load);
   });
 
   // card: front opens the popup, the Issues button flips to the back
@@ -4659,7 +4828,7 @@ $(function () {
   $doc.on('click', '[data-cycle-priority]', function () {
     const order = ['medium', 'high', 'urgent', 'low'];
     const c = allIssues().find((x) => x.id === $(this).data('cycle-priority'));
-    api('PATCH', `/api/comments/${c.id}`, { priority: order[(order.indexOf(prio(c)) + 1) % order.length] }).done(load);
+    api('PATCH', `/api/comments/${c.id}`, { priority: order[(order.indexOf(prio(c)) + 1) % order.length] }).done(load).fail(load);
   });
 
   // condition branch → its own path flow
@@ -5017,7 +5186,9 @@ $(function () {
   });
 
   // issues by status
-  $doc.on('click', '[data-bugs]', function () { openBugs(String($(this).data('bugs'))); });
+  $doc.on('click', '[data-bugs]', function () { openBugs(String($(this).data('bugs')), $(this).data('scope')); });
+  $doc.on('click', '[data-bugs-scope]', function () { bugsView.scope = $(this).data('bugs-scope'); renderBugs(); applyAccess(); });
+  $doc.on('change', '[data-bugs-status]', function () { bugsView.status = this.value; renderBugs(); applyAccess(); });
   $doc.on('click', '[data-bugs-filter]', function () { bugsView.filter = $(this).data('bugs-filter'); renderBugs(); applyAccess(); });
   $doc.on('change', '[data-bugs-pick]', function () {
     const id = $(this).data('bugs-pick');
@@ -5140,7 +5311,7 @@ $(function () {
     if (!appPeople.has(pid)) {
       appPeople.set(pid, []);
       api('GET', `/api/products/${encodeURIComponent(pid)}/people`, null, null, QUIET)
-        .done((d) => { appPeople.set(pid, d.people); if ($('#peopleMenu').length) peopleMenu(peopleMenuFor); })
+        .done((d) => { appPeople.set(pid, d.people); if ($('#peopleMenu').length) peopleMenu(peopleMenuFor); else if (loaded) render(); })
         .fail(() => appPeople.delete(pid));
     }
     return appPeople.get(pid);
@@ -5233,6 +5404,7 @@ $(function () {
     if (dialog.isOpen()) dialog.cancel();
     else if (teamsSend) closeTeamsSend();
     else if (colEdit) closeColumn();
+    else if (settingsApp) closeSettings();
     else if ($('#sheetFilterPop').length) closeFilter();
     else if (!$('#importModal').hasClass('hidden')) closeImport();
     else if (sketch.open) skEscape();
@@ -5723,6 +5895,7 @@ $(function () {
   // { productId, date, today, items, shared, people, canClose, teams, tab: 'day' | 'shared', sharing: entry id whose picker is open }
   let doneView = null;
   let donePicked = []; // screens attached to the entry being written
+  let doneMode = 'todo'; // what the box at the top adds: a to-do point ('todo') or something already done ('done')
 
   // tab: the day's entries ('day') or the ones shared with me ('shared'); kept as it is when left out
   function openDone(pid, date, tab) {
@@ -5735,7 +5908,12 @@ $(function () {
       $('body').addClass('overflow-hidden');
     });
   }
-  const reloadDone = () => doneView && openDone(doneView.productId, doneView.date);
+  // (keeps what is half typed in the box at the top)
+  const reloadDone = () => {
+    if (!doneView) return $.Deferred().resolve();
+    const typed = $('#doneAdd [name=text]').val();
+    return openDone(doneView.productId, doneView.date).done(() => { if (typed) $('#doneAdd [name=text]').val(typed); });
+  };
 
   function closeDone() {
     doneView = null;
@@ -5784,12 +5962,25 @@ $(function () {
           </form>` : ''}
         </div>
         ${closable ? `<button class="btn-secondary shrink-0 px-2 py-1 text-xs" data-done-close="${x.id}" data-closed="${x.closedAt ? '0' : '1'}" title="${x.closedAt ? 'Open it again' : 'You checked this change: close it'}">${x.closedAt ? 'Reopen' : `${icon('check', 12)} Close`}</button>` : ''}
+        ${x.todoId && x.userId === me.id && can('edit') ? `<button class="icon-btn" data-todo-undo="${x.todoId}" title="Not done yet: back to the to-do list">${icon('undo', 14)}</button>` : ''}
         ${owns ? `
           <button class="icon-btn ${picking ? 'text-indigo-600' : ''}" data-done-share-to="${x.id}" title="Share this with someone">${icon('share', 14)}</button>
           <button class="icon-btn" data-done-edit="${x.id}" title="Edit">${icon('edit', 14)}</button>
           <button class="icon-btn danger" data-done-delete="${x.id}" title="Delete">${icon('trash', 14)}</button>` : ''}
       </li>`;
   }
+
+  // One open to-do point: tick it and it moves to today's done list
+  const todoItem = (t) => `
+      <li class="todo-item" data-todo="${t.id}">
+        <button type="button" class="todo-check" data-todo-done="${t.id}" title="Done: move it to Done today" aria-label="Mark done">${icon('check', 12)}</button>
+        <div class="min-w-0 flex-1">
+          <p class="whitespace-pre-wrap text-sm text-slate-800">${esc(t.text)}</p>
+          ${t.screenIds.length ? `<div class="mt-1 flex flex-wrap gap-1">${t.screenIds.map((id) => screenChip(id)).join('')}</div>` : ''}
+        </div>
+        <button class="icon-btn" data-todo-edit="${t.id}" title="Edit">${icon('edit', 14)}</button>
+        <button class="icon-btn danger" data-todo-delete="${t.id}" title="Delete">${icon('trash', 14)}</button>
+      </li>`;
 
   function renderDone() {
     const d = doneView;
@@ -5835,13 +6026,26 @@ $(function () {
 
       ${isToday && can('edit') ? `
       <form id="doneAdd" class="done-add">
-        <textarea class="input w-full" name="text" rows="2" maxlength="1000" placeholder="What did you finish? e.g. Fixed OTP timer on Login, new KYC upload flow"></textarea>
-        <div class="flex flex-wrap items-center gap-2">
-          <select class="input max-w-xs py-1 text-sm" data-done-pick><option value="">Attach a screen you changed…</option>${screenOptions}</select>
-          ${donePicked.map((id) => screenChip(id, true)).join('')}
-          <button class="btn-primary ml-auto">${icon('plus', 14)} Add</button>
+        <div class="flex items-center gap-2">
+          <div class="seg">
+            <button type="button" data-done-mode="todo" class="${doneMode === 'todo' ? 'on' : ''}">${icon('list', 12)} To-do</button>
+            <button type="button" data-done-mode="done" class="${doneMode === 'done' ? 'on' : ''}">${icon('check', 12)} Done</button>
+          </div>
+          <span class="text-xs text-slate-400">${doneMode === 'todo' ? 'Note what you will do; tick it when it is done and it moves to Done today.' : 'Log something you already finished.'}</span>
         </div>
-      </form>` : ''}
+        <textarea class="input w-full" name="text" rows="2" maxlength="1000" placeholder="${doneMode === 'todo' ? 'Add a point… e.g. Fix OTP timer on Login (Enter to add)' : 'What did you finish? e.g. Fixed OTP timer on Login, new KYC upload flow'}"></textarea>
+        <div class="flex flex-wrap items-center gap-2">
+          <select class="input max-w-xs py-1 text-sm" data-done-pick><option value="">${doneMode === 'todo' ? 'Attach a screen it is about…' : 'Attach a screen you changed…'}</option>${screenOptions}</select>
+          ${donePicked.map((id) => screenChip(id, true)).join('')}
+          <button class="btn-primary ml-auto">${icon('plus', 14)} ${doneMode === 'todo' ? 'Add point' : 'Add'}</button>
+        </div>
+      </form>
+
+      <div class="todo-list">
+        <p class="mb-1.5 flex items-center gap-2 text-sm font-semibold text-slate-900">${icon('list', 14)} To-do <span class="text-xs font-normal text-slate-400">${d.todos.length ? `${d.todos.length} open` : ''}</span></p>
+        ${d.todos.length ? `<ul class="space-y-1.5">${d.todos.map(todoItem).join('')}</ul>`
+          : '<p class="text-xs text-slate-400">No open points. Add what you plan to do; open points stay here until you tick them.</p>'}
+      </div>` : ''}
 
       <div class="max-h-[55vh] space-y-4 overflow-y-auto px-5 py-4">
         ${byPerson.map(([uid, name]) => `
@@ -5872,7 +6076,39 @@ $(function () {
     e.preventDefault();
     const t = $(this).find('[name=text]').val().trim();
     if (!t) { $(this).find('[name=text]').trigger('focus'); return; }
-    api('POST', '/api/done', { productId: doneView.productId, text: t, screenIds: donePicked }).done(() => { donePicked = []; reloadDone(); });
+    const url = doneMode === 'todo' ? '/api/done/todos' : '/api/done';
+    $(this).find('[name=text]').val('');
+    api('POST', url, { productId: doneView.productId, text: t, screenIds: donePicked }).done(() => {
+      donePicked = [];
+      reloadDone().done(() => $('#doneAdd [name=text]').trigger('focus'));
+    });
+  });
+  // Enter adds (Shift+Enter: a new line)
+  $doc.on('keydown', '#doneAdd [name=text]', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('#doneAdd').trigger('submit'); }
+  });
+  $doc.on('click', '[data-done-mode]', function () { doneMode = $(this).data('done-mode'); keepText(() => {}); $('#doneAdd [name=text]').trigger('focus'); });
+
+  // to-do points: tick (→ done today), take back, edit, delete
+  const todoDone = (id, done) => api('PUT', `/api/done/todos/${id}/done`, { done });
+  $doc.on('click', '[data-todo-done]', function () {
+    const id = $(this).data('todo-done');
+    const $li = $(this).closest('.todo-item').addClass('ticked');
+    todoDone(id, true).done(() => setTimeout(() => { toast('Moved to Done today'); reloadDone(); }, 260)).fail(() => $li.removeClass('ticked'));
+  });
+  $doc.on('click', '[data-todo-undo]', function () {
+    todoDone($(this).data('todo-undo'), false).done(() => { toast('Back on your to-do list'); reloadDone(); });
+  });
+  $doc.on('click', '[data-todo-edit]', function () {
+    const t = doneView.todos.find((x) => x.id === $(this).data('todo-edit'));
+    ask({
+      title: 'Edit point', fields: [{ name: 'text', label: 'To do', value: t.text, required: true, max: 1000 }],
+      save: (v) => api('PATCH', `/api/done/todos/${t.id}`, v, null, QUIET).done(reloadDone),
+    });
+  });
+  $doc.on('click', '[data-todo-delete]', function () {
+    const id = $(this).data('todo-delete');
+    dialog.confirm({ title: 'Delete this point?', confirmText: 'Delete', danger: true, onConfirm: () => api('DELETE', `/api/done/todos/${id}`, null, null, QUIET).done(reloadDone) });
   });
   $doc.on('click', '[data-done-screen]', function () { const id = $(this).data('done-screen'); closeDone(); showScreen(id); });
   const doneItem = (id) => doneView.items.find((i) => i.id === id) || doneView.shared.find((i) => i.id === id);

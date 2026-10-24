@@ -17,7 +17,8 @@ const SESSION_DAYS = 30;
 // full: everything inside their apps
 // super: everything in every app + the admin dashboard
 const LEVELS = { view: 1, edit: 2, tester: 2, developer: 3, full: 4, super: 5 };
-const DEVELOPER_STATUSES = ['pending', 'testing'];
+// where Developers may move an issue they own (Testers verify, close and reopen)
+const DEVELOPER_STATUSES = ['pending', 'progress', 'testing'];
 
 async function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString('hex');

@@ -79,13 +79,65 @@ function markBox(value) {
   return b;
 }
 
-// Developers only move issues between Pending and Release for Testing (never to or from any other status).
-function developerStatus(req, from, to) {
-  if (req.user.access !== 'developer') return;
-  const ok = auth.DEVELOPER_STATUSES;
-  if (!ok.includes(to) || (from && !ok.includes(from))) {
-    throw new HttpError(403, 'Developers can only move issues between Pending and Release for Testing.');
+// ---------------------------------------------------------------- roles & permissions on issues
+//
+// Per app (project), its admins choose what Developers may do (products.dev_permissions):
+//   create   add issues                      viewAll  see every issue of the app (else only their own)
+//   status   move their issues Pending → In Progress → Release for Testing
+//   assign   hand their issues to someone else   edit  change the text, priority, area and remarks of their issues
+// A Developer only ever changes issues they own (comments.developer_id), never Verified / Complete / Reopened.
+// Testers (and "Update tasks" logins) verify, close and reopen: any status, any issue. Admins (Full, Super admin):
+// everything. Every rule is checked here, against the issue as stored; the screens only hide what isn't allowed.
+const DEV_PERMISSIONS = { create: true, viewAll: true, status: true, assign: false, edit: true };
+const devPermissions = (product) => ({ ...DEV_PERMISSIONS, ...((product && product.dev_permissions) || {}) });
+const isAdmin = (user) => user.access === 'super' || user.access === 'full';
+const isDeveloper = (user) => user.access === 'developer';
+// where a Developer's work goes (and comes from: a reopened issue goes back into progress)
+const DEV_TO = auth.DEVELOPER_STATUSES;
+const DEV_FROM = [...DEV_TO, 'reopened'];
+
+const productRow = (id) => live('products', id, '*');
+// a name the issue's assignees use for this login
+const namesOf = (u) => [u.name, u.username].filter(Boolean).map((n) => n.toLowerCase());
+const mine = (user, issue) => issue.developer_id === user.id
+  || (issue.assignees || []).some((n) => namesOf(user).includes(String(n).toLowerCase()));
+
+// May this login see this issue at all? (a Developer without "view all" sees only their own)
+const seesIssue = (user, issue, product) => !isDeveloper(user) || devPermissions(product).viewAll || mine(user, issue);
+
+/** What this login may do to one issue → { status: ids it may move to (null = any), edit, assign } */
+function issueRights(user, issue, product) {
+  if (!isDeveloper(user)) return { status: null, edit: true, assign: true };
+  const p = devPermissions(product);
+  const owner = issue.developer_id === user.id;
+  return {
+    status: owner && p.status && DEV_FROM.includes(issue.status) ? DEV_TO : [],
+    edit: owner && p.edit,
+    assign: owner && p.assign,
+  };
+}
+const NOT_YOURS = 'Only the developer this issue is assigned to can change it (or a tester or admin).';
+function mayStatus(rights, from, to) {
+  if (rights.status && !rights.status.includes(to)) {
+    throw new HttpError(403, rights.status.length ? 'Developers move issues only to Pending, In Progress or Release for Testing. Testers verify and close them.' : NOT_YOURS);
   }
+  if (rights.status && from && !DEV_FROM.includes(from)) throw new HttpError(403, 'Only a tester or admin can change a verified, closed or other issue.');
+}
+
+/**
+ * The Developer to own an issue: the one picked (developerId; it must be a Developer login of this app), else among
+ * the names assigned: the present owner when still named (keepId), else the first Developer named, else none.
+ */
+async function issueOwner(productId, developerId, names, keepId = null) {
+  const { rows: devs } = await db.query(
+    `SELECT id, name, username FROM users WHERE access = 'developer' AND NOT is_deleted AND (all_products OR $1 = ANY(product_ids))`, [productId]);
+  if (developerId) {
+    const d = devs.find((u) => u.id === developerId);
+    if (!d) throw new HttpError(400, 'Pick a developer of this app');
+    return d;
+  }
+  const named = (names || []).map((n) => devs.find((u) => namesOf(u).includes(String(n).toLowerCase()))).filter(Boolean);
+  return named.find((u) => u.id === keepId) || named[0] || null;
 }
 
 // Issue status → the columns to save. Pending has no date (shown as today); any other status freezes the date it was set.
@@ -152,7 +204,10 @@ const audit = (r) => ({ createdAt: r.created_at, createdBy: r.created_by, update
 
 // teams: whether the app has a Teams webhook (the URL itself is only shown to super admins, in Sanity → Teams)
 // version: the app's present version, from Sanity (see CURRENT_VERSION); only on the board
-const toProduct = (r) => ({ id: r.id, name: r.name, order: r.sort_order, teams: Boolean(r.teams_webhook), version: r.current_version || '', ...audit(r) });
+const toProduct = (r) => ({
+  id: r.id, name: r.name, order: r.sort_order, teams: Boolean(r.teams_webhook), version: r.current_version || '',
+  devPermissions: devPermissions(r), ...audit(r),
+});
 const toModule = (r) => ({ id: r.id, productId: r.product_id, name: r.name, order: r.sort_order, ...audit(r) });
 const toFlow = (r) => ({
   id: r.id, moduleId: r.module_id, name: r.name, order: r.sort_order,
@@ -168,7 +223,7 @@ const toUser = (r) => ({
 });
 const toStatus = (r) => ({ id: r.id, label: r.label, color: r.color, builtIn: BUILT_IN_STATUSES.includes(r.id), deleted: r.is_deleted, ...audit(r) });
 const toComment = (r) => ({
-  id: r.id, screenId: r.screen_id, text: r.text, priority: r.priority, area: r.area,
+  id: r.id, screenId: r.screen_id, text: r.text, priority: r.priority, area: r.area, developerId: r.developer_id || null,
   assignees: r.assignees, remarks: r.remarks, status: r.status, statusDate: r.status_date,
   resolved: r.status === 'complete', box: r.box || null, ...audit(r),
 });
@@ -353,8 +408,18 @@ async function loadBoard(user) {
     db.query(`${SCREEN_SELECT} WHERE NOT s.is_deleted ORDER BY s.sort_order, s.created_at`),
     seesIssues ? db.query('SELECT * FROM comments WHERE NOT is_deleted ORDER BY created_at') : { rows: [] },
   ]);
+  // a Developer whose app doesn't let them see every issue gets only their own (here, so it never reaches the browser)
+  const productOfScreen = new Map();
+  if (isDeveloper(user)) {
+    const moduleProduct = new Map(modules.rows.map((m) => [m.id, m.product_id]));
+    const flowProduct = new Map(flows.rows.map((f) => [f.id, moduleProduct.get(f.module_id)]));
+    screens.rows.forEach((x) => productOfScreen.set(x.id, flowProduct.get(x.flow_id)));
+  }
+  const productById = new Map(products.rows.map((p) => [p.id, p]));
   const commentsBy = {};
-  comments.rows.forEach((c) => (commentsBy[c.screen_id] ||= []).push(toComment(c)));
+  comments.rows
+    .filter((c) => !isDeveloper(user) || seesIssue(user, c, productById.get(productOfScreen.get(c.screen_id))))
+    .forEach((c) => (commentsBy[c.screen_id] ||= []).push(toComment(c)));
   const screensBy = {};
   screens.rows.forEach((s) => (screensBy[s.flow_id] ||= []).push({ ...toScreen(s), comments: commentsBy[s.id] || [] }));
   // Path flows only show while their condition (in a shown flow) still has that branch, and screen paths while
@@ -1009,51 +1074,100 @@ app.post('/api/screens/:id/copy', route(async (req, res) => {
 
 // ---------------------------------------------------------------- issues
 
+// A new issue. Developers need "create"; what they add is theirs unless they may assign it to someone else.
 app.post('/api/screens/:id/comments', route(async (req, res) => {
   const productId = await allowed(req, 'screens', req.params.id, 'edit');
-  developerStatus(req, null, req.body.status || 'pending');
+  const product = await productRow(productId);
+  const dev = isDeveloper(req.user);
+  if (dev && !devPermissions(product).create) throw new HttpError(403, 'Developers cannot add issues in this app. An admin can allow it in Project settings.');
+  if (dev) mayStatus({ status: DEV_TO }, null, req.body.status || 'pending');
   const s = await statusFields(req.body.status || 'pending');
+  let names = people(req.body.assignees);
+  let owner = await issueOwner(productId, text(req.body.developerId || '', 80), names);
+  if (dev && (!owner || owner.id !== req.user.id) && !devPermissions(product).assign) owner = { id: req.user.id, name: req.user.name, username: req.user.username };
+  if (owner && !names.some((n) => namesOf(owner).includes(n.toLowerCase()))) names = [personName(owner), ...names].slice(0, 10);
   const { rows } = await db.query(
-    `INSERT INTO comments (id, screen_id, text, priority, assignees, remarks, status, status_date, resolved, created_by, updated_by, area, box)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11, $12) RETURNING *`,
+    `INSERT INTO comments (id, screen_id, text, priority, assignees, remarks, status, status_date, resolved, created_by, updated_by, area, box, developer_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11, $12, $13) RETURNING *`,
     [
       randomUUID(),
       req.params.id,
       required(text(req.body.text, 1000), 'Issue'),
       PRIORITIES.includes(req.body.priority) ? req.body.priority : 'medium',
-      people(req.body.assignees),
+      names,
       text(req.body.remarks, 1000),
       s.status, s.status_date, s.resolved,
       req.user.id,
       AREAS.includes(req.body.area) ? req.body.area : 'frontend',
       req.body.box ? JSON.stringify(markBox(req.body.box)) : null, // area marked on the screen image
+      owner ? owner.id : null,
     ]);
   const notify = rows[0].assignees.length ? await notifyOf(req, productId, rows[0].id, { added: rows[0].assignees }) : undefined;
   res.status(201).json({ ...toComment(rows[0]), notify });
 }));
 
+// Project settings → Roles & permissions: what Developers may do in this app (its admins: Full or Super admin)
+app.put('/api/products/:id/permissions', route(async (req, res) => {
+  const product = await productFor(req, req.params.id, 'full');
+  const b = req.body || {};
+  const next = devPermissions(product);
+  Object.keys(DEV_PERMISSIONS).forEach((k) => { if (b[k] !== undefined) next[k] = Boolean(b[k]); });
+  await update('products', product.id, { dev_permissions: JSON.stringify(next) }, req.user.id);
+  res.json({ devPermissions: next });
+}));
+
+// Every change is checked against the issue as stored: its owner, its status and the app's Developer permissions.
 app.patch('/api/comments/:id', route(async (req, res) => {
   const productId = await allowed(req, 'comments', req.params.id, 'edit');
+  const product = await productRow(productId);
   const b = req.body;
-  const issue = await live('comments', req.params.id, 'status, text, screen_id, assignees');
+  const issue = await live('comments', req.params.id, 'status, text, screen_id, assignees, developer_id');
+  if (!seesIssue(req.user, issue, product)) throw new HttpError(404, 'Not found');
+  const rights = issueRights(req.user, issue, product);
   const fields = {};
   // The "Fixed" tick is a shortcut: ticked → Complete, unticked → back to Pending.
   const status = b.status !== undefined ? b.status : b.resolved !== undefined ? (b.resolved ? 'complete' : 'pending') : undefined;
   if (status !== undefined && status !== issue.status) {
-    developerStatus(req, issue.status, status);
+    mayStatus(rights, issue.status, status);
     Object.assign(fields, await statusFields(status));
+  }
+  const details = ['priority', 'area', 'text', 'remarks'].filter((k) => b[k] !== undefined);
+  if (details.length && !rights.edit) {
+    throw new HttpError(403, issue.developer_id === req.user.id ? 'Developers cannot edit issue details in this app. An admin can allow it in Project settings.' : NOT_YOURS);
   }
   if (b.priority !== undefined) fields.priority = oneOf(b.priority, PRIORITIES, 'priority');
   if (b.area !== undefined) fields.area = oneOf(b.area, AREAS, 'area');
   if (b.text !== undefined) fields.text = required(text(b.text, 1000), 'Issue');
-  if (b.assignees !== undefined) fields.assignees = people(b.assignees);
   if (b.remarks !== undefined) fields.remarks = text(b.remarks, 1000);
+  // assigning: the people named, and the Developer who owns it (picked, or the first Developer among the names).
+  // A new owner takes over at once: the one before can no longer change it.
+  if (b.assignees !== undefined || b.developerId !== undefined) {
+    if (!rights.assign) {
+      throw new HttpError(403, issue.developer_id === req.user.id ? 'Developers cannot reassign issues in this app. An admin can allow it in Project settings.'
+        : issue.developer_id ? NOT_YOURS : 'Only a tester or admin can assign an unassigned issue.');
+    }
+    let names = b.assignees !== undefined ? people(b.assignees) : issue.assignees;
+    let owner;
+    if (b.developerId !== undefined) {
+      owner = b.developerId ? await issueOwner(productId, text(b.developerId, 80), []) : null;
+      // the old owner's name goes, the new one's comes
+      if (issue.developer_id && (!owner || owner.id !== issue.developer_id)) {
+        const { rows: [old] } = await db.query('SELECT name, username FROM users WHERE id = $1', [issue.developer_id]);
+        if (old) names = names.filter((n) => !namesOf(old).includes(n.toLowerCase()));
+      }
+    } else {
+      owner = await issueOwner(productId, null, names, issue.developer_id);
+    }
+    if (owner && !names.some((n) => namesOf(owner).includes(n.toLowerCase()))) names = [personName(owner), ...names].slice(0, 10);
+    fields.assignees = names;
+    fields.developer_id = owner ? owner.id : null;
+  }
   await update('comments', req.params.id, fields, req.user.id);
   if (fields.status && (fields.status === 'complete') !== (issue.status === 'complete')) {
     await resolvedToday(req, productId, { id: req.params.id, ...issue, text: fields.text || issue.text }, fields.status === 'complete');
   }
   const lower = (list) => list.map((n) => n.toLowerCase());
-  const added = (fields.assignees || []).filter((n) => !lower(issue.assignees).includes(n.toLowerCase()));
+  const added = (fields.assignees || []).filter((n) => !lower(issue.assignees || []).includes(n.toLowerCase()));
   const notify = added.length || fields.status ? await notifyOf(req, productId, req.params.id, { added, statusFrom: fields.status ? issue.status : null }) : undefined;
   res.json({ ...toComment(await one('SELECT * FROM comments WHERE id = $1', [req.params.id])), notify });
 }));
@@ -1663,7 +1777,7 @@ async function sanityReminders() {
 
 const toDone = (r) => ({
   id: r.id, userId: r.user_id, userName: personName(r), date: r.work_date, text: r.text, screenIds: r.screen_ids,
-  sharedAt: r.shared_at, sharedWith: r.shared_with, closedAt: r.closed_at, closedBy: r.closed_by,
+  sharedAt: r.shared_at, sharedWith: r.shared_with, closedAt: r.closed_at, closedBy: r.closed_by, todoId: r.todo_id,
   closedByName: personName({ name: r.closer_name, username: r.closer_username }), ...audit(r),
 });
 
@@ -1702,15 +1816,17 @@ app.get('/api/done', route(async (req, res) => {
   const { date: today } = localNow();
   const date = pastDay(req.query.date, today);
   const everyone = req.user.access === 'super';
-  const [{ rows }, { rows: shared }, { rows: people }] = await Promise.all([
+  const [{ rows }, { rows: shared }, { rows: people }, { rows: todos }] = await Promise.all([
     db.query(`${DONE_SELECT} WHERE d.product_id = $1 AND d.work_date = $2 AND NOT d.is_deleted AND ($3 OR d.user_id = $4) ORDER BY d.created_at`,
       [product.id, date, everyone, req.user.id]),
     db.query(`${DONE_SELECT} WHERE d.product_id = $1 AND $2 = ANY(d.shared_with) AND NOT d.is_deleted
               ORDER BY d.closed_at IS NOT NULL, d.created_at DESC LIMIT 200`, [product.id, req.user.id]),
     peopleOf(product.id),
+    db.query('SELECT * FROM done_todos WHERE product_id = $1 AND user_id = $2 AND done_at IS NULL AND NOT is_deleted ORDER BY created_at',
+      [product.id, req.user.id]),
   ]);
   res.json({
-    date, today, items: rows.map(toDone), shared: shared.map(toDone), teams: Boolean(product.teams_webhook),
+    date, today, items: rows.map(toDone), shared: shared.map(toDone), todos: todos.map(toTodo), teams: Boolean(product.teams_webhook),
     people: people.map((u) => ({ id: u.id, name: personName(u), teams: Boolean(u.teams_email) })),
     canClose: canCloseDone(req.user),
   });
@@ -1739,6 +1855,64 @@ app.delete('/api/done/:id', route(async (req, res) => {
   const row = await ownDone(req, req.params.id);
   await softDelete('done_items', row.id, req.user.id);
   res.json({ ok: true });
+}));
+
+// ---- my to-do points: noted down first, ticked off into "done today"
+
+const toTodo = (r) => ({ id: r.id, text: r.text, screenIds: r.screen_ids, doneAt: r.done_at, doneItemId: r.done_item_id, ...audit(r) });
+
+async function ownTodo(req, id) {
+  const row = await live('done_todos', id, '*');
+  await productFor(req, row.product_id, 'edit');
+  if (row.user_id !== req.user.id) throw new HttpError(403, 'You can only change your own to-do points');
+  return row;
+}
+
+app.post('/api/done/todos', route(async (req, res) => {
+  const product = await productFor(req, req.body.productId, 'edit');
+  const screens = await appScreens(product.id, req.body.screenIds);
+  const { rows: [row] } = await db.query(
+    `INSERT INTO done_todos (id, user_id, product_id, text, screen_ids, created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $2, $2) RETURNING *`,
+    [randomUUID(), req.user.id, product.id, required(text(req.body.text, 1000), 'The point'), screens.map((x) => x.id)]);
+  res.status(201).json(toTodo(row));
+}));
+
+app.patch('/api/done/todos/:id', route(async (req, res) => {
+  const row = await ownTodo(req, req.params.id);
+  const fields = {};
+  if (req.body.text !== undefined) fields.text = required(text(req.body.text, 1000), 'The point');
+  if (req.body.screenIds !== undefined) fields.screen_ids = (await appScreens(row.product_id, req.body.screenIds)).map((x) => x.id);
+  await update('done_todos', row.id, fields, req.user.id);
+  res.json(toTodo(await live('done_todos', row.id, '*')));
+}));
+
+app.delete('/api/done/todos/:id', route(async (req, res) => {
+  const row = await ownTodo(req, req.params.id);
+  await softDelete('done_todos', row.id, req.user.id);
+  res.json({ ok: true });
+}));
+
+// Tick a point: it becomes an entry of today's "done" (its text and screens). Untick: that entry goes, the point is open again.
+app.put('/api/done/todos/:id/done', route(async (req, res) => {
+  const row = await ownTodo(req, req.params.id);
+  const done = Boolean(req.body.done);
+  if (done === Boolean(row.done_at)) { res.json({ todo: toTodo(row), item: row.done_item_id ? await doneById(row.done_item_id) : null }); return; }
+  const itemId = await db.tx(async (client) => {
+    if (!done) {
+      if (row.done_item_id) await client.query('UPDATE done_items SET is_deleted = true, updated_by = $2 WHERE id = $1', [row.done_item_id, req.user.id]);
+      await client.query('UPDATE done_todos SET done_at = NULL, done_item_id = NULL, updated_by = $2 WHERE id = $1', [row.id, req.user.id]);
+      return null;
+    }
+    const id = randomUUID();
+    await client.query(
+      `INSERT INTO done_items (id, user_id, product_id, work_date, text, screen_ids, todo_id, created_by, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $2, $2)`,
+      [id, row.user_id, row.product_id, localNow().date, row.text, row.screen_ids, row.id]);
+    await client.query('UPDATE done_todos SET done_at = now(), done_item_id = $2, updated_by = $3 WHERE id = $1', [row.id, id, req.user.id]);
+    return id;
+  });
+  res.json({ todo: toTodo(await live('done_todos', row.id, '*')), item: itemId ? await doneById(itemId) : null });
 }));
 
 // Share my day: every entry I wrote on that day, with links to the screens I changed
@@ -2360,6 +2534,7 @@ app.post('/api/issues/teams', route(async (req, res) => {
   const { rows } = await db.query(
     `${ISSUE_SELECT} WHERE c.id = ANY($1) AND m.product_id = $2 AND NOT c.is_deleted AND NOT s.is_deleted ORDER BY array_position($1, c.id)`,
     [ids, product.id]);
+  rows.splice(0, rows.length, ...rows.filter((r) => seesIssue(req.user, r, product))); // only issues this login may see
   const keys = (Array.isArray(req.body.columns) ? req.body.columns : []).filter((k) => ISSUE_COLUMNS[k]);
   if (!keys.length) throw new HttpError(400, 'Pick at least one column to send');
   const list = rows.map((r) => keys.map((k) => [ISSUE_COLUMNS[k][0], ISSUE_COLUMNS[k][1](r) || null]));
