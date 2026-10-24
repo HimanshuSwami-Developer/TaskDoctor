@@ -152,6 +152,8 @@
     html.dark .sc-select.st.custom { --st-bg: color-mix(in srgb, var(--c) 16%, #1f2023); --st-fg: color-mix(in srgb, var(--c) 50%, #fff); --st-bd: color-mix(in srgb, var(--c) 35%, #1f2023); }
     html.dark img { opacity: .94; }
     html.dark .sb-logo img, html.dark .site-footer img { opacity: 1; }
+    /* the navy logo would sink into the dark page: lift it to a bright blue (the white check stays white) */
+    html.dark img[src$="/assets/logo.png"] { filter: brightness(2.3) saturate(1.1); }
 
     /* sidebar a shade darker, the page flat; bars without blur */
     html.dark .sidebar { background: #1b1c1f; border-right-color: #2a2b2f; }
