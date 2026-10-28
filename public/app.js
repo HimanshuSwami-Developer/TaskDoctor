@@ -110,7 +110,10 @@ $(function () {
     if (!$('.overlay:not(.hidden), .sheet:not(.hidden), .dialog-overlay:not(.hidden)').length) $('body').removeClass('overflow-hidden');
   };
   const esc = (s) => $('<div>').text(s == null ? '' : s).html();
-  const fmtDate = (d) => new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  // a day ('YYYY-MM-DD') is that calendar day wherever the browser is: new Date('2026-10-28') alone is UTC midnight,
+  // which is still the 27th west of Greenwich
+  const fmtDate = (d) => new Date(typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) ? `${d}T00:00:00` : d)
+    .toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
   const allScreens = (list) => list.flatMap((m) => m.flows).flatMap((f) => f.screens);
   const allIssues = () => allScreens(allModules).flatMap((s) => s.comments);
   const findScreen = (id) => allScreens(allModules).find((s) => s.id === id);
@@ -774,7 +777,8 @@ $(function () {
   $doc.on('keydown', (e) => { if (e.key === 'Escape' && $('body').hasClass('sb-open')) closeDrawer(); });
   // which page is open: the board, Sheets or Sanity
   const markNav = () => {
-    $('[data-action="home"].sb-item').toggleClass('on', !sheetsView && !sanity && !adminView);
+    $('[data-action="home"].sb-item').toggleClass('on', !sheetsView && !sanity && !adminView && !doneView);
+    $('[data-action="done"]').toggleClass('on', Boolean(doneView));
     $('[data-action="admin"]').toggleClass('on', Boolean(adminView));
     $('[data-action="sheets"]').toggleClass('on', Boolean(sheetsView));
     $('[data-action="sanity"]').toggleClass('on', Boolean(sanity));
@@ -3918,7 +3922,7 @@ $(function () {
       <a href="/" class="sb-item ${!sheetsView && !sanity && !adminView ? 'on' : ''}" data-action="home" title="Board: modules, flows and screens"><span class="sb-ico">${icon('home', 16)}</span><span class="sb-label">Board</span></a>
       ${sbItem({ attrs: 'data-action="sheets"', ico: icon('grid', 16), label: 'Sheets', on: Boolean(sheetsView), title: 'Sheets: typed columns, formulas, links to flows and screens, Excel in and out' })}
       ${sbItem({ attrs: 'data-action="sanity"', ico: icon('check', 16), label: 'Sanity', on: Boolean(sanity), title: 'Daily sanity checklist of this app' })}
-      ${sbItem({ attrs: 'data-action="done"', ico: icon('note', 16), label: 'Done today', title: 'What you finished today, shared on Teams' })}
+      ${sbItem({ attrs: 'data-action="done"', ico: icon('note', 16), label: 'Done today', title: 'Daily journal: done, to-do, in progress, questions and blockers' })}
       <a class="sb-item" href="/api/export" title="Download every task as an Excel sheet"><span class="sb-ico">${icon('download', 16)}</span><span class="sb-label">Excel export</span></a>
       ${sbItem({ attrs: 'data-action="admin"', ico: icon('shield', 16), label: 'Users & access', on: Boolean(adminView), title: 'Admin: logins, passwords and access' })}`);
     $('#account').html(`
@@ -4195,6 +4199,7 @@ $(function () {
     loadUsers().done(() => {
       if (sheetsView) closeSheets();
       if (sanity) closeSanity();
+      if (doneView) closeDone();
       adminView = adminView || { q: '', access: '', app: '', panel: null };
       $('#board, #tabs').addClass('hidden');
       $('#adminPage').removeClass('hidden');
@@ -4748,6 +4753,7 @@ $(function () {
     render();
     if (sanity) openSanity(productId); // on the Sanity page: that app's sanity
     if (sheetsView) openSheets(productId); // on the Sheets page: that app's sheets
+    if (doneView) openDone(productId); // on the journal page: that app's journal
   });
   $doc.on('click', '[data-action="add-product"]', () => ask({
     title: 'New product',
@@ -4903,7 +4909,7 @@ $(function () {
   // ← → step through the flow while the popup is on top and nothing is being typed
   $doc.on('keydown', (e) => {
     if (!openId || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || $(e.target).is('input, textarea, select, [contenteditable]')) return;
-    if (dialog.isOpen() || sheetId || videoFlowId || bugsView || $('#copyModal, #writerModal, #statusModal, #doneModal, #sheetsModal, #sanityLogModal').not('.hidden').length) return;
+    if (dialog.isOpen() || sheetId || videoFlowId || bugsView || $('#copyModal, #writerModal, #statusModal, #sheetsModal, #sanityLogModal').not('.hidden').length) return;
     const s = findScreen(openId);
     const { prev, next } = s ? popupSiblings(s) : {};
     const to = e.key === 'ArrowLeft' ? prev : next;
@@ -5422,7 +5428,7 @@ $(function () {
     else if (sketch.open) skEscape();
     else if (!$('#copyModal').hasClass('hidden')) closeCopy();
     else if (sanityLog) closeSanityLog();
-    else if (doneView) closeDone();
+    else if (doneView && doneView.editing) cancelEdit();
     else if (!$('#statusModal').hasClass('hidden')) closeStatuses();
     else if (bugsView) closeBugs();
     else if (adminView && adminView.panel) { adminView.panel = null; renderAdmin(); }
@@ -5440,8 +5446,9 @@ $(function () {
   // ---------------------------------------------------------------- go to a flow / screen anywhere (any app or module)
 
   function showPlace(flowId) {
-    if (sanity) closeSanity(); // going to a flow or screen leaves the Sanity (or Sheets) page
+    if (sanity) closeSanity(); // going to a flow or screen leaves the Sanity (or Sheets, or journal) page
     if (sheetsView) closeSheets();
+    if (doneView) closeDone();
     const f = findFlow(flowId);
     const p = f && productOf(f.moduleId);
     if (!p) { toast('That is no longer here'); return false; }
@@ -5483,7 +5490,7 @@ $(function () {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   });
 
-  // Links from Teams: /#flow=<id>, #screen=<id>, #sanity=<app id>[&view=logs], #done=<app id>[&tab=shared]
+  // Links from Teams: /#flow=<id>, #screen=<id>, #sanity=<app id>[&view=logs], #done=<app id>[&date=…][&tab=shared|questions|blockers|…]
   function openFromHash() {
     const h = new URLSearchParams(location.hash.slice(1));
     if (![...h.keys()].length) return;
@@ -5502,7 +5509,7 @@ $(function () {
       if (h.get('sanity')) {
         const req = openSanity(productId, null, h.get('view') === 'logs' ? 'logs' : 'sheet');
         if (req && h.get('log')) req.done(() => openSanityLog(h.get('log')));
-      } else openDone(productId, h.get('date'), h.get('tab') === 'shared' ? 'shared' : 'day');
+      } else openDone(productId, h.get('date'), doneTab(h.get('tab')) || 'done', h.get('meeting'));
     }
   }
   window.addEventListener('hashchange', () => { if (loaded) openFromHash(); });
@@ -5540,6 +5547,7 @@ $(function () {
       // the page takes the board's place; the address keeps it, so a refresh or a shared link comes back here
       if (sheetsView) closeSheets();
       if (adminView) closeAdmin();
+      if (doneView) closeDone();
       $('#board, #tabs').addClass('hidden');
       $('#sanityPage').removeClass('hidden');
       markNav();
@@ -5902,35 +5910,105 @@ $(function () {
     api('POST', `/api/products/${sanity.productId}/teams/test`).done(() => toast('Test message sent to Teams'));
   });
 
-  // ---------------------------------------------------------------- done today: what each person finished, with the screens they changed
+  // ---------------------------------------------------------------- done today: the daily work journal
+  // Tabs: Done (what each person finished, with the screens they changed), To-do and In Progress (my points, ticked off
+  // into Done), Questions (doubts about how the app should work, collected into a meeting agenda), Blockers, and
+  // Shared with me. A past day shows what was done and what was open at the end of that day.
 
-  // { productId, date, today, items, shared, people, canClose, teams, tab: 'day' | 'shared', sharing: entry id whose picker is open }
+  // { productId, date, today, followToday, items, shared, todos, questions, blockers, people, canClose, teams,
+  //   tab, sharing: entry id whose picker is open, editing: { kind, id }, draft: values for the next new entry,
+  //   draftId: id the next new entry is saved with (a form sent twice saves once), saving,
+  //   search, prio, qStatus, qScope, results: search across all days, agenda: { date, items } }
   let doneView = null;
   let donePicked = []; // screens attached to the entry being written
-  let doneMode = 'todo'; // what the box at the top adds: a to-do point ('todo') or something already done ('done')
+  let doneSeq = 0; // the newest load: an answer for a day picked earlier that comes in late is dropped
 
-  // tab: the day's entries ('day') or the ones shared with me ('shared'); kept as it is when left out
-  function openDone(pid, date, tab) {
+  const DONE_TABS = {
+    done: ['Done', 'check'], todo: ['To-do', 'list'], progress: ['In Progress', 'play'],
+    questions: ['Questions', 'chat'], blockers: ['Blockers', 'lock'], minutes: ['Minutes of meeting', 'note'], shared: ['Shared with me', 'share'],
+  };
+  const doneTab = (tab) => (tab === 'day' ? 'done' : DONE_TABS[tab] ? tab : null); // 'day': links made before the tabs
+  const Q_STATUS = { open: ['Open', 'slate'], ready: ['Ready for discussion', 'amber'], discussed: ['Discussed', 'sky'], resolved: ['Resolved', 'green'] };
+  const Q_STEPS = Object.keys(Q_STATUS);
+
+  // days are 'YYYY-MM-DD' of the team's calendar; counted in UTC so the browser's timezone never shifts them
+  const dayParts = (day) => day.split('-').map(Number);
+  const shiftDay = (day, n) => { const [y, m, d] = dayParts(day); return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10); };
+  const daysBetween = (a, b) => { const [y1, m1, d1] = dayParts(a); const [y2, m2, d2] = dayParts(b); return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 864e5); };
+  const dayName = (day) => new Date(`${day}T00:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
+  const fmtMinutes = (m) => (m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ''}` : `${m}m`);
+  const uuid = () => (window.crypto && crypto.randomUUID ? crypto.randomUUID()
+    : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => { const r = Math.floor(Math.random() * 16); return (c === 'x' ? r : (r % 4) + 8).toString(16); }));
+  const prioTag = (p) => `<span class="prio-tag ${p}"><span class="dot bg-${p}"></span>${PRIORITY[p] ? PRIORITY[p].label : p}</span>`;
+  const personOptions = (d, selected, none) => `<option value="">${none}</option>${d.people.map((u) => `<option value="${u.id}" ${u.id === selected ? 'selected' : ''}>${esc(u.name)}${u.id === me.id ? ' (you)' : ''}</option>`).join('')}`;
+
+  // The journal is a page of its own, in the board's place (like Sanity); the address (#done=<app>&tab=…) keeps it.
+  // tab: done | todo | progress | questions | blockers | minutes | shared; kept as it is when left out. No date: today.
+  // meetingId: the minutes to show on the Minutes tab.
+  function openDone(pid, date, tab, meetingId) {
     if (!pid) { dialog.alert('Add an app first.', 'No app'); return null; }
+    const seq = ++doneSeq;
+    const keep = doneView && doneView.productId === pid ? doneView : null;
     return api('GET', `/api/done?product=${encodeURIComponent(pid)}${date ? `&date=${date}` : ''}`).done((d) => {
-      if (!doneView || doneView.productId !== pid) donePicked = [];
-      doneView = { productId: pid, ...d, tab: tab || (doneView && doneView.tab) || 'day', sharing: null };
+      if (seq !== doneSeq) return; // another day was picked meanwhile: its answer wins
+      if (!keep) donePicked = [];
+      doneView = {
+        search: '', prio: '', qStatus: '', qScope: '', draftId: uuid(), ...(keep ? {
+          search: keep.search, prio: keep.prio, qStatus: keep.qStatus, qScope: keep.qScope, draftId: keep.draftId, draft: keep.draft,
+          editing: keep.editing, agenda: keep.agenda, results: keep.results, mom: keep.mom,
+        } : {}),
+        productId: pid, ...d, tab: doneTab(tab) || (keep && keep.tab) || 'done', sharing: null, saving: false,
+        followToday: d.date === d.today, // on today: a reload after midnight moves on to the new day
+      };
+      if (doneView.editing && !doneTarget(doneView.editing)) doneView.editing = null;
+      const fresh = $('#journalPage').hasClass('hidden');
+      if (sanity) closeSanity();
+      if (sheetsView) closeSheets();
+      if (adminView) closeAdmin();
       renderDone();
-      $('#doneModal').removeClass('hidden');
-      $('body').addClass('overflow-hidden');
+      $('#board, #tabs').addClass('hidden');
+      $('#journalPage').removeClass('hidden');
+      markNav();
+      doneHash();
+      if (fresh) window.scrollTo(0, 0);
+      if (doneView.agenda && doneView.tab === 'questions') loadAgenda(doneView.agenda.date);
+      if (doneView.tab === 'minutes' && (!doneView.mom || meetingId)) loadMeetings(meetingId);
     });
   }
-  // (keeps what is half typed in the box at the top)
+
+  // the address keeps the page, its day, tab and minutes, so a refresh or a shared link comes back here
+  function doneHash() {
+    const d = doneView;
+    if (!d) return;
+    const meeting = d.tab === 'minutes' && d.mom && d.mom.current ? `&meeting=${d.mom.current.meeting.id}` : '';
+    history.replaceState(null, '', `${location.pathname}${location.search}#done=${encodeURIComponent(d.productId)}${d.followToday ? '' : `&date=${d.date}`}${d.tab === 'done' ? '' : `&tab=${d.tab}`}${meeting}`);
+  }
+
+  // what is half typed in the box at the top, to put back after the page is drawn again
+  const formValues = () => {
+    const vals = {};
+    $('#doneAdd [name]').each((i, el) => { vals[el.name] = $(el).val(); });
+    return { vals, open: $('#doneAdd details').prop('open') };
+  };
+  const restoreForm = ({ vals, open }) => {
+    Object.entries(vals).forEach(([k, v]) => { if (v) $(`#doneAdd [name="${k}"]`).val(v); });
+    if (open) $('#doneAdd details').prop('open', true);
+  };
   const reloadDone = () => {
     if (!doneView) return $.Deferred().resolve();
-    const typed = $('#doneAdd [name=text]').val();
-    return openDone(doneView.productId, doneView.date).done(() => { if (typed) $('#doneAdd [name=text]').val(typed); });
+    const typed = formValues();
+    return openDone(doneView.productId, doneView.followToday ? '' : doneView.date).done(() => restoreForm(typed));
   };
+  // draw again, keeping what is typed (attaching a screen, switching tabs …)
+  const keepForm = (fn) => { const typed = formValues(); fn(); renderDone(); restoreForm(typed); };
 
   function closeDone() {
     doneView = null;
-    $('#doneModal').addClass('hidden');
-    unlockScroll();
+    $('#journalPage').addClass('hidden');
+    $('#doneBody').empty();
+    $('#board, #tabs').removeClass('hidden');
+    markNav();
+    history.replaceState(null, '', location.pathname + location.search);
   }
 
   const screenChip = (id, removable) => {
@@ -5939,6 +6017,8 @@ $(function () {
     const f = findFlow(s.flowId);
     return `<span class="screen-chip"><button type="button" data-done-screen="${id}" title="${esc(f ? f.name : '')} › ${esc(s.name)}">${esc(s.name)}</button>${removable ? `<button type="button" data-done-unpick="${id}" title="Remove">${icon('close', 10)}</button>` : ''}</span>`;
   };
+  const screenChips = (ids) => (ids.length ? `<div class="mt-1 flex flex-wrap gap-1">${ids.map((id) => screenChip(id)).join('')}</div>` : '');
+  const screenNames = (ids) => ids.map((id) => (findScreen(id) || {}).name || '');
 
   // One entry: text, screens, who it is shared with and whether it is closed; the author edits, shares and deletes,
   // a tester / super admin it was shared with closes it. withAuthor: on "Shared with me", say who and which day.
@@ -5948,14 +6028,16 @@ $(function () {
     const owns = (x.userId === me.id || me.access === 'super') && can('edit');
     const closable = d.canClose && x.sharedWith.length && (x.sharedWith.includes(me.id) || me.access === 'super');
     const picking = d.sharing === x.id;
+    const editing = d.editing && d.editing.id === x.id;
     return `
-      <li class="done-item ${x.closedAt ? 'closed' : ''}">
+      <li class="done-item ${x.closedAt ? 'closed' : ''} ${editing ? 'editing' : ''}">
         <div class="min-w-0 flex-1">
           ${withAuthor ? `<p class="mb-0.5 flex items-center gap-1 text-xs font-semibold text-slate-600">${icon('user', 12)} ${esc(x.userName)} <span class="font-normal text-slate-400">· ${fmtDate(x.date)}</span></p>` : ''}
           <p class="whitespace-pre-wrap text-sm text-slate-800">${esc(x.text)}</p>
-          ${x.screenIds.length ? `<div class="mt-1 flex flex-wrap gap-1">${x.screenIds.map((id) => screenChip(id)).join('')}</div>` : ''}
+          ${screenChips(x.screenIds)}
           <p class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-400">
             <span>${new Date(x.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+            ${x.minutes ? `<span class="jr-time" title="Time spent">${icon('clock', 11)} ${fmtMinutes(x.minutes)}</span>` : ''}
             ${x.sharedAt ? '<span class="text-indigo-600">on Teams</span>' : ''}
             ${x.sharedWith.length ? `<span>${icon('share', 11)} shared with ${esc(x.sharedWith.map(name).join(', '))}</span>` : ''}
             ${x.closedAt ? `<span class="chip pass">${icon('check', 11)} Closed by ${esc(x.closedByName || '—')} · ${fmtDate(x.closedAt)}</span>`
@@ -5982,126 +6064,492 @@ $(function () {
       </li>`;
   }
 
-  // One open to-do point: tick it and it moves to today's done list
-  const todoItem = (t) => `
-      <li class="todo-item" data-todo="${t.id}">
-        <button type="button" class="todo-check" data-todo-done="${t.id}" title="Done: move it to Done today" aria-label="Mark done">${icon('check', 12)}</button>
+  // One point (to-do or in progress): tick it and it moves to today's done list. A past day only shows them.
+  function todoItem(t) {
+    const d = doneView;
+    const live = d.date === d.today && can('edit');
+    const progress = t.stage === 'progress';
+    const since = progress && t.startedAt ? Math.max(0, Math.floor((Date.now() - new Date(t.startedAt)) / 864e5)) : null;
+    const blocked = d.blockers.filter((b) => b.todoId === t.id && !b.resolvedAt);
+    return `
+      <li class="todo-item ${d.editing && d.editing.id === t.id ? 'editing' : ''}" data-todo="${t.id}">
+        ${live ? `<button type="button" class="todo-check" data-todo-done="${t.id}" title="Done: move it to Done today" aria-label="Mark done">${icon('check', 12)}</button>` : `<span class="todo-check" aria-hidden="true"></span>`}
         <div class="min-w-0 flex-1">
           <p class="whitespace-pre-wrap text-sm text-slate-800">${esc(t.text)}</p>
-          ${t.screenIds.length ? `<div class="mt-1 flex flex-wrap gap-1">${t.screenIds.map((id) => screenChip(id)).join('')}</div>` : ''}
+          <p class="jr-meta">
+            ${prioTag(t.priority)}
+            ${t.estMinutes ? `<span title="Estimate">${icon('clock', 11)} ~${fmtMinutes(t.estMinutes)}</span>` : ''}
+            ${since !== null ? `<span>${since ? `started ${since} day${since === 1 ? '' : 's'} ago` : 'started today'}</span>` : ''}
+            ${blocked.length ? `<span class="jr-flag">${icon('lock', 11)} blocked</span>` : ''}
+          </p>
+          ${t.nextAction ? `<p class="jr-next">${icon('arrow', 12)} <b>Next:</b> ${esc(t.nextAction)}</p>` : ''}
+          ${screenChips(t.screenIds)}
         </div>
-        <button class="icon-btn" data-todo-edit="${t.id}" title="Edit">${icon('edit', 14)}</button>
-        <button class="icon-btn danger" data-todo-delete="${t.id}" title="Delete">${icon('trash', 14)}</button>
+        ${live ? `
+          ${progress
+    ? `<button class="icon-btn" data-todo-stage="${t.id}" data-stage="todo" title="Not working on it now: back to To-do">${icon('undo', 14)}</button>
+       <button class="icon-btn" data-todo-block="${t.id}" title="Blocked: note what stops it">${icon('lock', 14)}</button>`
+    : `<button class="icon-btn" data-todo-stage="${t.id}" data-stage="progress" title="Start: move to In Progress">${icon('play', 14)}</button>`}
+          <button class="icon-btn" data-todo-edit="${t.id}" title="Edit">${icon('edit', 14)}</button>
+          <button class="icon-btn danger" data-todo-delete="${t.id}" title="Delete">${icon('trash', 14)}</button>` : ''}
       </li>`;
+  }
+
+  // One question: its workflow (Open → Ready → Discussed → Resolved), details for the meeting, and the answer
+  function questionItem(q, numbered) {
+    const d = doneView;
+    const r = q.rights;
+    const carried = q.raisedOn < d.date && q.status !== 'resolved';
+    const [label, color] = Q_STATUS[q.status];
+    const next = Q_STEPS[Q_STEPS.indexOf(q.status) + 1];
+    return `
+      <li class="jq ${q.status === 'resolved' ? 'resolved' : ''} ${d.editing && d.editing.id === q.id ? 'editing' : ''}">
+        <div class="jq-top">
+          ${numbered ? `<b class="jq-num">${numbered}.</b>` : ''}
+          ${prioTag(q.priority)}
+          <span class="jr-pill st-${color}">${label}</span>
+          ${carried ? `<span class="jr-pill st-violet" title="Still open from an earlier day">Open since ${fmtDate(q.raisedOn)}</span>` : ''}
+          ${q.meetingDate ? `<span class="jr-meta-i" title="Meeting">${icon('clock', 11)} Meeting ${fmtDate(q.meetingDate)}</span>` : ''}
+          <span class="ml-auto flex items-center">
+            ${r.edit ? `<button class="icon-btn" data-q-edit="${q.id}" title="Edit">${icon('edit', 14)}</button>` : ''}
+            ${r.remove ? `<button class="icon-btn danger" data-q-delete="${q.id}" title="Delete">${icon('trash', 14)}</button>` : ''}
+          </span>
+        </div>
+        <p class="jq-text">${esc(q.text)}</p>
+        ${q.details ? `<p class="jq-sub">${esc(q.details)}</p>` : ''}
+        ${q.expected ? `<p class="jq-sub"><b>Expected:</b> ${esc(q.expected)}</p>` : ''}
+        ${q.apis.length ? `<div class="mt-1 flex flex-wrap gap-1">${q.apis.map((a) => `<code class="jq-api">${esc(a)}</code>`).join('')}</div>` : ''}
+        ${screenChips(q.screenIds)}
+        ${q.answer ? `<p class="jq-answer"><b>${q.status === 'resolved' ? 'Answer' : 'Notes'}:</b> ${esc(q.answer)}</p>` : ''}
+        <div class="jq-foot">
+          <span>Asked by ${esc(q.userId === me.id ? 'you' : q.userName)} · ${fmtDate(q.raisedOn)}${q.assigneeId ? ` · for <b>${esc(q.assigneeId === me.id ? 'you' : q.assigneeName)}</b>` : ''}${q.resolvedOn ? ` · resolved ${fmtDate(q.resolvedOn)}` : ''}</span>
+          ${r.move ? `<span class="jq-steps" role="group" aria-label="Status">${Q_STEPS.map((s) => `
+            <button type="button" class="${s === q.status ? 'on' : ''} ${s === next ? 'next' : ''}" data-q-status="${q.id}" data-to="${s}" ${s === q.status ? 'disabled aria-current="step"' : ''} title="${s === q.status ? 'Now' : 'Move to'}: ${esc(Q_STATUS[s][0])}">${esc(Q_STATUS[s][0].split(' ')[0])}</button>`).join('')}</span>` : ''}
+        </div>
+      </li>`;
+  }
+
+  // One blocker: how long it has blocked, who it waits on, the next action, and how it was resolved
+  function blockerItem(b) {
+    const d = doneView;
+    const days = daysBetween(b.raisedOn, b.resolvedOn || d.date);
+    return `
+      <li class="jb ${b.resolvedAt ? 'resolved' : ''} ${d.editing && d.editing.id === b.id ? 'editing' : ''}">
+        <div class="min-w-0 flex-1">
+          <p class="jr-meta">
+            ${prioTag(b.priority)}
+            <span class="jr-pill ${b.resolvedAt ? 'st-green' : 'st-red'}">${b.resolvedAt ? `Resolved ${fmtDate(b.resolvedOn)}` : days ? `Blocked ${days} day${days === 1 ? '' : 's'}` : 'Blocked today'}</span>
+            ${b.userId !== me.id ? `<span>${icon('user', 11)} ${esc(b.userName)}</span>` : ''}
+          </p>
+          <p class="mt-1 whitespace-pre-wrap text-sm text-slate-800">${esc(b.text)}</p>
+          ${b.waitingOn ? `<p class="jq-sub">Waiting on <b>${esc(b.waitingOn === me.id ? 'you' : b.waitingName)}</b></p>` : ''}
+          ${b.nextAction ? `<p class="jr-next">${icon('arrow', 12)} <b>Next:</b> ${esc(b.nextAction)}</p>` : ''}
+          ${b.todoText ? `<p class="jq-sub">${icon('list', 11)} Blocks: ${esc(b.todoText)}</p>` : ''}
+          ${b.resolution ? `<p class="jq-answer"><b>Resolved:</b> ${esc(b.resolution)}</p>` : ''}
+          ${screenChips(b.screenIds)}
+        </div>
+        ${b.rights.resolve ? (b.resolvedAt
+    ? `<button class="btn-secondary shrink-0 px-2 py-1 text-xs" data-b-reopen="${b.id}">Reopen</button>`
+    : `<button class="btn-secondary shrink-0 px-2 py-1 text-xs" data-b-resolve="${b.id}">${icon('check', 12)} Resolve</button>`) : ''}
+        ${b.rights.edit ? `
+          <button class="icon-btn" data-b-edit="${b.id}" title="Edit">${icon('edit', 14)}</button>
+          <button class="icon-btn danger" data-b-delete="${b.id}" title="Delete">${icon('trash', 14)}</button>` : ''}
+      </li>`;
+  }
+
+  // ---- what each tab lists, after search and filters
+
+  function doneLists(d) {
+    const q = d.search.trim().toLowerCase();
+    const has = (...fields) => !q || fields.flat().some((f) => String(f || '').toLowerCase().includes(q));
+    const prio = (x) => !d.prio || x.priority === d.prio;
+    const qStatus = (x) => !d.qStatus || (d.qStatus === 'unresolved' ? x.status !== 'resolved' : x.status === d.qStatus);
+    const qScope = (x) => !d.qScope || (d.qScope === 'mine' ? x.userId === me.id : x.assigneeId === me.id);
+    return {
+      done: d.items.filter((x) => has(x.text, x.userName, screenNames(x.screenIds))),
+      todo: d.todos.filter((t) => t.stage !== 'progress' && prio(t) && has(t.text, t.nextAction, screenNames(t.screenIds))),
+      progress: d.todos.filter((t) => t.stage === 'progress' && prio(t) && has(t.text, t.nextAction, screenNames(t.screenIds))),
+      questions: d.questions.filter((x) => prio(x) && qStatus(x) && qScope(x)
+        && has(x.text, x.details, x.expected, x.answer, x.userName, x.assigneeName, x.apis, screenNames(x.screenIds))),
+      blockers: d.blockers.filter((b) => prio(b) && has(b.text, b.nextAction, b.waitingName, b.todoText, b.resolution, b.userName)),
+      shared: d.shared.filter((x) => has(x.text, x.userName, screenNames(x.screenIds))),
+    };
+  }
+
+  // the counts on the tabs and the day's summary (before search and filters)
+  function doneCounts(d) {
+    const mine = d.items.filter((x) => x.userId === me.id);
+    const openQ = d.questions.filter((q) => q.status !== 'resolved');
+    const openB = d.blockers.filter((b) => !b.resolvedAt);
+    return {
+      done: d.items.length, mine: mine.length, logged: mine.reduce((s, x) => s + (x.minutes || 0), 0),
+      todo: d.todos.filter((t) => t.stage !== 'progress').length, progress: d.todos.filter((t) => t.stage === 'progress').length,
+      questions: openQ.length, ready: openQ.filter((q) => q.status === 'ready').length,
+      blockers: openB.length, urgent: openB.filter((b) => ['urgent', 'high'].includes(b.priority)).length,
+      shared: d.shared.filter((x) => !x.closedAt).length,
+    };
+  }
+
+  // the item being edited in the box at the top (null when it is gone)
+  function doneTarget(ed) {
+    const d = doneView;
+    if (!ed) return null;
+    const list = { done: d.items, todo: d.todos, progress: d.todos, questions: d.questions, blockers: d.blockers }[ed.kind] || [];
+    return list.find((x) => x.id === ed.id) || null;
+  }
+
+  // ---- the box at the top: what it asks for depends on the tab (and fills in when editing)
+
+  function doneComposer(d, p) {
+    const kind = d.tab;
+    const ed = d.editing && d.editing.kind === kind ? doneTarget(d.editing) : null;
+    const v = ed || d.draft || {};
+    const screenOptions = (p ? p.modules : []).flatMap((m) => m.flows.map((f) => `<optgroup label="${esc(flowLabel(m, f))}">${onlyScreens(f.screens)
+      .filter((s) => !donePicked.includes(s.id)).map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</optgroup>`)).join('');
+    const screens = `
+      <select class="input jr-in-sm max-w-[14rem]" data-done-pick aria-label="Attach a screen"><option value="">${kind === 'done' ? 'Attach a screen you changed…' : 'Attach a screen…'}</option>${screenOptions}</select>
+      ${donePicked.map((id) => screenChip(id, true)).join('')}`;
+    const prio = (def) => `<select name="priority" class="input jr-in-sm" aria-label="Priority" title="Priority">${priorityOptions(v.priority || def)}</select>`;
+    const hint = {
+      done: 'Log something you finished. Enter adds; Shift+Enter for a new line.',
+      todo: 'Note what you will do; start it to move it to In Progress, tick it when it is done.',
+      progress: 'What you are working on now, with the next step.',
+      questions: 'A doubt about how the app should work. It stays open, day after day, until it is resolved.',
+      blockers: 'What stops your work, who you are waiting on, and what happens next.',
+    }[kind];
+    const placeholder = {
+      done: 'What did you finish? e.g. Fixed OTP timer on Login, new KYC upload flow',
+      todo: 'Add a point… e.g. Fix OTP timer on Login',
+      progress: 'What are you working on? e.g. KYC upload: compress images before sending',
+      questions: 'Your question… e.g. Should the OTP screen resend automatically after 30 seconds?',
+      blockers: 'What blocks you? e.g. Waiting for the payment API sandbox keys',
+    }[kind];
+    const extra = {
+      done: `<input name="minutes" class="input jr-in-sm w-36" placeholder="Time spent, e.g. 1h 30m" value="${esc(v.minutes ? fmtMinutes(v.minutes) : '')}" aria-label="Time spent (optional)" title="Time spent (optional)">`,
+      todo: `${prio('medium')}<input name="estMinutes" class="input jr-in-sm w-32" placeholder="Estimate, e.g. 2h" value="${esc(v.estMinutes ? fmtMinutes(v.estMinutes) : '')}" aria-label="Estimate (optional)">`,
+      progress: `${prio('medium')}<input name="nextAction" class="input jr-in-sm min-w-[12rem] flex-1" maxlength="500" placeholder="Next action (optional)" value="${esc(v.nextAction || '')}" aria-label="Next action">`,
+      blockers: `${prio('high')}
+        <select name="waitingOn" class="input jr-in-sm" aria-label="Waiting on">${personOptions(d, v.waitingOn, 'Waiting on… (nobody)')}</select>
+        <select name="todoId" class="input jr-in-sm max-w-[14rem]" aria-label="Blocks which point">
+          <option value="">Blocks a point? (none)</option>${d.todos.map((t) => `<option value="${t.id}" ${t.id === v.todoId ? 'selected' : ''}>${esc(t.text.slice(0, 60))}</option>`).join('')}
+        </select>
+        <input name="nextAction" class="input jr-in-sm min-w-[12rem] flex-1" maxlength="500" placeholder="Next action, e.g. Follow up with Rahul at 3 pm" value="${esc(v.nextAction || '')}" aria-label="Next action">`,
+      questions: `${prio('medium')}
+        <select name="assigneeId" class="input jr-in-sm" aria-label="Who answers it">${personOptions(d, v.assigneeId, 'Ask… (anyone)')}</select>
+        <label class="jr-date-label">Meeting <input type="date" name="meetingDate" class="input jr-in-sm" value="${esc(v.meetingDate || '')}"></label>`,
+    }[kind];
+    return `
+      <form id="doneAdd" class="done-add jr-compose" novalidate>
+        ${ed ? `<p class="jr-editing">${icon('edit', 12)} Editing · <button type="button" class="underline" data-done-cancel-edit>Cancel</button></p>` : `<p class="text-xs text-slate-400">${hint}</p>`}
+        <div class="assist-wrap">
+          <textarea class="input w-full" name="text" rows="2" maxlength="1000" placeholder="${esc(placeholder)}" data-assist="${kind === 'questions' ? 'question' : 'text'}">${esc(v.text || '')}</textarea>
+        </div>
+        ${kind === 'questions' ? `
+        <details class="jr-more" ${ed && (v.details || v.expected || v.apis.length || v.screenIds.length) ? 'open' : ''}>
+          <summary>Details for the meeting: screens, APIs, expected behaviour</summary>
+          <div class="grid gap-2 pt-2 sm:grid-cols-2">
+            <label class="block"><span class="field-label">Context / what is unclear</span>
+              <span class="assist-wrap"><textarea class="input w-full" name="details" rows="2" maxlength="2000" data-assist="text" placeholder="e.g. On Login › OTP the timer restarts when the app comes back from background">${esc(v.details || '')}</textarea></span></label>
+            <label class="block"><span class="field-label">Expected behaviour</span>
+              <span class="assist-wrap"><textarea class="input w-full" name="expected" rows="2" maxlength="2000" data-assist="text" placeholder="e.g. The timer keeps counting from where it was">${esc(v.expected || '')}</textarea></span></label>
+            <label class="block sm:col-span-2"><span class="field-label">Related APIs</span>
+              <input class="input w-full" name="apis" maxlength="600" placeholder="e.g. POST /api/otp/send, GET /api/otp/status" value="${esc((v.apis || []).join(', '))}"></label>
+          </div>
+        </details>` : ''}
+        <div class="flex flex-wrap items-center gap-2">
+          ${extra}
+          ${screens}
+          <button class="btn-primary ml-auto">${ed ? `${icon('check', 14)} Save` : `${icon('plus', 14)} ${{ done: 'Add', todo: 'Add point', progress: 'Add', questions: 'Add question', blockers: 'Add blocker' }[kind]}`}</button>
+        </div>
+      </form>`;
+  }
+
+  // ---- the tab's list (drawn on its own while searching, so the search box keeps the cursor)
+
+  function doneListHtml(d) {
+    if (d.tab === 'minutes') return momHtml(d);
+    if (d.results) return doneResultsHtml(d);
+    if (d.tab === 'questions' && d.agenda) return agendaHtml(d);
+    const L = doneLists(d);
+    const isToday = d.date === d.today;
+    const filtered = d.search || d.prio || d.qStatus || d.qScope;
+    const empty = (text) => `<p class="py-10 text-center text-sm text-slate-400">${filtered ? 'Nothing matches the search or filters.' : text}</p>`;
+    if (d.tab === 'shared') {
+      return `<ul class="space-y-1.5">${L.shared.map((x) => doneEntry(x, true)).join('') || empty('Nothing has been shared with you yet.')}</ul>`;
+    }
+    if (d.tab === 'done') {
+      const byPerson = [...new Map(L.done.map((x) => [x.userId, x.userName])).entries()]
+        .sort(([a], [b]) => (b === me.id) - (a === me.id)); // you first
+      return byPerson.map(([uid, name]) => {
+        const list = L.done.filter((x) => x.userId === uid);
+        const mins = list.reduce((s, x) => s + (x.minutes || 0), 0);
+        return `
+          <div>
+            <p class="mb-1.5 flex items-center gap-2 text-sm font-semibold text-slate-900">${icon('user', 14)} ${esc(name)}${uid === me.id ? ' <span class="text-xs font-normal text-slate-400">(you)</span>' : ''}
+              <span class="text-xs font-normal text-slate-400">${list.length} entr${list.length === 1 ? 'y' : 'ies'}${mins ? ` · ${fmtMinutes(mins)}` : ''}</span></p>
+            <ul class="space-y-1.5">${list.map((x) => doneEntry(x)).join('')}</ul>
+          </div>`;
+      }).join('') || empty(`Nothing logged ${isToday ? 'yet today' : 'on this day'}.`);
+    }
+    if (d.tab === 'todo' || d.tab === 'progress') {
+      const list = L[d.tab];
+      return list.length ? `<ul class="space-y-1.5">${list.map(todoItem).join('')}</ul>`
+        : empty(d.tab === 'todo' ? (isToday ? 'No open points. Add what you plan to do; open points stay here until you tick them.' : 'No open points at the end of this day.')
+          : (isToday ? 'Nothing in progress. Start a point from To-do, or add one here.' : 'Nothing was in progress at the end of this day.'));
+    }
+    if (d.tab === 'questions') {
+      return L.questions.length ? `<ul class="space-y-2">${L.questions.map((q) => questionItem(q)).join('')}</ul>`
+        : empty('No open questions. Add a doubt about a flow, a screen or an API, and bring it to the next meeting.');
+    }
+    return L.blockers.length ? `<ul class="space-y-1.5">${L.blockers.map(blockerItem).join('')}</ul>` : empty('Nothing is blocking you. 🎉');
+  }
+
+  // search across all days (server): entries, open points, questions and blockers
+  function doneResultsHtml(d) {
+    const r = d.results;
+    const total = r.done.length + r.todos.length + r.questions.length + r.blockers.length;
+    const sec = (title, html) => (html ? `<div><p class="jr-sec">${title}</p><ul class="space-y-1.5">${html}</ul></div>` : '');
+    return `
+      <div class="jr-results-head">${icon('filter', 14)} ${total} result${total === 1 ? '' : 's'} for <b>“${esc(r.q)}”</b> across all days
+        <button type="button" class="btn-secondary ml-auto px-2 py-1 text-xs" data-done-search-clear>${icon('close', 12)} Clear</button></div>
+      ${sec('Done', r.done.map((x) => `
+        <li class="done-item"><div class="min-w-0 flex-1">
+          <p class="whitespace-pre-wrap text-sm text-slate-800">${esc(x.text)}</p>
+          <p class="mt-1 text-xs text-slate-400">${x.userId === me.id ? '' : `${esc(x.userName)} · `}${fmtDate(x.date)}${x.minutes ? ` · ${fmtMinutes(x.minutes)}` : ''}</p>
+        </div><button class="btn-secondary shrink-0 px-2 py-1 text-xs" data-done-goto="${x.date}">Open day</button></li>`).join(''))}
+      ${sec('Open points', r.todos.map((t) => `
+        <li class="done-item"><div class="min-w-0 flex-1"><p class="text-sm text-slate-800">${esc(t.text)}</p>
+          <p class="jr-meta">${prioTag(t.priority)}<span>${t.stage === 'progress' ? 'In progress' : 'To-do'}</span></p></div></li>`).join(''))}
+      ${sec('Questions', r.questions.map((q) => `
+        <li class="done-item"><div class="min-w-0 flex-1"><p class="text-sm text-slate-800">${esc(q.text)}</p>
+          <p class="jr-meta">${prioTag(q.priority)}<span class="jr-pill st-${Q_STATUS[q.status][1]}">${Q_STATUS[q.status][0]}</span><span>${fmtDate(q.raisedOn)}</span></p>
+          ${q.answer ? `<p class="jq-answer"><b>Answer:</b> ${esc(q.answer)}</p>` : ''}</div></li>`).join(''))}
+      ${sec('Blockers', r.blockers.map((b) => `
+        <li class="done-item"><div class="min-w-0 flex-1"><p class="text-sm text-slate-800">${esc(b.text)}</p>
+          <p class="jr-meta">${prioTag(b.priority)}<span>${fmtDate(b.raisedOn)}${b.resolvedOn ? ` → resolved ${fmtDate(b.resolvedOn)}` : ' · open'}</span></p></div></li>`).join(''))}
+      ${total ? '' : '<p class="py-10 text-center text-sm text-slate-400">Nothing found on any day.</p>'}`;
+  }
+
+  // the meeting agenda: questions ready for discussion or set for that day, each once
+  function agendaHtml(d) {
+    const a = d.agenda;
+    return `
+      <div class="jr-agenda-head">
+        <div class="min-w-0 flex-1">
+          <p class="text-sm font-semibold text-slate-900">${icon('list', 14)} Meeting agenda</p>
+          <p class="text-xs text-slate-500">Questions set for this meeting, plus every question marked <b>Ready for discussion</b> that has no meeting yet or was left over from an earlier one.</p>
+        </div>
+        <input type="date" class="input jr-in-sm" data-agenda-date value="${a.date}" aria-label="Meeting day">
+        <button type="button" class="btn-secondary px-2 py-1 text-xs" data-agenda-copy ${a.items.length ? '' : 'disabled'}>${icon('copy', 12)} Copy</button>
+        ${can('edit') ? `<button type="button" class="btn-secondary px-2 py-1 text-xs" data-agenda-share ${a.items.length && d.teams ? '' : 'disabled'} title="${d.teams ? 'Post the agenda to the app\'s Teams channel' : 'This app has no Teams channel yet'}">${icon('share', 12)} Teams</button>` : ''}
+        <button type="button" class="icon-btn" data-agenda-close title="Back to the questions">${icon('close', 14)}</button>
+      </div>
+      ${a.items.length ? `<ol class="space-y-2">${a.items.map((q, i) => questionItem(q, i + 1)).join('')}</ol>`
+        : '<p class="py-10 text-center text-sm text-slate-400">Nothing on this agenda. Mark questions “Ready for discussion” or set their meeting day.</p>'}`;
+  }
+
+  function renderDoneList() {
+    if (!doneView) return;
+    if (doneView.tab === 'minutes') { renderMom(); return; }
+    $('#doneList').html(doneListHtml(doneView));
+  }
 
   function renderDone() {
     const d = doneView;
     const p = products.find((x) => x.id === d.productId);
     const isToday = d.date === d.today;
-    const mine = d.items.filter((x) => x.userId === me.id);
-    const openShared = d.shared.filter((x) => !x.closedAt).length;
-    const byPerson = [...new Map(d.items.map((x) => [x.userId, x.userName])).entries()]
-      .sort(([a], [b]) => (b === me.id) - (a === me.id)); // you first
-    const screenOptions = (p ? p.modules : []).flatMap((m) => m.flows.map((f) => `<optgroup label="${esc(flowLabel(m, f))}">${onlyScreens(f.screens)
-      .filter((s) => !donePicked.includes(s.id)).map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</optgroup>`)).join('');
-    const tabs = `<div class="seg">
-      <button data-done-tab="day" class="${d.tab === 'day' ? 'on' : ''}">${isToday ? 'Today' : fmtDate(d.date)}</button>
-      <button data-done-tab="shared" class="${d.tab === 'shared' ? 'on' : ''}">Shared with me${openShared ? ` <b class="text-indigo-600">${openShared}</b>` : ''}</button>
-    </div>`;
-
-    if (d.tab === 'shared') {
-      $('#doneBody').html(`
-        <div class="flex flex-wrap items-center gap-3 border-b border-slate-200 px-5 py-3">
-          <div class="min-w-0 flex-1">
-            <h3 class="text-lg font-semibold text-slate-900">Shared with me <span class="font-normal text-slate-400">· ${esc(p ? p.name : '')}</span></h3>
-            <p class="text-xs text-slate-500">${openShared} open · ${d.shared.length - openShared} closed${d.canClose ? ' · close a change once you have checked it' : ''}</p>
-          </div>
-          ${tabs}
-          <button class="icon-btn" data-close-done title="Close">${icon('close', 18)}</button>
-        </div>
-        <ul class="max-h-[65vh] space-y-1.5 overflow-y-auto px-5 py-4">
-          ${d.shared.map((x) => doneEntry(x, true)).join('') || '<p class="py-10 text-center text-sm text-slate-400">Nothing has been shared with you yet.</p>'}
-        </ul>`);
-      return;
-    }
-
+    const c = doneCounts(d);
+    const tab = d.tab;
+    const writing = can('edit') && tab !== 'shared' && tab !== 'minutes' && !d.results && !(tab === 'questions' && d.agenda)
+      && (isToday || (d.editing && d.editing.kind === tab));
+    const metric = (key, label, value, sub, tone) => `
+      <button type="button" class="jr-metric ${tab === key ? 'on' : ''} ${tone || ''}" data-done-tab="${key}">
+        <span>${label}</span><b>${value}</b>${sub ? `<small>${sub}</small>` : ''}</button>`;
+    const prioFilter = ['todo', 'progress', 'questions', 'blockers'].includes(tab);
     $('#doneBody').html(`
-      <div class="flex flex-wrap items-center gap-3 border-b border-slate-200 px-5 py-3">
+      <div class="jr-head">
+        <button type="button" class="btn-secondary px-2 py-1 text-xs" data-close-done title="Back to the board">${icon('left', 12)} Board</button>
         <div class="min-w-0 flex-1">
-          <h3 class="text-lg font-semibold text-slate-900">Done ${isToday ? 'today' : `on ${fmtDate(d.date)}`} <span class="font-normal text-slate-400">· ${esc(p ? p.name : '')}</span></h3>
-          <p class="text-xs text-slate-500">${d.items.length} entr${d.items.length === 1 ? 'y' : 'ies'} by ${byPerson.length} ${byPerson.length === 1 ? 'person' : 'people'}</p>
+          <h3 class="text-lg font-semibold text-slate-900">Daily journal <span class="font-normal text-slate-400">· ${esc(p ? p.name : '')}</span></h3>
+          <p class="text-xs text-slate-500">${esc(dayName(d.date))}${isToday ? ' · today' : ''}</p>
         </div>
-        ${tabs}
-        <input type="date" class="input py-1 text-sm" data-done-date value="${d.date}" max="${d.today}">
-        <button class="icon-btn" data-close-done title="Close">${icon('close', 18)}</button>
+        <div class="jr-day" role="group" aria-label="Day">
+          <button type="button" class="icon-btn" data-done-day="-1" title="Day before">${icon('left', 16)}</button>
+          <input type="date" class="input jr-in-sm" data-done-date value="${d.date}" max="${d.today}" aria-label="Day">
+          <button type="button" class="icon-btn" data-done-day="1" title="Next day" ${isToday ? 'disabled' : ''}>${icon('right', 16)}</button>
+          ${isToday ? '' : '<button type="button" class="btn-secondary px-2 py-1 text-xs" data-done-today>Today</button>'}
+        </div>
       </div>
 
-      ${isToday && can('edit') ? `
-      <form id="doneAdd" class="done-add">
-        <div class="flex items-center gap-2">
-          <div class="seg">
-            <button type="button" data-done-mode="todo" class="${doneMode === 'todo' ? 'on' : ''}">${icon('list', 12)} To-do</button>
-            <button type="button" data-done-mode="done" class="${doneMode === 'done' ? 'on' : ''}">${icon('check', 12)} Done</button>
-          </div>
-          <span class="text-xs text-slate-400">${doneMode === 'todo' ? 'Note what you will do; tick it when it is done and it moves to Done today.' : 'Log something you already finished.'}</span>
-        </div>
-        <textarea class="input w-full" name="text" rows="2" maxlength="1000" placeholder="${doneMode === 'todo' ? 'Add a point… e.g. Fix OTP timer on Login (Enter to add)' : 'What did you finish? e.g. Fixed OTP timer on Login, new KYC upload flow'}"></textarea>
-        <div class="flex flex-wrap items-center gap-2">
-          <select class="input max-w-xs py-1 text-sm" data-done-pick><option value="">${doneMode === 'todo' ? 'Attach a screen it is about…' : 'Attach a screen you changed…'}</option>${screenOptions}</select>
-          ${donePicked.map((id) => screenChip(id, true)).join('')}
-          <button class="btn-primary ml-auto">${icon('plus', 14)} ${doneMode === 'todo' ? 'Add point' : 'Add'}</button>
-        </div>
-      </form>
-
-      <div class="todo-list">
-        <p class="mb-1.5 flex items-center gap-2 text-sm font-semibold text-slate-900">${icon('list', 14)} To-do <span class="text-xs font-normal text-slate-400">${d.todos.length ? `${d.todos.length} open` : ''}</span></p>
-        ${d.todos.length ? `<ul class="space-y-1.5">${d.todos.map(todoItem).join('')}</ul>`
-          : '<p class="text-xs text-slate-400">No open points. Add what you plan to do; open points stay here until you tick them.</p>'}
-      </div>` : ''}
-
-      <div class="max-h-[55vh] space-y-4 overflow-y-auto px-5 py-4">
-        ${byPerson.map(([uid, name]) => `
-          <div>
-            <p class="mb-1.5 flex items-center gap-2 text-sm font-semibold text-slate-900">${icon('user', 14)} ${esc(name)}${uid === me.id ? ' <span class="text-xs font-normal text-slate-400">(you)</span>' : ''}</p>
-            <ul class="space-y-1.5">
-              ${d.items.filter((x) => x.userId === uid).map((x) => doneEntry(x)).join('')}
-            </ul>
-          </div>`).join('') || `<p class="py-10 text-center text-sm text-slate-400">Nothing logged ${isToday ? 'yet today' : 'on this day'}.</p>`}
+      <div class="jr-metrics" aria-label="Summary of the day">
+        ${metric('done', d.items.length !== c.mine ? 'Done (you)' : 'Done', c.mine, c.logged ? `${fmtMinutes(c.logged)} logged` : '')}
+        ${metric('todo', 'To-do', c.todo, '')}
+        ${metric('progress', 'In progress', c.progress, '')}
+        ${metric('questions', 'Questions open', c.questions, c.ready ? `${c.ready} ready to discuss` : '')}
+        ${metric('blockers', 'Blockers', c.blockers, c.urgent ? `${c.urgent} high / urgent` : '', c.blockers ? 'warn' : '')}
       </div>
 
-      ${mine.length && can('edit') ? `
+      <div class="jr-tabs" role="tablist">
+        ${Object.entries(DONE_TABS).map(([key, [label, ico]]) => `
+          <button type="button" role="tab" aria-selected="${tab === key}" class="${tab === key ? 'on' : ''}" data-done-tab="${key}">
+            ${icon(ico, 13)} ${label}${c[key] ? ` <b>${c[key]}</b>` : ''}</button>`).join('')}
+      </div>
+
+      <div class="jr-tools">
+        <label class="jr-search">${icon('filter', 13)}
+          <input type="search" data-done-search value="${esc(d.search)}" placeholder="${tab === 'minutes' ? 'Search the points of these minutes…' : `Search ${tab === 'shared' ? 'shared entries' : `this day's ${DONE_TABS[tab][0].toLowerCase()}`}… (Enter: all days)`}" aria-label="Search">
+        </label>
+        ${tab === 'minutes' ? '' : '<button type="button" class="btn-secondary px-2 py-1 text-xs" data-done-search-all title="Search every day">All days</button>'}
+        ${prioFilter ? `<select class="input jr-in-sm" data-done-filter="prio" aria-label="Priority"><option value="">Any priority</option>${Object.entries(PRIORITY).map(([k, v]) => `<option value="${k}" ${d.prio === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select>` : ''}
+        ${tab === 'questions' ? `
+          <select class="input jr-in-sm" data-done-filter="qStatus" aria-label="Status">
+            <option value="">Any status</option><option value="unresolved" ${d.qStatus === 'unresolved' ? 'selected' : ''}>Not resolved</option>
+            ${Q_STEPS.map((s) => `<option value="${s}" ${d.qStatus === s ? 'selected' : ''}>${Q_STATUS[s][0]}</option>`).join('')}
+          </select>
+          <select class="input jr-in-sm" data-done-filter="qScope" aria-label="Whose">
+            <option value="">Everyone's</option><option value="mine" ${d.qScope === 'mine' ? 'selected' : ''}>Asked by me</option>
+            <option value="assigned" ${d.qScope === 'assigned' ? 'selected' : ''}>Assigned to me</option>
+          </select>
+          <button type="button" class="btn-secondary px-2 py-1 text-xs ${d.agenda ? 'on' : ''}" data-q-agenda>${icon('list', 12)} Agenda${c.ready ? ` <b>${c.ready}</b>` : ''}</button>` : ''}
+      </div>
+
+      ${isToday || tab === 'minutes' ? '' : `<p class="jr-past">${icon('clock', 12)} You are looking at ${fmtDate(d.date)}: lists show what was open at the end of that day. <button type="button" class="underline" data-done-today>Back to today</button></p>`}
+      ${writing ? doneComposer(d, p) : ''}
+
+      <div id="doneList" class="jr-list">${doneListHtml(d)}</div>
+
+      ${tab === 'done' && d.items.some((x) => x.userId === me.id) && can('edit') ? `
       <div class="flex items-center gap-3 border-t border-slate-200 px-5 py-3">
         <p class="flex-1 text-xs text-slate-500">${d.teams ? 'Posts your entries of this day to the app\'s Teams channel, with links to the screens.' : 'This app has no Teams channel yet. A super admin can add it in Sanity → Teams channel.'}</p>
         <button class="btn-primary" data-done-share ${d.teams ? '' : 'disabled'}>${icon('share', 14)} Share my day on Teams</button>
       </div>` : ''}`);
+    // on a narrow screen the tabs scroll sideways: keep the open one in view
+    const $tabs = $('#doneBody .jr-tabs');
+    const on = $tabs.find('.on')[0];
+    if (on && on.offsetLeft + on.offsetWidth > $tabs[0].clientWidth) $tabs.scrollLeft(on.offsetLeft - 16);
   }
 
-  $doc.on('click', '[data-action="done"]', () => openDone(productId));
+  $doc.on('click', '[data-action="done"]', () => (doneView ? closeDone() : openDone(productId)));
   $doc.on('click', '[data-close-done]', closeDone);
-  $('#doneModal').on('mousedown', function (e) { if (e.target === this) closeDone(); });
-  $doc.on('change', '[data-done-date]', function () { if (this.value) openDone(doneView.productId, this.value); });
-  // keep what is typed while a screen is attached / removed
-  const keepText = (fn) => { const t = $('#doneAdd [name=text]').val(); fn(); renderDone(); $('#doneAdd [name=text]').val(t); };
-  $doc.on('change', '[data-done-pick]', function () { const id = this.value; if (id) keepText(() => donePicked.push(id)); });
-  $doc.on('click', '[data-done-unpick]', function () { const id = $(this).data('done-unpick'); keepText(() => { donePicked = donePicked.filter((x) => x !== id); }); });
+
+  // ---- days
+  const goDay = (day) => {
+    const d = doneView;
+    d.editing = null;
+    d.results = null;
+    openDone(d.productId, day >= d.today ? '' : day);
+  };
+  $doc.on('change', '[data-done-date]', function () { if (/^\d{4}-\d{2}-\d{2}$/.test(this.value)) goDay(this.value); });
+  $doc.on('click', '[data-done-day]', function () { goDay(shiftDay(doneView.date, Number($(this).data('done-day')))); });
+  $doc.on('click', '[data-done-today]', () => goDay(doneView.today));
+  $doc.on('click', '[data-done-goto]', function () { doneView.tab = 'done'; goDay($(this).data('done-goto')); });
+
+  // ---- tabs, search, filters
+  $doc.on('click', '[data-done-tab]', function () {
+    const tab = $(this).data('done-tab');
+    keepForm(() => {
+      if (doneView.tab !== tab) { doneView.editing = null; doneView.prio = ''; }
+      doneView.tab = tab;
+      doneView.sharing = null;
+      doneView.results = null;
+    });
+    doneHash();
+    if (tab === 'minutes' && !doneView.mom) loadMeetings();
+  });
+  $doc.on('input', '[data-done-search]', function () {
+    doneView.search = this.value;
+    if (doneView.results && !this.value.trim()) { keepForm(() => { doneView.results = null; }); $('[data-done-search]').trigger('focus'); return; }
+    renderDoneList();
+  });
+  const searchAll = () => {
+    const q = doneView.search.trim();
+    if (q.length < 2) { toast('Type at least 2 characters'); return; }
+    api('GET', `/api/journal/search?product=${encodeURIComponent(doneView.productId)}&q=${encodeURIComponent(q)}`).done((r) => {
+      if (!doneView || doneView.search.trim() !== q) return;
+      keepForm(() => { doneView.results = r; });
+    });
+  };
+  $doc.on('keydown', '[data-done-search]', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchAll(); } });
+  $doc.on('click', '[data-done-search-all]', searchAll);
+  $doc.on('click', '[data-done-search-clear]', () => keepForm(() => { doneView.results = null; doneView.search = ''; }));
+  $doc.on('change', '[data-done-filter]', function () { doneView[$(this).data('done-filter')] = this.value; renderDoneList(); });
+
+  // ---- the box at the top: screens, add / save, cancel an edit
+  $doc.on('change', '[data-done-pick]', function () { const id = this.value; if (id) keepForm(() => donePicked.push(id)); });
+  $doc.on('click', '[data-done-unpick]', function () { const id = $(this).data('done-unpick'); keepForm(() => { donePicked = donePicked.filter((x) => x !== id); }); });
+  // a new entry half written when an edit starts is kept aside and comes back after the edit
+  function unstash() {
+    const s = doneView.stash;
+    doneView.stash = null;
+    if (!s || s.tab !== doneView.tab) return;
+    restoreForm(s.form);
+    if (s.picked.length) keepForm(() => { donePicked = s.picked; });
+  }
+  const cancelEdit = () => { doneView.editing = null; donePicked = []; renderDone(); unstash(); };
+  $doc.on('click', '[data-done-cancel-edit]', cancelEdit);
+
+  // start editing an item in the box at the top (on its tab)
+  function startEdit(kind, id) {
+    const d = doneView;
+    if (!d.editing && $('#doneAdd').length) d.stash = { tab: d.tab, form: formValues(), picked: donePicked };
+    d.tab = kind;
+    d.editing = { kind, id };
+    d.results = null;
+    d.agenda = null;
+    const x = doneTarget(d.editing);
+    donePicked = x ? [...x.screenIds] : [];
+    renderDone();
+    const box = $('#doneAdd [name=text]')[0];
+    if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); $('#doneAdd')[0].scrollIntoView({ block: 'nearest' }); }
+  }
+
   $doc.on('submit', '#doneAdd', function (e) {
     e.preventDefault();
-    const t = $(this).find('[name=text]').val().trim();
-    if (!t) { $(this).find('[name=text]').trigger('focus'); return; }
-    const url = doneMode === 'todo' ? '/api/done/todos' : '/api/done';
-    $(this).find('[name=text]').val('');
-    api('POST', url, { productId: doneView.productId, text: t, screenIds: donePicked }).done(() => {
+    const d = doneView;
+    if (!d || d.saving) return; // one save at a time: Enter pressed twice adds one entry
+    const f = {};
+    $(this).find('[name]').each((i, el) => { f[el.name] = String($(el).val() || '').trim(); });
+    if (!f.text) { $(this).find('[name=text]').trigger('focus'); return; }
+    const kind = d.tab;
+    const ed = d.editing && d.editing.kind === kind ? d.editing : null;
+    const body = { text: f.text, screenIds: donePicked };
+    let url;
+    if (kind === 'done') {
+      Object.assign(body, { minutes: f.minutes || null });
+      url = ed ? `/api/done/${ed.id}` : '/api/done';
+    } else if (kind === 'todo' || kind === 'progress') {
+      Object.assign(body, { priority: f.priority, ...(kind === 'todo' ? { estMinutes: f.estMinutes || null } : { nextAction: f.nextAction }) });
+      if (!ed) body.stage = kind;
+      url = ed ? `/api/done/todos/${ed.id}` : '/api/done/todos';
+    } else if (kind === 'questions') {
+      Object.assign(body, {
+        details: f.details || '', expected: f.expected || '', apis: f.apis || '', priority: f.priority, assigneeId: f.assigneeId || null, meetingDate: f.meetingDate || null,
+      });
+      url = ed ? `/api/journal/questions/${ed.id}` : '/api/journal/questions';
+    } else {
+      Object.assign(body, { priority: f.priority, waitingOn: f.waitingOn || null, todoId: f.todoId || null, nextAction: f.nextAction });
+      url = ed ? `/api/journal/blockers/${ed.id}` : '/api/journal/blockers';
+    }
+    if (!ed) Object.assign(body, { productId: d.productId, clientId: d.draftId });
+    d.saving = true;
+    api(ed ? 'PATCH' : 'POST', url, body).done((r) => {
+      if (doneView !== d) return;
+      $(this).find('[name]').each((i, el) => { if (el.tagName !== 'SELECT') $(el).val(''); }); // sent: nothing to keep
       donePicked = [];
-      reloadDone().done(() => $('#doneAdd [name=text]').trigger('focus'));
-    });
+      d.editing = null;
+      d.draft = null;
+      d.draftId = uuid();
+      if (r && r.teams && r.teams !== 'off') teamsResult(r.teams, 'Saved and posted on Teams');
+      else toast(ed ? 'Saved' : 'Added');
+      reloadDone().done(() => { if (ed) unstash(); $('#doneAdd [name=text]').trigger('focus'); });
+    }).always(() => { d.saving = false; });
   });
   // Enter adds (Shift+Enter: a new line)
   $doc.on('keydown', '#doneAdd [name=text]', function (e) {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('#doneAdd').trigger('submit'); }
   });
-  $doc.on('click', '[data-done-mode]', function () { doneMode = $(this).data('done-mode'); keepText(() => {}); $('#doneAdd [name=text]').trigger('focus'); });
 
-  // to-do points: tick (→ done today), take back, edit, delete
+  // ---- points: tick (→ done today), start / pause, blocked, take back, edit, delete
   const todoDone = (id, done) => api('PUT', `/api/done/todos/${id}/done`, { done });
   $doc.on('click', '[data-todo-done]', function () {
     const id = $(this).data('todo-done');
@@ -6111,30 +6559,33 @@ $(function () {
   $doc.on('click', '[data-todo-undo]', function () {
     todoDone($(this).data('todo-undo'), false).done(() => { toast('Back on your to-do list'); reloadDone(); });
   });
+  $doc.on('click', '[data-todo-stage]', function () {
+    const stage = $(this).data('stage');
+    api('PATCH', `/api/done/todos/${$(this).data('todo-stage')}`, { stage }).done(() => { toast(stage === 'progress' ? 'Moved to In Progress' : 'Back to To-do'); reloadDone(); });
+  });
+  $doc.on('click', '[data-todo-block]', function () {
+    const t = doneView.todos.find((x) => x.id === $(this).data('todo-block'));
+    Object.assign(doneView, { tab: 'blockers', editing: null, results: null, draft: { todoId: t.id, priority: t.priority } });
+    renderDone();
+    $('#doneAdd [name=text]').trigger('focus');
+  });
   $doc.on('click', '[data-todo-edit]', function () {
     const t = doneView.todos.find((x) => x.id === $(this).data('todo-edit'));
-    ask({
-      title: 'Edit point', fields: [{ name: 'text', label: 'To do', value: t.text, required: true, max: 1000 }],
-      save: (v) => api('PATCH', `/api/done/todos/${t.id}`, v, null, QUIET).done(reloadDone),
-    });
+    startEdit(t.stage === 'progress' ? 'progress' : 'todo', t.id);
   });
   $doc.on('click', '[data-todo-delete]', function () {
     const id = $(this).data('todo-delete');
     dialog.confirm({ title: 'Delete this point?', confirmText: 'Delete', danger: true, onConfirm: () => api('DELETE', `/api/done/todos/${id}`, null, null, QUIET).done(reloadDone) });
   });
   $doc.on('click', '[data-done-screen]', function () { const id = $(this).data('done-screen'); closeDone(); showScreen(id); });
+
+  // ---- done entries: share with people, close, edit, delete, share the day
   const doneItem = (id) => doneView.items.find((i) => i.id === id) || doneView.shared.find((i) => i.id === id);
-  $doc.on('click', '[data-done-tab]', function () {
-    doneView.tab = $(this).data('done-tab');
-    doneView.sharing = null;
-    renderDone();
-  });
   $doc.on('click', '[data-done-share-to]', function () {
     const id = $(this).data('done-share-to');
-    doneView.sharing = doneView.sharing === id ? null : id;
-    keepText(() => {});
+    keepForm(() => { doneView.sharing = doneView.sharing === id ? null : id; });
   });
-  $doc.on('click', '[data-done-share-cancel]', () => { doneView.sharing = null; keepText(() => {}); });
+  $doc.on('click', '[data-done-share-cancel]', () => keepForm(() => { doneView.sharing = null; }));
   $doc.on('submit', '[data-done-share-form]', function (e) {
     e.preventDefault();
     const userIds = $(this).find('[name=userIds]:checked').map((i, el) => el.value).get();
@@ -6155,6 +6606,8 @@ $(function () {
   });
   $doc.on('click', '[data-done-edit]', function () {
     const x = doneItem($(this).data('done-edit'));
+    if (doneView.items.includes(x)) { startEdit('done', x.id); return; }
+    // an entry of another day, under Shared with me (super admins): a quick dialog
     ask({
       title: 'Edit entry', fields: [{ name: 'text', label: 'What you did', value: x.text, required: true, max: 1000 }],
       save: (v) => api('PATCH', `/api/done/${x.id}`, v, null, QUIET).done(reloadDone),
@@ -6166,6 +6619,400 @@ $(function () {
   });
   $doc.on('click', '[data-done-share]', () => {
     api('POST', '/api/done/share', { productId: doneView.productId, date: doneView.date }).done(() => { toast('Shared on Teams'); reloadDone(); });
+  });
+
+  // ---- questions: move along the workflow (resolving asks for the answer), edit, delete, agenda
+  const questionOf = (id) => doneView.questions.find((q) => q.id === id) || (doneView.agenda && doneView.agenda.items.find((q) => q.id === id));
+  $doc.on('click', '[data-q-status]', function () {
+    const q = questionOf($(this).data('q-status'));
+    const to = $(this).data('to');
+    const send = (extra) => api('PUT', `/api/journal/questions/${q.id}/status`, { status: to, ...extra }, null, extra ? QUIET : undefined);
+    if (to === 'resolved' || to === 'discussed') {
+      ask({
+        title: to === 'resolved' ? 'Resolve this question' : 'Discussed',
+        fields: [{ name: 'answer', label: to === 'resolved' ? 'Answer / decision' : 'Notes from the meeting', value: q.answer, max: 2000, placeholder: to === 'resolved' ? 'e.g. Yes, resend after 30 s; backend adds a limit of 3' : 'e.g. Needs a check with the backend team' }],
+        confirmText: to === 'resolved' ? 'Resolve' : 'Save',
+        save: (v) => send({ answer: v.answer }).done(() => { toast(to === 'resolved' ? 'Resolved' : 'Marked as discussed'); reloadDone(); }),
+      });
+      return;
+    }
+    send().done(() => { toast(`Moved to ${Q_STATUS[to][0]}`); reloadDone(); });
+  });
+  $doc.on('click', '[data-q-edit]', function () { startEdit('questions', $(this).data('q-edit')); });
+  $doc.on('click', '[data-q-delete]', function () {
+    const id = $(this).data('q-delete');
+    dialog.confirm({ title: 'Delete this question?', confirmText: 'Delete', danger: true, onConfirm: () => api('DELETE', `/api/journal/questions/${id}`, null, null, QUIET).done(reloadDone) });
+  });
+  const agendaSeq = { n: 0 };
+  function loadAgenda(date) {
+    const d = doneView;
+    const seq = ++agendaSeq.n;
+    return api('GET', `/api/journal/agenda?product=${encodeURIComponent(d.productId)}${date ? `&date=${date}` : ''}`).done((r) => {
+      if (doneView !== d || seq !== agendaSeq.n) return;
+      keepForm(() => { d.agenda = r; d.results = null; });
+    });
+  }
+  $doc.on('click', '[data-q-agenda]', () => {
+    if (doneView.agenda) { keepForm(() => { doneView.agenda = null; }); return; }
+    doneView.editing = null;
+    loadAgenda(doneView.today);
+  });
+  $doc.on('click', '[data-agenda-close]', () => keepForm(() => { doneView.agenda = null; }));
+  $doc.on('change', '[data-agenda-date]', function () { if (/^\d{4}-\d{2}-\d{2}$/.test(this.value)) loadAgenda(this.value); });
+  $doc.on('click', '[data-agenda-copy]', () => {
+    const a = doneView.agenda;
+    const p = products.find((x) => x.id === doneView.productId);
+    const textOut = [`Meeting agenda · ${p ? p.name : ''} · ${fmtDate(a.date)}`, '', ...a.items.map((q, i) => [
+      `${i + 1}. [${PRIORITY[q.priority].label}] ${q.text}${q.assigneeName ? ` → ${q.assigneeName}` : ''} (${Q_STATUS[q.status][0]})`,
+      q.details ? `   Context: ${q.details}` : '', q.expected ? `   Expected: ${q.expected}` : '', q.apis.length ? `   APIs: ${q.apis.join(', ')}` : '',
+      q.screenIds.length ? `   Screens: ${screenNames(q.screenIds).filter(Boolean).join(', ')}` : '',
+    ].filter(Boolean).join('\n'))].join('\n');
+    const fallback = () => { const $t = $('<textarea>').val(textOut).appendTo('body').trigger('select'); document.execCommand('copy'); $t.remove(); };
+    (navigator.clipboard ? navigator.clipboard.writeText(textOut) : Promise.reject()).catch(fallback).then(() => toast('Agenda copied'));
+  });
+  $doc.on('click', '[data-agenda-share]', () => {
+    api('POST', '/api/journal/agenda/share', { productId: doneView.productId, date: doneView.agenda.date })
+      .done((r) => toast(`Agenda (${r.count}) posted on Teams`));
+  });
+
+  // ---- blockers: resolve (how), reopen, edit, delete
+  $doc.on('click', '[data-b-resolve]', function () {
+    const id = $(this).data('b-resolve');
+    ask({
+      title: 'Resolve this blocker',
+      fields: [{ name: 'resolution', label: 'How was it resolved?', max: 1000, placeholder: 'e.g. Got the sandbox keys from Rahul' }],
+      confirmText: 'Resolve',
+      save: (v) => api('PUT', `/api/journal/blockers/${id}/resolved`, { resolved: true, resolution: v.resolution }, null, QUIET)
+        .done(() => { toast('Blocker resolved'); reloadDone(); }),
+    });
+  });
+  $doc.on('click', '[data-b-reopen]', function () {
+    api('PUT', `/api/journal/blockers/${$(this).data('b-reopen')}/resolved`, { resolved: false }).done(() => { toast('Blocker open again'); reloadDone(); });
+  });
+  $doc.on('click', '[data-b-edit]', function () { startEdit('blockers', $(this).data('b-edit')); });
+  $doc.on('click', '[data-b-delete]', function () {
+    const id = $(this).data('b-delete');
+    dialog.confirm({ title: 'Delete this blocker?', confirmText: 'Delete', danger: true, onConfirm: () => api('DELETE', `/api/journal/blockers/${id}`, null, null, QUIET).done(reloadDone) });
+  });
+
+  // ---- minutes of meeting: meetings on the left, the open one on the right. Each point is ticked Done, To be
+  // discussed with someone, or Deferred; all points, or the ones picked, are shared on the app's Teams channel.
+  // doneView.mom: { list, canCreate, current: { meeting, points }, picked: Set of point ids, share, form: 'new' | 'edit',
+  //   pendingDiscuss: point id whose person is being picked, draftId }
+
+  const POINT_STATUS = { done: 'Done', discuss: 'To be discussed', deferred: 'Deferred', open: 'Open' };
+
+  function loadMeetings(selectId) {
+    const d = doneView;
+    return api('GET', `/api/journal/meetings?product=${encodeURIComponent(d.productId)}`).done((r) => {
+      if (doneView !== d) return;
+      const m = d.mom || { picked: new Set(), draftId: uuid() };
+      d.mom = { ...m, list: r.meetings, canCreate: r.canCreate };
+      const keepId = m.current && r.meetings.some((x) => x.id === m.current.meeting.id) ? m.current.meeting.id : null;
+      const id = (selectId && r.meetings.some((x) => x.id === selectId) ? selectId : null) || keepId || (r.meetings[0] && r.meetings[0].id);
+      if (id) openMeeting(id);
+      else { d.mom.current = null; renderMom(); doneHash(); }
+    });
+  }
+  const openMeeting = (id) => api('GET', `/api/journal/meetings/${encodeURIComponent(id)}`).done(setMeeting);
+
+  // a meeting with its points, as the server sent it (after any change)
+  function setMeeting(r) {
+    const d = doneView;
+    if (!d || !d.mom) return;
+    const m = d.mom;
+    if (!m.current || m.current.meeting.id !== r.meeting.id) { m.picked = new Set(); m.share = null; }
+    m.current = r;
+    m.form = null;
+    m.pendingDiscuss = null;
+    m.picked = new Set([...m.picked].filter((id) => r.points.some((p) => p.id === id)));
+    const row = m.list.find((x) => x.id === r.meeting.id);
+    const summary = { ...r.meeting, points: r.points.length, done: r.points.filter((p) => p.status === 'done').length };
+    if (row) Object.assign(row, summary); else m.list.unshift(summary);
+    m.list.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+    renderMom();
+    doneHash();
+  }
+
+  // draw the minutes again, keeping a point and a note half typed
+  function renderMom() {
+    if (!doneView || doneView.tab !== 'minutes') return;
+    const typed = { text: $('#momAdd [name=momText]').val(), note: $('#momShare [name=momNote]').val() };
+    $('#doneList').html(momHtml(doneView));
+    if (typed.text) $('#momAdd [name=momText]').val(typed.text);
+    if (typed.note) $('#momShare [name=momNote]').val(typed.note);
+  }
+
+  const personName = (d, id) => (d.people.find((u) => u.id === id) || {}).name || '—';
+
+  function momHtml(d) {
+    const m = d.mom;
+    if (!m) return '<p class="py-10 text-center text-sm text-slate-400">Loading minutes…</p>';
+    const cur = m.current;
+    return `
+      <div class="mom">
+        <aside class="mom-side" aria-label="Meetings">
+          ${m.canCreate ? `<button type="button" class="btn-primary w-full justify-center" data-mom-new>${icon('plus', 14)} New minutes</button>` : ''}
+          <ul class="mom-list">${m.list.map((x) => `
+            <li><button type="button" class="mom-item ${cur && cur.meeting.id === x.id && !m.form ? 'on' : ''}" data-mom-open="${x.id}">
+              <b>${esc(x.title)}</b>
+              <span>${fmtDate(x.date)} · ${x.points ? `${x.done}/${x.points} done` : 'no points yet'}${x.sharedAt ? ' · shared' : ''}</span>
+            </button></li>`).join('') || '<li class="p-2 text-xs text-slate-400">No minutes yet. Start one for your next meeting.</li>'}</ul>
+        </aside>
+        <section class="mom-main">
+          ${m.form ? momForm(d) : cur ? momMeeting(d) : `<p class="py-10 text-center text-sm text-slate-400">${m.canCreate ? 'Start the minutes of a meeting with <b>New minutes</b>.' : 'No minutes yet.'}</p>`}
+        </section>
+      </div>`;
+  }
+
+  // new minutes, or the title / day / attendees of these
+  function momForm(d) {
+    const m = d.mom;
+    const mt = m.form === 'edit' && m.current ? m.current.meeting : { title: '', date: d.today, attendees: [me.id] };
+    return `
+      <form id="momForm" class="mom-form" novalidate>
+        <p class="text-sm font-semibold text-slate-900">${m.form === 'edit' ? 'Edit minutes' : 'New minutes'}</p>
+        <div class="grid gap-2 sm:grid-cols-[1fr_auto]">
+          <label class="block"><span class="field-label">Meeting</span>
+            <input class="input w-full" name="title" maxlength="200" value="${esc(mt.title)}" placeholder="e.g. Sprint review, KYC flow sync"></label>
+          <label class="block"><span class="field-label">Date</span>
+            <input type="date" class="input" name="date" value="${esc(mt.date)}" required></label>
+        </div>
+        <span class="field-label mt-2 block">Attended</span>
+        <div class="mom-people">${d.people.map((u) => `
+          <label><input type="checkbox" class="h-4 w-4 accent-indigo-600" name="attendees" value="${u.id}" ${mt.attendees.includes(u.id) ? 'checked' : ''}> ${esc(u.name)}</label>`).join('')}</div>
+        <div class="mt-3 flex gap-2">
+          <button class="btn-primary">${icon('check', 14)} ${m.form === 'edit' ? 'Save' : 'Start minutes'}</button>
+          <button type="button" class="btn-secondary" data-mom-form-cancel>Cancel</button>
+        </div>
+      </form>`;
+  }
+
+  function momPoint(d, p, canEdit) {
+    const m = d.mom;
+    const asking = m.pendingDiscuss === p.id;
+    const box = (value, label) => `
+      <label class="mom-check ${value} ${p.status === value || (value === 'discuss' && asking) ? 'on' : ''}">
+        <input type="checkbox" data-mom-status="${p.id}" value="${value}" ${p.status === value || (value === 'discuss' && asking) ? 'checked' : ''} ${canEdit ? '' : 'disabled'}> ${label}</label>`;
+    return `
+      <li class="mom-pt ${p.status}">
+        <input type="checkbox" class="mom-pick h-4 w-4 accent-indigo-600" data-mom-pick="${p.id}" ${m.picked.has(p.id) ? 'checked' : ''} aria-label="Pick this point to share" title="Pick to share">
+        <div class="min-w-0 flex-1">
+          <p class="mom-text">${esc(p.text)}</p>
+          ${p.questionId ? `<p class="jr-meta"><span>${icon('chat', 11)} From the agenda${p.questionStatus ? ` · question ${esc(Q_STATUS[p.questionStatus][0].toLowerCase())}` : ''}</span></p>` : ''}
+          <div class="mom-checks" role="group" aria-label="Outcome">
+            ${box('done', 'Done')}
+            ${box('discuss', 'To be discussed with')}
+            ${p.status === 'discuss' || asking ? `<select class="input jr-in-sm" data-mom-with="${p.id}" aria-label="To be discussed with" ${canEdit ? '' : 'disabled'}>${personOptions(d, p.discussWith, 'Pick a person…')}</select>` : ''}
+            ${box('deferred', 'Deferred')}
+          </div>
+        </div>
+        ${canEdit ? `
+          <button class="icon-btn" data-mom-edit="${p.id}" title="Edit">${icon('edit', 14)}</button>
+          <button class="icon-btn danger" data-mom-delete="${p.id}" title="Delete">${icon('trash', 14)}</button>` : ''}
+      </li>`;
+  }
+
+  function momMeeting(d) {
+    const m = d.mom;
+    const { meeting: mt, points } = m.current;
+    const canEdit = mt.rights.edit;
+    const q = d.search.trim().toLowerCase();
+    const shown = points.filter((p) => !q || [p.text, p.discussWithName].some((x) => String(x || '').toLowerCase().includes(q)));
+    const n = (status) => points.filter((p) => p.status === status).length;
+    const allPicked = shown.length && shown.every((p) => m.picked.has(p.id));
+    const mentionDefault = new Set([...mt.attendees, ...points.filter((p) => !m.picked.size || m.picked.has(p.id)).map((p) => p.discussWith).filter(Boolean)]);
+    return `
+      <div class="mom-head">
+        <div class="min-w-0 flex-1">
+          <h4 class="text-base font-semibold text-slate-900">${esc(mt.title)}</h4>
+          <p class="text-xs text-slate-500">${esc(dayName(mt.date))}${mt.createdByName ? ` · minutes by ${esc(mt.createdByName)}` : ''}${mt.sharedAt ? ` · shared on Teams ${fmtDate(mt.sharedAt)}` : ''}</p>
+          ${mt.attendees.length ? `<p class="mom-att">${icon('user', 12)} ${mt.attendees.map((id) => esc(personName(d, id))).join(', ')}</p>` : ''}
+        </div>
+        ${canEdit ? `<button class="icon-btn" data-mom-form-edit title="Edit title, date and attendees">${icon('edit', 14)}</button>` : ''}
+        ${mt.rights.remove ? `<button class="icon-btn danger" data-mom-remove title="Delete these minutes">${icon('trash', 14)}</button>` : ''}
+      </div>
+      <div class="mom-sum">
+        <span class="jr-pill st-green">${n('done')} done</span>
+        <span class="jr-pill st-amber">${n('discuss')} to be discussed</span>
+        <span class="jr-pill st-slate">${n('deferred')} deferred</span>
+        ${n('open') ? `<span class="jr-pill st-sky">${n('open')} open</span>` : ''}
+      </div>
+      <div class="mom-bar">
+        <label class="mom-all"><input type="checkbox" class="h-4 w-4 accent-indigo-600" data-mom-pick-all ${allPicked ? 'checked' : ''} ${shown.length ? '' : 'disabled'}> ${m.picked.size ? `${m.picked.size} picked` : 'Pick all'}</label>
+        ${canEdit ? `<button type="button" class="btn-secondary px-2 py-1 text-xs" data-mom-agenda title="Add the questions on the agenda of ${fmtDate(mt.date)} as points (each once)">${icon('list', 12)} Add agenda questions</button>` : ''}
+        <span class="flex-1"></span>
+        <button type="button" class="btn-secondary px-2 py-1 text-xs" data-mom-copy ${points.length ? '' : 'disabled'}>${icon('copy', 12)} Copy ${m.picked.size ? 'picked' : 'all'}</button>
+        ${canEdit ? `<button type="button" class="btn-primary px-3 py-1 text-xs" data-mom-share-open ${points.length ? '' : 'disabled'}>${icon('share', 12)} Share ${m.picked.size ? `${m.picked.size} picked` : 'all points'}</button>` : ''}
+      </div>
+      ${m.share ? `
+      <form id="momShare" class="mom-share">
+        <p class="flex items-center gap-1.5 text-sm font-semibold text-slate-900">${icon('share', 13)} Share on the app's Teams channel</p>
+        <div class="flex flex-wrap gap-x-5 gap-y-1 text-sm">
+          <label class="flex items-center gap-2"><input type="radio" name="momScope" value="all" ${m.picked.size ? '' : 'checked'}> All points (${points.length})</label>
+          <label class="flex items-center gap-2 ${m.picked.size ? '' : 'text-slate-400'}"><input type="radio" name="momScope" value="picked" ${m.picked.size ? 'checked' : 'disabled'}> Only the picked points (${m.picked.size})</label>
+        </div>
+        <span class="field-label mt-2 block">@mention <span class="font-normal text-slate-400">(people a shared point is to be discussed with are always mentioned)</span></span>
+        <div class="mom-people">${d.people.map((u) => `
+          <label><input type="checkbox" class="h-4 w-4 accent-indigo-600" name="momMention" value="${u.id}" ${mentionDefault.has(u.id) ? 'checked' : ''}> ${esc(u.name)}${u.teams ? '' : ' <span class="text-xs text-slate-400">(no Teams email)</span>'}</label>`).join('')}</div>
+        <input class="input mt-2 w-full" name="momNote" maxlength="500" placeholder="A note on top (optional), e.g. Next sync on Friday">
+        <div class="mt-2 flex flex-wrap items-center gap-2">
+          <button class="btn-primary" ${d.teams ? '' : 'disabled'}>${icon('share', 14)} Post to Teams</button>
+          <button type="button" class="btn-secondary" data-mom-share-cancel>Cancel</button>
+          ${d.teams ? '' : '<span class="text-xs text-slate-500">This app has no Teams channel yet. A super admin can add it in Sanity → Teams channel. You can still Copy.</span>'}
+        </div>
+      </form>` : ''}
+      <ul class="mom-points">${shown.map((p) => momPoint(d, p, canEdit)).join('')
+        || `<p class="py-8 text-center text-sm text-slate-400">${q ? 'No point matches the search.' : 'No points yet. Write what was decided, or add the agenda questions.'}</p>`}</ul>
+      ${canEdit ? `
+      <form id="momAdd" class="mom-add">
+        <div class="assist-wrap"><textarea class="input w-full" name="momText" rows="2" maxlength="1000" data-assist="text" placeholder="Add a point… e.g. OTP resends after 30 s, at most 3 times (Enter adds)"></textarea></div>
+        <button class="btn-primary self-end">${icon('plus', 14)} Add point</button>
+      </form>` : ''}`;
+  }
+
+  // the minutes as text (the picked points, or all), grouped by outcome
+  function momText() {
+    const { meeting: mt, points } = doneView.mom.current;
+    const picked = doneView.mom.picked;
+    const list = picked.size ? points.filter((p) => picked.has(p.id)) : points;
+    const groups = ['done', 'discuss', 'deferred', 'open'].map((st) => {
+      const items = list.filter((p) => p.status === st);
+      return items.length ? [`${POINT_STATUS[st]}:`, ...items.map((p) => `- ${p.text}${st === 'discuss' ? ` (with ${p.discussWithName})` : ''}`)].join('\n') : '';
+    }).filter(Boolean);
+    const att = mt.attendees.map((id) => personName(doneView, id)).join(', ');
+    return [`Minutes: ${mt.title} · ${fmtDate(mt.date)}`, att ? `Attended: ${att}` : '', '', groups.join('\n\n')].filter((x, i) => x || i === 2).join('\n');
+  }
+  const copyText = (textOut, done) => {
+    const fallback = () => { const $t = $('<textarea>').val(textOut).appendTo('body').trigger('select'); document.execCommand('copy'); $t.remove(); };
+    (navigator.clipboard ? navigator.clipboard.writeText(textOut) : Promise.reject()).catch(fallback).then(() => toast(done));
+  };
+
+  const mom = () => doneView.mom;
+  const momPointOf = (id) => mom().current.points.find((p) => p.id === id);
+  $doc.on('click', '[data-mom-open]', function () { mom().form = null; openMeeting($(this).data('mom-open')); });
+  $doc.on('click', '[data-mom-new]', () => { mom().form = 'new'; renderMom(); $('#momForm [name=title]').trigger('focus'); });
+  $doc.on('click', '[data-mom-form-edit]', () => { mom().form = 'edit'; renderMom(); $('#momForm [name=title]').trigger('focus'); });
+  $doc.on('click', '[data-mom-form-cancel]', () => { mom().form = null; renderMom(); });
+  $doc.on('submit', '#momForm', function (e) {
+    e.preventDefault();
+    const m = mom();
+    const body = {
+      title: $(this).find('[name=title]').val().trim() || 'Team meeting',
+      date: $(this).find('[name=date]').val(),
+      attendees: $(this).find('[name=attendees]:checked').map((i, el) => el.value).get(),
+    };
+    if (!body.date) { $(this).find('[name=date]').trigger('focus'); return; }
+    const editing = m.form === 'edit';
+    const req = editing ? api('PATCH', `/api/journal/meetings/${m.current.meeting.id}`, body)
+      : api('POST', '/api/journal/meetings', { ...body, productId: doneView.productId, clientId: m.draftId });
+    req.done((r) => { if (!editing) m.draftId = uuid(); setMeeting(r); toast(editing ? 'Saved' : 'Minutes started'); });
+  });
+  $doc.on('click', '[data-mom-remove]', () => {
+    const mt = mom().current.meeting;
+    dialog.confirm({
+      title: `Delete the minutes "${mt.title}"?`, confirmText: 'Delete', danger: true,
+      onConfirm: () => api('DELETE', `/api/journal/meetings/${mt.id}`, null, null, QUIET).done(() => {
+        const m = mom();
+        m.list = m.list.filter((x) => x.id !== mt.id);
+        m.current = null;
+        loadMeetings();
+      }),
+    });
+  });
+
+  // points: add (Enter), edit, delete, from the agenda
+  $doc.on('submit', '#momAdd', function (e) {
+    e.preventDefault();
+    const m = mom();
+    const $box = $(this).find('[name=momText]');
+    const words = $box.val().trim();
+    if (!words || m.saving) { $box.trigger('focus'); return; }
+    m.saving = true;
+    api('POST', `/api/journal/meetings/${m.current.meeting.id}/points`, { text: words, clientId: m.draftId })
+      .done((r) => { m.draftId = uuid(); $box.val(''); setMeeting(r); $('#momAdd [name=momText]').trigger('focus'); })
+      .always(() => { m.saving = false; });
+  });
+  $doc.on('keydown', '#momAdd [name=momText]', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('#momAdd').trigger('submit'); }
+  });
+  $doc.on('click', '[data-mom-edit]', function () {
+    const p = momPointOf($(this).data('mom-edit'));
+    ask({
+      title: 'Edit point', fields: [{ name: 'text', label: 'Point', value: p.text, required: true, max: 1000 }],
+      save: (v) => api('PATCH', `/api/journal/points/${p.id}`, v, null, QUIET).done(setMeeting),
+    });
+  });
+  $doc.on('click', '[data-mom-delete]', function () {
+    const id = $(this).data('mom-delete');
+    dialog.confirm({ title: 'Delete this point?', confirmText: 'Delete', danger: true, onConfirm: () => api('DELETE', `/api/journal/points/${id}`, null, null, QUIET).done(setMeeting) });
+  });
+  $doc.on('click', '[data-mom-agenda]', () => {
+    const mt = mom().current.meeting;
+    api('POST', `/api/journal/meetings/${mt.id}/from-agenda`).done((r) => {
+      setMeeting(r);
+      toast(r.added ? `${r.added} agenda question${r.added === 1 ? '' : 's'} added` : `Nothing new on the agenda of ${fmtDate(mt.date)}`);
+    });
+  });
+
+  // the three boxes of a point work as one choice: ticking one unticks the others; unticking leaves it open.
+  // "To be discussed with" asks for the person first and saves once one is picked.
+  const setPoint = (id, body) => api('PATCH', `/api/journal/points/${id}`, body).done((r) => {
+    setMeeting(r);
+    if (r.question) toast(`Point saved · its question is now ${Q_STATUS[r.question][0].toLowerCase()}`);
+  });
+  $doc.on('change', '[data-mom-status]', function () {
+    const m = mom();
+    const id = $(this).data('mom-status');
+    const p = momPointOf(id);
+    const value = this.value;
+    if (!this.checked) {
+      if (value === 'discuss' && m.pendingDiscuss === id && p.status !== 'discuss') { m.pendingDiscuss = null; renderMom(); return; }
+      setPoint(id, { status: 'open' });
+      return;
+    }
+    if (value === 'discuss') {
+      m.pendingDiscuss = id;
+      renderMom();
+      $(`[data-mom-with="${id}"]`).trigger('focus');
+      return;
+    }
+    setPoint(id, { status: value });
+  });
+  $doc.on('change', '[data-mom-with]', function () {
+    if (this.value) setPoint($(this).data('mom-with'), { status: 'discuss', discussWith: this.value });
+  });
+
+  // picking points to share or copy
+  $doc.on('change', '[data-mom-pick]', function () {
+    const id = $(this).data('mom-pick');
+    if (this.checked) mom().picked.add(id); else mom().picked.delete(id);
+    renderMom();
+  });
+  $doc.on('change', '[data-mom-pick-all]', function () {
+    const m = mom();
+    const q = doneView.search.trim().toLowerCase();
+    const shown = m.current.points.filter((p) => !q || [p.text, p.discussWithName].some((x) => String(x || '').toLowerCase().includes(q)));
+    shown.forEach((p) => (this.checked ? m.picked.add(p.id) : m.picked.delete(p.id)));
+    renderMom();
+  });
+  $doc.on('click', '[data-mom-copy]', () => copyText(momText(), 'Minutes copied'));
+  $doc.on('click', '[data-mom-share-open]', () => { mom().share = {}; renderMom(); });
+  $doc.on('click', '[data-mom-share-cancel]', () => { mom().share = null; renderMom(); });
+  $doc.on('submit', '#momShare', function (e) {
+    e.preventDefault();
+    const m = mom();
+    const scope = $(this).find('[name=momScope]:checked').val();
+    const body = {
+      pointIds: scope === 'picked' ? [...m.picked] : [],
+      userIds: $(this).find('[name=momMention]:checked').map((i, el) => el.value).get(),
+      note: $(this).find('[name=momNote]').val(),
+    };
+    api('POST', `/api/journal/meetings/${m.current.meeting.id}/share`, body).done((r) => {
+      toast(`${r.count} point${r.count === 1 ? '' : 's'} posted on Teams`);
+      m.share = null;
+      openMeeting(m.current.meeting.id);
+    });
   });
 
   // ---------------------------------------------------------------- sheets: spreadsheets made inside an app
@@ -6190,6 +7037,7 @@ $(function () {
     api('GET', `/api/sheets?product=${encodeURIComponent(pid)}`).done((d) => {
       if (sanity) closeSanity();
       if (adminView) closeAdmin();
+      if (doneView) closeDone();
       const keep = sheetsView && sheetsView.productId === pid ? sheetsView : {};
       sheetsView = {
         productId: pid, list: d.sheets, people: d.people, canCreate: d.canCreate, teams: d.teams, doc: null,
