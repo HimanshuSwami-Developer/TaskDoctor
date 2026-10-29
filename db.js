@@ -510,26 +510,6 @@ CREATE INDEX IF NOT EXISTS journal_meeting_points_meeting_idx ON journal_meeting
 CREATE UNIQUE INDEX IF NOT EXISTS journal_meeting_points_question_uq ON journal_meeting_points(meeting_id, question_id)
   WHERE question_id IS NOT NULL AND NOT is_deleted;
 
--- Message templates of an app, one tab per channel on its Templates page: what the app sends (e-mail, WhatsApp, SMS,
--- push, other), with its variables, when it is sent and where it comes from
-CREATE TABLE IF NOT EXISTS templates (
-  id           text PRIMARY KEY,
-  product_id   text NOT NULL REFERENCES products(id),
-  channel      text NOT NULL,                 -- email | whatsapp | sms | push | other
-  name         text NOT NULL,                 -- the template's key / name as the app uses it
-  title        text NOT NULL DEFAULT '',      -- e-mail subject, push title
-  body         text NOT NULL DEFAULT '',
-  variables    jsonb NOT NULL DEFAULT '[]',   -- [{ name, note }], in order
-  trigger      text NOT NULL DEFAULT '',      -- when it is sent
-  provider     text NOT NULL DEFAULT '',      -- e.g. SES, Gupshup, FCM
-  external_id  text NOT NULL DEFAULT '',      -- the provider's template id / DLT id
-  source       text NOT NULL DEFAULT '',      -- file it comes from
-  sort_order   bigint NOT NULL DEFAULT 0,
-  is_deleted   boolean NOT NULL DEFAULT false,
-  created_at   timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS templates_product_idx ON templates(product_id, channel) WHERE NOT is_deleted;
-
 -- Audit columns on every table: who created / last changed a row and when. created_by / updated_by are the
 -- signed-in user (NULL for rows made by the server itself, e.g. the seeded statuses or the first super admin).
 -- updated_at starts as created_at for old rows and is kept current by a trigger on every UPDATE.
@@ -545,7 +525,7 @@ BEGIN
   FOREACH t IN ARRAY ARRAY['products', 'modules', 'flows', 'screens', 'comments', 'statuses', 'users', 'sessions',
                           'sanity_items', 'sanity_runs', 'sanity_results', 'sanity_columns', 'sanity_logs', 'done_items', 'done_todos',
                           'sheets', 'sheet_columns', 'sheet_rows', 'teams_shares', 'journal_questions', 'journal_blockers',
-                          'journal_meetings', 'journal_meeting_points', 'templates'] LOOP
+                          'journal_meetings', 'journal_meeting_points'] LOOP
     EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS created_by text REFERENCES users(id)', t);
     EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS updated_by text REFERENCES users(id)', t);
     EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS updated_at timestamptz', t);

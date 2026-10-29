@@ -340,9 +340,7 @@ $(function () {
             <span class="field-label">${esc(f.label)}${f.required ? '' : ' <span class="font-normal text-slate-400">(optional)</span>'}</span>
             ${f.options
     ? `<select class="input w-full" name="${f.name}">${f.options.map(([v, label]) => `<option value="${esc(v)}" ${v === f.value ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select>`
-    : f.rows
-      ? `<textarea class="input w-full font-mono text-xs" name="${f.name}" rows="${f.rows}" placeholder="${esc(f.placeholder || '')}" maxlength="${f.max || 2000}" ${f.required ? 'data-required' : ''}>${esc(f.value || '')}</textarea>`
-      : `<input class="input w-full" name="${f.name}" value="${esc(f.value || '')}" placeholder="${esc(f.placeholder || '')}" maxlength="${f.max || 200}" autocomplete="off" ${f.required ? 'data-required' : ''}>`}
+    : `<input class="input w-full" name="${f.name}" value="${esc(f.value || '')}" placeholder="${esc(f.placeholder || '')}" maxlength="${f.max || 200}" autocomplete="off" ${f.required ? 'data-required' : ''}>`}
           </label>`).join('')}</div>` : ''}
         <p class="dialog-error mx-5 mt-3 hidden"></p>
         <div class="dialog-actions">
@@ -379,13 +377,13 @@ $(function () {
       const submit = $(this).find('[type=submit]')[0];
       busy = true;
       setBusy(submit, true);
-      $(this).find('[data-dialog-cancel], input, select, textarea').prop('disabled', true);
+      $(this).find('[data-dialog-cancel], input, select').prop('disabled', true);
       onConfirm(values)
         .done(() => close(fields && fields.length ? values : true))
         .fail((xhr) => {
           busy = false;
           setBusy(submit, false);
-          $(this).find('[data-dialog-cancel], input, select, textarea').prop('disabled', false);
+          $(this).find('[data-dialog-cancel], input, select').prop('disabled', false);
           showError(errorText(xhr));
         });
     });
@@ -7045,16 +7043,21 @@ $(function () {
 
   // ---------------------------------------------------------------- templates
   // The messages an app sends (e-mail, WhatsApp, SMS, push, other), one tab per channel, on a page of its own in the
-  // board's place (like the journal); the address (#templates=<app>&tab=…) keeps it. Developers and up edit them.
+  // board's place (like the journal); the address (#templates=<app>&tab=…) keeps it. They are not in the database: each
+  // app has a file public/templates/<app name>.json ("Findost Web" → findost-web.json), changed in the code and deployed.
 
   const TPL_TABS = { email: ['Email', 'mail'], whatsapp: ['WhatsApp', 'chat'], sms: ['SMS', 'chat'], push: ['Push', 'bell'], other: ['Other', 'note'] };
-  // { productId, list, canEdit, tab, search, source: Set of template ids showing their HTML }
+  // { productId, list, tab, search, source: Set of template ids showing their HTML }
   let templatesView = null;
 
   function openTemplates(pid, tab) {
     if (!pid) { dialog.alert('Add an app first.', 'No app'); return null; }
     const keep = templatesView && templatesView.productId === pid ? templatesView : null;
-    return api('GET', `/api/templates?product=${encodeURIComponent(pid)}`).done((d) => {
+    const p = products.find((x) => x.id === pid);
+    const file = `/templates/${(p ? p.name : '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}.json`;
+    // no file yet: the app has no templates
+    return $.getJSON(file).then((d) => d, () => $.Deferred().resolve({ templates: [] }).promise()).done((d) => {
+      d = { templates: tplList(d.templates) };
       const fresh = $('#templatesPage').hasClass('hidden');
       if (sanity) closeSanity();
       if (sheetsView) closeSheets();
@@ -7063,7 +7066,7 @@ $(function () {
       const counts = tplCounts(d.templates);
       const first = Object.keys(TPL_TABS).find((k) => counts[k]) || 'email';
       templatesView = {
-        productId: pid, list: d.templates, canEdit: d.canEdit, search: keep ? keep.search : '', source: keep ? keep.source : new Set(),
+        productId: pid, list: d.templates, search: keep ? keep.search : '', source: keep ? keep.source : new Set(),
         tab: TPL_TABS[tab] ? tab : keep ? keep.tab : first,
       };
       renderTemplates();
@@ -7076,7 +7079,6 @@ $(function () {
   }
   const templatesHash = () => templatesView && history.replaceState(null, '',
     `${location.pathname}${location.search}#templates=${encodeURIComponent(templatesView.productId)}&tab=${templatesView.tab}`);
-  const reloadTemplates = () => templatesView && openTemplates(templatesView.productId, templatesView.tab);
 
   function closeTemplates() {
     templatesView = null;
@@ -7087,6 +7089,17 @@ $(function () {
     history.replaceState(null, '', location.pathname + location.search);
   }
 
+  // a variable is { name, note } or "name: what it is"; each template gets an id for the page
+  const tplVar = (v) => {
+    if (v && typeof v === 'object') return { name: String(v.name || ''), note: String(v.note || '') };
+    const at = String(v).indexOf(': ');
+    return at > 0 ? { name: String(v).slice(0, at), note: String(v).slice(at + 2) } : { name: String(v), note: '' };
+  };
+  const tplList = (list) => (Array.isArray(list) ? list : []).filter((t) => t && TPL_TABS[t.channel] && t.name).map((t, i) => ({
+    id: `t${i}`, channel: t.channel, name: String(t.name), title: String(t.title || ''), body: String(t.body || ''),
+    trigger: String(t.trigger || ''), provider: String(t.provider || ''), externalId: String(t.externalId || ''), source: String(t.source || ''),
+    variables: (t.variables || []).map(tplVar).filter((x) => x.name),
+  }));
   const tplCounts = (list) => list.reduce((c, t) => { c[t.channel] = (c[t.channel] || 0) + 1; return c; }, {});
   // {{name}}, ${name}, {#var#}, {1}, %name%, [[name]]: the parts filled in when the message is sent
   const TPL_VAR = /(\{\{\s*[\w.-]+\s*\}\}|\$\{\s*[\w.]+\s*\}|\{#\w+#\}|\{\d+\}|%[A-Za-z_]\w*%|\[\[\w+\]\])/g;
@@ -7120,7 +7133,7 @@ $(function () {
     return `<pre class="tpl-text">${t.title ? `<b>${withVars(t.title)}</b>\n` : ''}${withVars(t.body)}</pre>`;
   }
 
-  function tplCard(t, canEdit) {
+  function tplCard(t) {
     return `
       <article class="tpl-card" data-tpl="${t.id}">
         <header class="tpl-head">
@@ -7130,8 +7143,6 @@ $(function () {
           </div>
           <div class="tpl-actions">
             <button type="button" class="icon-btn" data-tpl-copy="${t.id}" title="Copy the text">${icon('copy', 14)}</button>
-            ${canEdit ? `<button type="button" class="icon-btn" data-tpl-edit="${t.id}" title="Edit">${icon('edit', 14)}</button>
-              <button type="button" class="icon-btn danger" data-tpl-delete="${t.id}" title="Delete">${icon('trash', 14)}</button>` : ''}
           </div>
         </header>
         ${t.provider || t.externalId ? `<div class="tpl-tags">${t.provider ? `<span class="tpl-tag">${esc(t.provider)}</span>` : ''}${t.externalId ? `<span class="tpl-tag mono" title="Provider template id">${esc(t.externalId)}</span>` : ''}</div>` : ''}
@@ -7155,7 +7166,6 @@ $(function () {
           <h3 class="text-lg font-semibold text-slate-900">Templates <span class="font-normal text-slate-400">· ${esc(p ? p.name : '')}</span></h3>
           <p class="text-xs text-slate-500">The e-mails, WhatsApp, SMS and push messages this app sends, with their variables and when they go out.</p>
         </div>
-        ${v.canEdit ? `<button type="button" class="btn-primary px-3 py-1.5 text-sm" data-tpl-new>${icon('plus', 14)} New template</button>` : ''}
       </div>
       <div class="jr-tabs" role="tablist">
         ${Object.entries(TPL_TABS).map(([key, [label, ico]]) => `
@@ -7169,38 +7179,10 @@ $(function () {
         <span class="text-xs text-slate-500">${shown.length} of ${counts[v.tab] || 0}</span>
       </div>
       <div class="tpl-grid">
-        ${shown.map((t) => tplCard(t, v.canEdit)).join('') || `<p class="tpl-empty">${q ? 'No template matches the search.' : `No ${TPL_TABS[v.tab][0]} templates yet.`}</p>`}
+        ${shown.map(tplCard).join('') || `<p class="tpl-empty">${q ? 'No template matches the search.' : `No ${TPL_TABS[v.tab][0]} templates yet.`}</p>`}
       </div>`);
   }
 
-  // variables as one per line, "name — what it is"
-  const varsText = (list) => (list || []).map((x) => (x.note ? `${x.name} — ${x.note}` : x.name)).join('\n');
-  const varsList = (textIn) => textIn.split('\n').map((l) => l.trim()).filter(Boolean)
-    .map((l) => { const [name, ...note] = l.split(/\s+[—–-]\s+|:\s+/); return { name: name.trim(), note: note.join(' — ').trim() }; });
-  function editTemplate(t = null) {
-    const v = templatesView;
-    const isNew = !t;
-    const channel = t ? t.channel : v.tab;
-    ask({
-      title: isNew ? 'New template' : 'Edit template',
-      confirmText: isNew ? 'Add template' : 'Save',
-      fields: [
-        { name: 'channel', label: 'Channel', value: channel, options: Object.entries(TPL_TABS).map(([k, [label]]) => [k, label]) },
-        { name: 'name', label: 'Name', value: t && t.name, placeholder: 'e.g. login_otp, ipo_allotment', required: true },
-        { name: 'title', label: 'Subject / title', value: t && t.title, placeholder: 'E-mail subject or push title', max: 500 },
-        { name: 'body', label: 'Text', value: t && t.body, placeholder: 'Hi {{name}}, your OTP is {{otp}}.', rows: 8, max: 50000 },
-        { name: 'trigger', label: 'Sent when', value: t && t.trigger, placeholder: 'e.g. After the client asks for an OTP on login', max: 500 },
-        { name: 'provider', label: 'Provider', value: t && t.provider, placeholder: 'e.g. SES, Gupshup, MSG91, FCM', max: 80 },
-        { name: 'externalId', label: 'Provider template id', value: t && t.externalId, placeholder: 'e.g. DLT id', max: 200 },
-        { name: 'variables', label: 'Variables (one per line: name — meaning)', value: varsText(t && t.variables), rows: 3, max: 5000 },
-      ],
-      save: (vals) => {
-        const body = { ...vals, variables: varsList(vals.variables) };
-        const req = isNew ? api('POST', '/api/templates', { ...body, productId: v.productId }, null, QUIET) : api('PATCH', `/api/templates/${t.id}`, body, null, QUIET);
-        return req.done((saved) => { if (templatesView) templatesView.tab = saved.channel; reloadTemplates(); toast(isNew ? 'Template added' : 'Template saved'); });
-      },
-    });
-  }
   const tplById = (id) => templatesView && templatesView.list.find((t) => t.id === id);
 
   $doc.on('click', '[data-action="templates"]', () => (templatesView ? closeTemplates() : openTemplates(productId)));
@@ -7221,14 +7203,6 @@ $(function () {
   $doc.on('click', '[data-tpl-copy]', function () {
     const t = tplById($(this).data('tpl-copy'));
     if (t) copyText(t.title ? `${t.title}\n\n${t.body}` : t.body, 'Template copied');
-  });
-  $doc.on('click', '[data-tpl-new]', () => editTemplate());
-  $doc.on('click', '[data-tpl-edit]', function () { const t = tplById($(this).data('tpl-edit')); if (t) editTemplate(t); });
-  $doc.on('click', '[data-tpl-delete]', function () {
-    const t = tplById($(this).data('tpl-delete'));
-    if (!t) return;
-    dialog.confirm({ title: 'Delete template?', message: `"${t.name}" will be removed from this app's templates.`, confirmText: 'Delete', danger: true })
-      .then((ok) => ok && api('DELETE', `/api/templates/${t.id}`).done(() => { reloadTemplates(); toast('Template deleted'); }));
   });
 
   // { productId, list, people, canCreate, teams, doc, search, sort: { col, dir }, picked: Set of row ids (to send on Teams),
