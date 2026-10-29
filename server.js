@@ -3249,8 +3249,9 @@ async function ensureSuperAdmin() {
   console.log(`Super admin "${username}" created.`);
 }
 
-// `npm start` runs this file; the tests require it for the app and start their own server (test/journal.api.test.js)
-if (require.main === module) {
+// `npm start` runs this file, and so does Vercel (its Express support takes over app.listen); the tests require it
+// for the app and start their own server (test/journal.api.test.js)
+if (require.main === module || process.env.VERCEL) {
   db.init()
     .then(ensureSuperAdmin)
     .then(() => {
@@ -3270,4 +3271,6 @@ if (require.main === module) {
     });
 }
 
-module.exports = { app };
+// the app itself is the export (what a serverless host calls); `.app` keeps `const { app } = require('./server')` working
+module.exports = app;
+module.exports.app = app;
