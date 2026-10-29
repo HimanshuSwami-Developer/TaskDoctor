@@ -5499,7 +5499,7 @@ $(function () {
   });
 
   // Links from Teams: /#flow=<id>, #screen=<id>, #sanity=<app id>[&view=logs], #done=<app id>[&date=…][&tab=shared|questions|blockers|…],
-  // #templates=<app id>[&tab=email|whatsapp|sms|push|other]
+  // #templates=<app id>[&tab=email|whatsapp|sms|push|other][&t=<template name>]
   function openFromHash() {
     const h = new URLSearchParams(location.hash.slice(1));
     if (![...h.keys()].length) return;
@@ -5514,7 +5514,7 @@ $(function () {
     }
     else if (h.get('templates')) {
       if (products.some((p) => p.id === h.get('templates'))) { selectProduct(h.get('templates')); render(); }
-      openTemplates(productId, h.get('tab'));
+      openTemplates(productId, h.get('tab'), h.get('t'));
     }
     else if (h.get('sanity') || h.get('done')) {
       const pid = h.get('sanity') || h.get('done');
@@ -7047,38 +7047,43 @@ $(function () {
   // app has a file public/templates/<app name>.json ("Findost Web" → findost-web.json), changed in the code and deployed.
 
   const TPL_TABS = { email: ['Email', 'mail'], whatsapp: ['WhatsApp', 'chat'], sms: ['SMS', 'chat'], push: ['Push', 'bell'], other: ['Other', 'note'] };
-  // { productId, list, tab, search, source: Set of template ids showing their HTML }
+  // { productId, list, tab, search, sel: id of the template shown, samples: show example values in place of variables,
+  //   source: Set of template ids showing their HTML }
   let templatesView = null;
 
-  function openTemplates(pid, tab) {
+  function openTemplates(pid, tab, name) {
     if (!pid) { dialog.alert('Add an app first.', 'No app'); return null; }
     const keep = templatesView && templatesView.productId === pid ? templatesView : null;
     const p = products.find((x) => x.id === pid);
     const file = `/templates/${(p ? p.name : '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}.json`;
     // no file yet: the app has no templates
     return $.getJSON(file).then((d) => d, () => $.Deferred().resolve({ templates: [] }).promise()).done((d) => {
-      d = { templates: tplList(d.templates) };
+      const list = tplList(d.templates);
       const fresh = $('#templatesPage').hasClass('hidden');
       if (sanity) closeSanity();
       if (sheetsView) closeSheets();
       if (doneView) closeDone();
       if (adminView) closeAdmin();
-      const counts = tplCounts(d.templates);
-      const first = Object.keys(TPL_TABS).find((k) => counts[k]) || 'email';
+      const counts = tplCounts(list);
+      const named = name && list.find((t) => t.name === name);
       templatesView = {
-        productId: pid, list: d.templates, search: keep ? keep.search : '', source: keep ? keep.source : new Set(),
-        tab: TPL_TABS[tab] ? tab : keep ? keep.tab : first,
+        productId: pid, list, search: keep ? keep.search : '', source: keep ? keep.source : new Set(),
+        samples: keep ? keep.samples : true,
+        tab: named ? named.channel : TPL_TABS[tab] ? tab : keep ? keep.tab : Object.keys(TPL_TABS).find((k) => counts[k]) || 'email',
+        sel: named ? named.id : keep ? keep.sel : null,
       };
       renderTemplates();
       $('#board, #tabs').addClass('hidden');
       $('#templatesPage').removeClass('hidden');
       markNav();
-      templatesHash();
       if (fresh) window.scrollTo(0, 0);
     });
   }
-  const templatesHash = () => templatesView && history.replaceState(null, '',
-    `${location.pathname}${location.search}#templates=${encodeURIComponent(templatesView.productId)}&tab=${templatesView.tab}`);
+  const templatesHash = () => {
+    const v = templatesView;
+    const t = v && tplById(v.sel);
+    if (v) history.replaceState(null, '', `${location.pathname}${location.search}#templates=${encodeURIComponent(v.productId)}&tab=${v.tab}${t ? `&t=${encodeURIComponent(t.name)}` : ''}`);
+  };
 
   function closeTemplates() {
     templatesView = null;
@@ -7101,109 +7106,254 @@ $(function () {
     variables: (t.variables || []).map(tplVar).filter((x) => x.name),
   }));
   const tplCounts = (list) => list.reduce((c, t) => { c[t.channel] = (c[t.channel] || 0) + 1; return c; }, {});
-  // {{name}}, ${name}, {#var#}, {1}, %name%, [[name]]: the parts filled in when the message is sent
-  const TPL_VAR = /(\{\{\s*[\w.-]+\s*\}\}|\$\{\s*[\w.]+\s*\}|\{#\w+#\}|\{\d+\}|%[A-Za-z_]\w*%|\[\[\w+\]\])/g;
-  const withVars = (textIn) => esc(textIn).replace(TPL_VAR, '<span class="tpl-var">$1</span>');
-  // WhatsApp's own formatting: *bold*, _italic_, ~strike~
-  const waFormat = (textIn) => withVars(textIn)
-    .replace(/\*([^*\n]+)\*/g, '<b>$1</b>').replace(/(^|\s)_([^_\n]+)_/g, '$1<i>$2</i>').replace(/~([^~\n]+)~/g, '<s>$1</s>');
-  const looksHtml = (textIn) => /<(html|body|table|div|p|br|h\d|span|a)\b/i.test(textIn || '');
+  const tplById = (id) => templatesView && templatesView.list.find((t) => t.id === id);
+  const tplShown = () => {
+    const v = templatesView;
+    const q = v.search.trim().toLowerCase();
+    return v.list.filter((t) => t.channel === v.tab
+      && (!q || [t.name, tplLabel(t), t.title, t.body, t.trigger, t.provider, t.externalId].some((x) => (x || '').toLowerCase().includes(q))));
+  };
 
-  // how the message looks where it lands
-  function tplPreview(t) {
+  // "partnerApprovedTemplate" → "Partner approved", "adminRejectedForApDra" → "Admin rejected for AP/DRA";
+  // a name that already has spaces is kept as it is
+  const TPL_WORDS = { otp: 'OTP', dra: 'DRA', ap: 'AP', ipo: 'IPO', sms: 'SMS', fcm: 'FCM', kc: 'Growth', og: 'link preview', ucc: 'UCC', wa: 'WhatsApp', me: 'link' };
+  const tplLabel = (t) => {
+    if (/\s/.test(t.name)) return t.name;
+    const words = t.name.replace(/(Template)$/, '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[\s_-]+/).filter(Boolean)
+      .map((w, i) => (TPL_WORDS[w.toLowerCase()] || (i ? w.toLowerCase() : w[0].toUpperCase() + w.slice(1).toLowerCase())));
+    return words.join(' ').replace(/\bAP DRA\b/g, 'AP/DRA').replace(/\bWhatsApp link\b/, '(WhatsApp link)');
+  };
+
+  // ${name}, {{name}}, {{1}}, {#var#}, {1}, %name%, [[name]], <ClientName>, <link_hyperlink>: filled in when the message is sent
+  const TPL_VAR = /(\$\{\s*[^}]+\}|\{\{\s*[\w.-]+\s*\}\}|\{#\w+#\}|\{\d+\}|%[A-Za-z_]\w*%|\[\[\w+\]\]|<(?:[A-Z]\w*(?: [A-Z]\w*)*|[a-z]+_[\w]+)>)/g;
+  // the name inside a variable: ${client.name} → name, {{1}} → 1, <Partner Name> → PartnerName
+  const varKey = (raw) => {
+    const inner = raw.replace(/^\$\{|^\{\{|^\{#|^\{|^%|^\[\[|^</, '').replace(/\}\}$|#\}$|\}$|%$|\]\]$|>$/, '').trim();
+    return inner.split(/[\s(]/)[0].split('.').pop().replace(/\s+/g, '') || inner;
+  };
+  // an example value for a variable, from its name and what it means (first rule that fits)
+  const SAMPLES = [
+    [/otp|one.time/, '482913'], [/ttl|validity|minutes/, '10'], [/password/, 'Fd@2026kx'],
+    [/codelabel/, 'Partner Code'], [/rolelabel|role/, 'DRA Partner'], [/applicationlabel/, 'Your Partner application'],
+    [/actionlabel/, 'Updated'], [/typelabel|\btype\b/, 'Payout Change'], [/envlabel|environment/, 'Live'],
+    [/ipo/, 'Acme Industries'], [/company|scrip/, 'Tata Motors'], [/institution/, 'St. Xavier\'s College'], [/college/, 'St. Xavier\'s College'],
+    [/partner ?name|sender|admin ?name|saname|rm ?name|super admin/, 'Priya Mehta'],
+    [/first ?name/, 'Rahul'], [/name|customer|client|contact|registrant|recipient/, 'Rahul Sharma'],
+    [/amount|value|shortfall|₹/, '12,500'], [/time/, '6:30 PM'], [/date|createdat|actionedat|effective|\bon\b/, '29 Oct 2026'],
+    [/mobile|phone/, '98765 43210'], [/email/, 'rahul@example.com'], [/ucc|code|username/, 'AP1024'],
+    [/url|link|portal/, 'https://findost.findoc.com/…'], [/remark/, 'Documents verified'], [/segment/, 'Equity'],
+    [/active ?message/, 'Wishing you a very Happy Birthday! 🎉'], [/heading/, 'Q2 results announced'], [/title/, 'New IPO Opportunity'],
+    [/caption|details/, 'Revenue up 12% year on year.'], [/description|message|body|text/, 'Here are the details of your update.'],
+    [/year/, '3'], [/count|length|total|today|number|lots|attendees|\bid\b|minutes/, '12'], [/city/, 'Ahmedabad'], [/month/, 'December'],
+  ];
+  function sampleOf(t, raw, depth = 0) {
+    const key = varKey(raw);
+    if (/html|rows|data|filters|transcript/i.test(key)) return null; // whole blocks: keep the name
+    const words = (x) => x.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_.]/g, ' ').toLowerCase();
+    const fit = (x) => SAMPLES.find(([re]) => re.test(words(x)));
+    // the variable's own name first; what it means only when the name says nothing ({{1}}, {#var#} …)
+    const byKey = fit(key);
+    if (byKey) return byKey[1];
+    const meant = t.variables.find((x) => x.name === raw || varKey(x.name) === key);
+    if (!meant || !meant.note) return null;
+    // a whole sentence ({{2}}: "your trading account … has a margin shortfall of ₹${amount} …"): show it, filled in
+    if (depth === 0 && (TPL_VAR.test(meant.note) || meant.note.length > 80)) {
+      TPL_VAR.lastIndex = 0;
+      return meant.note.replace(TPL_VAR, (inner) => sampleOf(t, inner, 1) || inner);
+    }
+    TPL_VAR.lastIndex = 0;
+    const byNote = fit(meant.note);
+    return byNote ? byNote[1] : null;
+  }
+  // text with its variables as chips, or as example values (green) when samples are on
+  function tplText(t, textIn, { wa = false } = {}) {
+    const samples = templatesView.samples;
+    let html = String(textIn || '').split(TPL_VAR).map((part, i) => {
+      if (i % 2 === 0) return esc(part);
+      const value = samples && sampleOf(t, part);
+      return value ? `<span class="tpl-sample" title="${esc(part)}">${esc(value)}</span>` : `<span class="tpl-var">${esc(part)}</span>`;
+    }).join('');
+    if (wa) html = html.replace(/\*([^*\n<]+)\*/g, '<b>$1</b>').replace(/(^|\s)_([^_\n<]+)_/g, '$1<i>$2</i>').replace(/~([^~\n<]+)~/g, '<s>$1</s>');
+    return html;
+  }
+  // the e-mail's HTML with its variables marked (or filled in), for the preview frame
+  function tplHtml(t) {
+    const samples = templatesView.samples;
+    return t.body.replace(TPL_VAR, (raw) => {
+      const value = samples && sampleOf(t, raw);
+      return value ? `<mark style="background:#dcfce7;color:inherit">${esc(value)}</mark>`
+        : `<mark style="background:#e0e7ff;color:#3730a3;font-family:monospace">${esc(raw)}</mark>`;
+    });
+  }
+  const looksHtml = (textIn) => /<(html|body|table|div|p|br|h\d|span|a)\b/i.test(textIn || '');
+  const tplIcon = (channel) => `<span class="tpl-ico ${channel}">${icon(TPL_TABS[channel][1], 14)}</span>`;
+
+  // how the message looks where it lands: a mail window, a phone with WhatsApp / SMS, a lock-screen notification
+  function tplStage(t) {
     const v = templatesView;
     if (t.channel === 'email') {
-      const showSource = v.source.has(t.id);
       const html = looksHtml(t.body);
+      const showSource = v.source.has(t.id);
       return `
-        <div class="tpl-mail">
-          <div class="tpl-mail-head"><span>Subject</span><b>${t.title ? withVars(t.title) : '<i class="text-slate-400">No subject</i>'}</b>
-            ${html ? `<button type="button" class="tpl-link" data-tpl-source="${t.id}">${showSource ? 'Preview' : 'HTML'}</button>` : ''}</div>
+        <div class="tpl-mailwin">
+          <div class="tpl-mailbar"><i></i><i></i><i></i></div>
+          <div class="tpl-mailrow"><span>From</span><b>${esc(t.provider && /smtp|ses|mail/i.test(t.provider) ? 'Findoc' : t.provider || 'Findoc')}</b></div>
+          <div class="tpl-mailrow"><span>Subject</span><b>${t.title ? tplText(t, t.title) : '<i class="text-slate-400">No subject</i>'}</b>
+            ${html ? `<button type="button" class="tpl-link" data-tpl-source="${t.id}">${showSource ? 'Show the e-mail' : 'Show HTML'}</button>` : ''}</div>
           ${html && !showSource
-    ? `<iframe class="tpl-frame" sandbox="" referrerpolicy="no-referrer" srcdoc="${esc(t.body).replace(/"/g, '&quot;')}" title="${esc(t.name)}"></iframe>`
-    : `<pre class="tpl-text">${withVars(t.body)}</pre>`}
+    ? `<iframe class="tpl-frame" sandbox="allow-same-origin" referrerpolicy="no-referrer" srcdoc="${esc(tplHtml(t)).replace(/"/g, '&quot;')}" title="${esc(tplLabel(t))}"></iframe>`
+    : `<pre class="tpl-plain">${tplText(t, t.body)}</pre>`}
         </div>`;
     }
-    if (t.channel === 'whatsapp') return `<div class="tpl-chat wa"><div class="tpl-bubble">${t.title ? `<b>${withVars(t.title)}</b><br>` : ''}${waFormat(t.body)}</div></div>`;
-    if (t.channel === 'sms') return `<div class="tpl-chat sms"><div class="tpl-bubble">${withVars(t.body)}</div></div>`;
-    if (t.channel === 'push') {
-      return `<div class="tpl-push"><span class="tpl-push-ico">${icon('bell', 14)}</span><div class="min-w-0">
-        <b>${t.title ? withVars(t.title) : esc(t.name)}</b><p>${withVars(t.body)}</p></div></div>`;
+    if (t.channel === 'whatsapp' || t.channel === 'sms') {
+      const wa = t.channel === 'whatsapp';
+      return `
+        <div class="tpl-phone ${t.channel}">
+          <div class="tpl-phonebar">${wa ? `<span class="tpl-avatar">F</span><div><b>Findoc</b><small>Business account</small></div>` : '<div><b>FINDOC</b><small>Text message</small></div>'}</div>
+          <div class="tpl-chatarea"><div class="tpl-bubble">${wa && t.title && !/[()]/.test(t.title) ? '' : ''}${tplText(t, t.body, { wa })}<time>9:41</time></div></div>
+        </div>`;
     }
-    return `<pre class="tpl-text">${t.title ? `<b>${withVars(t.title)}</b>\n` : ''}${withVars(t.body)}</pre>`;
+    if (t.channel === 'push') {
+      return `
+        <div class="tpl-phone push">
+          <div class="tpl-lock"><b>9:41</b><small>Thursday, 29 October</small></div>
+          <div class="tpl-notif"><span class="tpl-notif-ico">F</span><div class="min-w-0"><p class="tpl-notif-app">FINDOST · now</p>
+            <b>${t.title ? tplText(t, t.title) : esc(tplLabel(t))}</b><p>${tplText(t, t.body)}</p></div></div>
+        </div>`;
+    }
+    return `<div class="tpl-doc">${t.title ? `<b>${tplText(t, t.title)}</b>` : ''}<pre class="tpl-plain">${tplText(t, t.body)}</pre></div>`;
   }
 
-  function tplCard(t) {
+  function tplDetail(t) {
+    const v = templatesView;
+    if (!t) return `<div class="tpl-none">${icon(TPL_TABS[v.tab][1], 28)}<p>${v.search ? 'No template matches the search.' : `No ${TPL_TABS[v.tab][0]} templates yet.`}</p></div>`;
     return `
-      <article class="tpl-card" data-tpl="${t.id}">
-        <header class="tpl-head">
-          <div class="min-w-0 flex-1">
-            <h4 class="tpl-name" title="${esc(t.name)}">${esc(t.name)}</h4>
-            ${t.trigger ? `<p class="tpl-trigger">${icon('clock', 12)}<span>${esc(t.trigger)}</span></p>` : ''}
+      <div class="tpl-dhead">
+        ${tplIcon(t.channel)}
+        <div class="min-w-0 flex-1">
+          <h2 class="tpl-dtitle">${esc(tplLabel(t))}</h2>
+          <p class="tpl-dname">${esc(t.name)}</p>
+        </div>
+        <div class="tpl-dactions">
+          <div class="seg" role="group" aria-label="Show variables as">
+            <button type="button" class="${v.samples ? 'on' : ''}" data-tpl-samples="1" title="Fill the variables with example values">Sample values</button>
+            <button type="button" class="${v.samples ? '' : 'on'}" data-tpl-samples="0" title="Show the variables as they are in the code">Variables</button>
           </div>
-          <div class="tpl-actions">
-            <button type="button" class="icon-btn" data-tpl-copy="${t.id}" title="Copy the text">${icon('copy', 14)}</button>
-          </div>
-        </header>
-        ${t.provider || t.externalId ? `<div class="tpl-tags">${t.provider ? `<span class="tpl-tag">${esc(t.provider)}</span>` : ''}${t.externalId ? `<span class="tpl-tag mono" title="Provider template id">${esc(t.externalId)}</span>` : ''}</div>` : ''}
-        ${tplPreview(t)}
-        ${t.variables.length ? `<div class="tpl-vars"><span>Variables</span>${t.variables.map((x) => `<span class="tpl-var" title="${esc(x.note || '')}">${esc(x.name)}</span>`).join('')}</div>` : ''}
-        ${t.source ? `<p class="tpl-source" title="Where it comes from">${esc(t.source)}</p>` : ''}
-      </article>`;
+          <button type="button" class="btn-secondary px-2.5 py-1.5 text-xs" data-tpl-copy="${t.id}" title="Copy the subject and text">${icon('copy', 13)} Copy text</button>
+          <button type="button" class="btn-secondary px-2.5 py-1.5 text-xs" data-tpl-link title="Copy a link to this template">${icon('link', 13)} Link</button>
+        </div>
+      </div>
+      ${t.trigger ? `<div class="tpl-when">${icon('clock', 15)}<div><b>Sent when</b><p>${esc(t.trigger)}</p></div></div>` : ''}
+      ${t.provider || t.externalId ? `<div class="tpl-tags">${t.provider ? `<span class="tpl-tag">Via ${esc(t.provider)}</span>` : ''}${t.externalId ? `<span class="tpl-tag mono" title="Provider template id">${esc(t.externalId)}</span>` : ''}</div>` : ''}
+      <div class="tpl-stage">${tplStage(t)}</div>
+      ${t.variables.length ? `
+        <h4 class="tpl-sub">Variables <span>${t.variables.length}</span></h4>
+        <table class="tpl-vtable"><thead><tr><th>Variable</th><th>What it is</th><th>Example</th></tr></thead><tbody>
+          ${t.variables.map((x) => { const ex = sampleOf(t, x.name); return `<tr><td><span class="tpl-var">${esc(x.name)}</span></td><td>${esc(x.note) || '<span class="text-slate-400">—</span>'}</td><td>${ex ? `<span class="tpl-sample">${esc(ex)}</span>` : '<span class="text-slate-400">—</span>'}</td></tr>`; }).join('')}
+        </tbody></table>` : ''}
+      ${t.source ? `<p class="tpl-source">${icon('fork', 12)} <span>${esc(t.source)}</span></p>` : ''}`;
   }
 
+  function tplItem(t, on) {
+    return `
+      <button type="button" class="tpl-item ${on ? 'on' : ''}" data-tpl-pick="${t.id}">
+        ${tplIcon(t.channel)}
+        <span class="min-w-0 flex-1">
+          <b>${esc(tplLabel(t))}</b>
+          <small>${esc(t.trigger || t.title || t.name)}</small>
+        </span>
+      </button>`;
+  }
+
+  function renderTplList() {
+    const v = templatesView;
+    const shown = tplShown();
+    if (!shown.some((t) => t.id === v.sel)) v.sel = shown[0] ? shown[0].id : null;
+    $('#tplList').html(shown.map((t) => tplItem(t, t.id === v.sel)).join('') || `<p class="tpl-empty">${v.search ? 'Nothing found.' : 'None yet.'}</p>`);
+    $('#tplCount').text(`${shown.length} of ${tplCounts(v.list)[v.tab] || 0}`);
+  }
+  function renderTplDetail() {
+    const v = templatesView;
+    $('#tplDetail').html(tplDetail(tplById(v.sel))).scrollTop(0);
+    // the e-mail frame grows to its content (same origin, scripts still off)
+    $('#tplDetail .tpl-frame').on('load', function () {
+      try { this.style.height = `${Math.min(1400, Math.max(240, this.contentDocument.documentElement.scrollHeight + 4))}px`; } catch (e) { /* keep the default */ }
+    });
+    templatesHash();
+  }
   function renderTemplates() {
     const v = templatesView;
     const p = products.find((x) => x.id === v.productId);
     const counts = tplCounts(v.list);
-    const q = v.search.trim().toLowerCase();
-    const shown = v.list.filter((t) => t.channel === v.tab
-      && (!q || [t.name, t.title, t.body, t.trigger, t.provider, t.externalId].some((x) => (x || '').toLowerCase().includes(q))));
     $('#tplBody').html(`
       <div class="jr-head">
         <button type="button" class="btn-secondary px-2 py-1 text-xs" data-close-templates title="Back to the board">${icon('left', 12)} Board</button>
         <div class="min-w-0 flex-1">
           <h3 class="text-lg font-semibold text-slate-900">Templates <span class="font-normal text-slate-400">· ${esc(p ? p.name : '')}</span></h3>
-          <p class="text-xs text-slate-500">The e-mails, WhatsApp, SMS and push messages this app sends, with their variables and when they go out.</p>
+          <p class="text-xs text-slate-500">Every e-mail, WhatsApp, SMS and push message this app sends: what it says, when it goes out and what fills it in.</p>
         </div>
       </div>
-      <div class="jr-tabs" role="tablist">
-        ${Object.entries(TPL_TABS).map(([key, [label, ico]]) => `
-          <button type="button" role="tab" aria-selected="${v.tab === key}" class="${v.tab === key ? 'on' : ''}" data-tpl-tab="${key}">
-            ${icon(ico, 13)} ${label}${counts[key] ? ` <b>${counts[key]}</b>` : ''}</button>`).join('')}
+      <div class="tpl-channels" role="tablist">
+        ${Object.entries(TPL_TABS).map(([key, [label]]) => `
+          <button type="button" role="tab" aria-selected="${v.tab === key}" class="tpl-channel ${key} ${v.tab === key ? 'on' : ''}" data-tpl-tab="${key}">
+            ${tplIcon(key)}<span><b>${label}</b><small>${counts[key] || 0} template${counts[key] === 1 ? '' : 's'}</small></span></button>`).join('')}
       </div>
-      <div class="jr-tools">
-        <label class="jr-search">${icon('filter', 13)}
-          <input type="search" data-tpl-search value="${esc(v.search)}" placeholder="Search ${TPL_TABS[v.tab][0]} templates: name, text, when it is sent…" aria-label="Search templates">
-        </label>
-        <span class="text-xs text-slate-500">${shown.length} of ${counts[v.tab] || 0}</span>
-      </div>
-      <div class="tpl-grid">
-        ${shown.map(tplCard).join('') || `<p class="tpl-empty">${q ? 'No template matches the search.' : `No ${TPL_TABS[v.tab][0]} templates yet.`}</p>`}
+      <div class="tpl-layout">
+        <aside class="tpl-side">
+          <label class="jr-search tpl-search">${icon('filter', 13)}
+            <input type="search" data-tpl-search value="${esc(v.search)}" placeholder="Search ${TPL_TABS[v.tab][0]}…" aria-label="Search templates">
+          </label>
+          <p class="tpl-count" id="tplCount"></p>
+          <div class="tpl-list" id="tplList" role="listbox" aria-label="${TPL_TABS[v.tab][0]} templates"></div>
+        </aside>
+        <section class="tpl-detail" id="tplDetail" aria-live="polite"></section>
       </div>`);
+    renderTplList();
+    renderTplDetail();
   }
-
-  const tplById = (id) => templatesView && templatesView.list.find((t) => t.id === id);
 
   $doc.on('click', '[data-action="templates"]', () => (templatesView ? closeTemplates() : openTemplates(productId)));
   $doc.on('click', '[data-close-templates]', closeTemplates);
-  $doc.on('click', '[data-tpl-tab]', function () { templatesView.tab = $(this).data('tpl-tab'); templatesView.search = ''; renderTemplates(); templatesHash(); });
-  $doc.on('input', '[data-tpl-search]', function () {
-    const pos = this.selectionStart;
-    templatesView.search = this.value;
-    renderTemplates();
-    const box = $('[data-tpl-search]')[0];
-    box.focus(); box.setSelectionRange(pos, pos);
+  $doc.on('click', '[data-tpl-tab]', function () {
+    templatesView.tab = $(this).data('tpl-tab'); templatesView.search = ''; templatesView.sel = null; renderTemplates();
   });
+  $doc.on('click', '[data-tpl-pick]', function () {
+    templatesView.sel = $(this).data('tpl-pick');
+    $('.tpl-item').removeClass('on'); $(this).addClass('on');
+    renderTplDetail();
+    if (window.innerWidth < 900) document.getElementById('tplDetail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  $doc.on('input', '[data-tpl-search]', function () {
+    const before = templatesView.sel;
+    templatesView.search = this.value;
+    renderTplList();
+    if (templatesView.sel !== before) renderTplDetail();
+  });
+  // ↑ / ↓ walk through the list (not while typing in a box)
+  $doc.on('keydown', (e) => {
+    if (!templatesView || !['ArrowUp', 'ArrowDown'].includes(e.key) || $(e.target).is('input, textarea, select') || dialog.isOpen()) return;
+    const shown = tplShown();
+    const at = shown.findIndex((t) => t.id === templatesView.sel);
+    const next = shown[Math.min(shown.length - 1, Math.max(0, at + (e.key === 'ArrowDown' ? 1 : -1)))];
+    if (!next || next.id === templatesView.sel) return;
+    e.preventDefault();
+    templatesView.sel = next.id;
+    renderTplList();
+    renderTplDetail();
+    const el = $(`[data-tpl-pick="${next.id}"]`)[0];
+    if (el) el.scrollIntoView({ block: 'nearest' });
+  });
+  $doc.on('click', '[data-tpl-samples]', function () { templatesView.samples = $(this).data('tpl-samples') === 1; renderTplDetail(); });
   $doc.on('click', '[data-tpl-source]', function () {
     const id = $(this).data('tpl-source');
     if (templatesView.source.has(id)) templatesView.source.delete(id); else templatesView.source.add(id);
-    renderTemplates();
+    renderTplDetail();
   });
   $doc.on('click', '[data-tpl-copy]', function () {
     const t = tplById($(this).data('tpl-copy'));
     if (t) copyText(t.title ? `${t.title}\n\n${t.body}` : t.body, 'Template copied');
   });
+  $doc.on('click', '[data-tpl-link]', () => copyText(location.href, 'Link copied'));
 
   // { productId, list, people, canCreate, teams, doc, search, sort: { col, dir }, picked: Set of row ids (to send on Teams),
   //   filters: { columnId: { values, op, a, b, color } } (kept per sheet in this browser) }
