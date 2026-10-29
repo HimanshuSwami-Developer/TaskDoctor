@@ -1,0 +1,1724 @@
+{
+  "database": "Findost",
+  "note": "Findost Postgres database (DB_NAME in findost_be). Built from migrations/*.sql and the Sequelize models in src/models by scripts/findost-schema.cjs.",
+  "generatedAt": "2026-10-29T11:10:06.566Z",
+  "groups": [
+    "Users & accounts",
+    "Trading & holdings",
+    "Payouts",
+    "Products & requests",
+    "Groups",
+    "Notifications",
+    "Knowledge",
+    "Campaigns",
+    "App & content",
+    "System"
+  ],
+  "tables": [
+    {
+      "name": "addresses",
+      "group": "Users & accounts",
+      "note": "",
+      "sources": [
+        "src/models (Address)"
+      ],
+      "columns": [
+        {"name":"id","type":"INTEGER","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"address_type","type":"VARCHAR(5)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"line_1","type":"VARCHAR(255)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"line_2","type":"VARCHAR(255)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"line_3","type":"VARCHAR(255)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"city","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"pincode","type":"VARCHAR(15)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"district","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"state","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"country","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"is_primary","type":"SMALLINT","nullable":true,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"created_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"updated_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":null,"note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "ap_sips",
+      "group": "Trading & holdings",
+      "note": "SIPs an AP / DRA registered for their clients through POST /orders/ap/sips. One row per SIP line. FinZoom has no \"list my SIPs\" endpoint, so this table is what the My SIPs tab lists; status is refreshed whenever GET /orders/ap/sips/:refId is polled.",
+      "sources": [
+        "migrations/v14_ap_sips.sql",
+        "src/models (ApSip)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"ap_ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"correlation_id","type":"VARCHAR(64)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"batch_ref_id","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ref_id","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"client_ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"scheme_code","type":"VARCHAR(40)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"scheme_name","type":"VARCHAR(255)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"amc_code","type":"VARCHAR(40)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"amount","type":"NUMERIC(18,2)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"frequency","type":"VARCHAR(2)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"start_date","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"txn_date","type":"SMALLINT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ninstallments","type":"INTEGER","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"mandate_id","type":"UUID","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"mandate_vpa","type":"VARCHAR(255)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"status","type":"VARCHAR(40)","nullable":false,"pk":false,"unique":false,"default":"'SUBMITTED'","note":""},
+        {"name":"error_message","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"last_response","type":"JSONB","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"last_checked_at","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "app_banners",
+      "group": "App & content",
+      "note": "knowledge centre promotional banners for app (carousel, popup, product image)",
+      "sources": [
+        "migrations/v3_app_banners.sql",
+        "src/models (AppBanner)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"title","type":"VARCHAR(200)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"description","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"position","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":"'carousel'","note":""},
+        {"name":"screen_route","type":"VARCHAR(200)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"carousel_position","type":"SMALLINT","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"product_name","type":"VARCHAR(200)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"image_url_1","type":"VARCHAR(500)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"image_url_2","type":"VARCHAR(500)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"image_url_3","type":"VARCHAR(500)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"redirection_link","type":"VARCHAR(500)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"size","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"platforms","type":"TEXT[]","nullable":false,"pk":false,"unique":false,"default":"'{}'","note":""},
+        {"name":"frequency","type":"VARCHAR(50)","nullable":false,"pk":false,"unique":false,"default":"'always'","note":""},
+        {"name":"display_from","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"display_until","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"sort_order","type":"SMALLINT","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"is_active","type":"BOOLEAN","nullable":false,"pk":false,"unique":false,"default":"TRUE","note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "app_redirect_links",
+      "group": "App & content",
+      "note": "",
+      "sources": [
+        "migrations/v7_app_redirect_links.sql"
+      ],
+      "columns": [
+        {"name":"id","type":"BIGSERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"name","type":"VARCHAR(150)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"slug","type":"VARCHAR(60)","nullable":false,"pk":false,"unique":true,"default":null,"note":""},
+        {"name":"utm_source","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"utm_medium","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"utm_campaign","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"android_url","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ios_url","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"fallback_url","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"is_active","type":"BOOLEAN","nullable":false,"pk":false,"unique":false,"default":"TRUE","note":""},
+        {"name":"created_by","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"extra_params","type":"JSONB","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"deleted_at","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "app_redirect_visits",
+      "group": "App & content",
+      "note": "",
+      "sources": [
+        "migrations/v7_app_redirect_links.sql"
+      ],
+      "columns": [
+        {"name":"id","type":"BIGSERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"link_id","type":"BIGINT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"slug","type":"VARCHAR(60)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"utm_source","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"utm_medium","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"utm_campaign","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"platform","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"redirect_url","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ip_address","type":"VARCHAR(64)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"user_agent","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"referrer","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"query_params","type":"JSONB","nullable":true,"pk":false,"unique":false,"default":null,"note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "audit_logs",
+      "group": "System",
+      "note": "every action an ADMIN / SUPERADMIN performs. source = 'api' → written server-side by activityLogger middleware for every authenticated API call (create / update / delete / view). source = 'ui' → sent by the admin panel via POST /api/v1/activity-logs (button clicks, page views, tab switches, exports, ...). Read by GET /api/v1/superadmin/audit-log. CREATE + ADD COLUMN IF NOT EXISTS so this is safe w",
+      "sources": [
+        "migrations/v16_audit_logs.sql"
+      ],
+      "columns": [
+        {"name":"id","type":"BIGSERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"actor_ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"action","type":"VARCHAR(100)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"entity","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"entity_id","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"meta","type":"JSONB","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ip","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"actor_name","type":"VARCHAR(200)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"actor_role","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"source","type":"VARCHAR(10)","nullable":false,"pk":false,"unique":false,"default":"'api'","note":""},
+        {"name":"method","type":"VARCHAR(10)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"path","type":"VARCHAR(500)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"status_code","type":"SMALLINT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"duration_ms","type":"INTEGER","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"page","type":"VARCHAR(500)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"element","type":"VARCHAR(200)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"user_agent","type":"VARCHAR(500)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"occurred_at","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "bank_account",
+      "group": "Users & accounts",
+      "note": "",
+      "sources": [
+        "src/models (BankAccount)"
+      ],
+      "columns": [
+        {"name":"id","type":"INTEGER","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"account_number","type":"VARCHAR(25)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"account_type","type":"CHAR(1)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ifsc_code","type":"CHAR(11)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"micr_code","type":"CHAR(9)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"bank_code","type":"VARCHAR(10)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"bank_address_1","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"bank_address_2","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"bank_address_3","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"bank_city","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"bank_pincode","type":"VARCHAR(10)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"bank_state","type":"CHAR(6)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"bank_country","type":"CHAR(2)","nullable":true,"pk":false,"unique":false,"default":"'IN'","note":""},
+        {"name":"is_primary","type":"SMALLINT","nullable":true,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"is_active","type":"SMALLINT","nullable":true,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"created_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"updated_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":null,"note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "campaign_event_logs",
+      "group": "Campaigns",
+      "note": "",
+      "sources": [
+        "migrations/v5_campaign_event_logs.sql",
+        "src/models (CampaignEventLog)"
+      ],
+      "columns": [
+        {"name":"id","type":"BIGSERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"visitor_id","type":"VARCHAR(64)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"session_id","type":"VARCHAR(64)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"event_type","type":"VARCHAR(40)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"event_label","type":"VARCHAR(255)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"target_type","type":"VARCHAR(30)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"target_href","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"section","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"page_url","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"referrer","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"utm_source","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"utm_medium","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"utm_campaign","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ip_address","type":"VARCHAR(64)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"user_agent","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"device_type","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"os","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"browser","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"screen_width","type":"INTEGER","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"screen_height","type":"INTEGER","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"viewport_width","type":"INTEGER","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"viewport_height","type":"INTEGER","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"language","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"timezone","type":"VARCHAR(64)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"metadata","type":"JSONB","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"client_ts","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "campaign_orders",
+      "group": "Campaigns",
+      "note": "",
+      "sources": [
+        "migrations/v4_campaign_orders_payments.sql",
+        "src/models (CampaignOrder)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"reservation_id","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"razorpay_order_id","type":"VARCHAR(64)","nullable":false,"pk":false,"unique":true,"default":null,"note":""},
+        {"name":"amount","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"currency","type":"VARCHAR(10)","nullable":false,"pk":false,"unique":false,"default":"'INR'","note":""},
+        {"name":"receipt","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"status","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":"'created'","note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "campaign_payments",
+      "group": "Campaigns",
+      "note": "",
+      "sources": [
+        "migrations/v4_campaign_orders_payments.sql",
+        "src/models (CampaignPayment)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"order_id","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"reservation_id","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"razorpay_order_id","type":"VARCHAR(64)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"razorpay_payment_id","type":"VARCHAR(64)","nullable":false,"pk":false,"unique":true,"default":null,"note":""},
+        {"name":"razorpay_signature","type":"VARCHAR(255)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"amount","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"currency","type":"VARCHAR(10)","nullable":false,"pk":false,"unique":false,"default":"'INR'","note":""},
+        {"name":"method","type":"VARCHAR(30)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"status","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":"'captured'","note":""},
+        {"name":"failure_reason","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "campaign_seat_reservations",
+      "group": "Campaigns",
+      "note": "",
+      "sources": [
+        "src/models (CampaignSeatReservation)",
+        "migrations/student_campaign_seat_reservations.sql"
+      ],
+      "columns": [
+        {"name":"id","type":"INTEGER","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"full_name","type":"VARCHAR(150)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"phone","type":"VARCHAR(10)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"email","type":"VARCHAR(150)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"college_or_company","type":"VARCHAR(200)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"is_active","type":"BOOLEAN","nullable":true,"pk":false,"unique":false,"default":"true","note":""},
+        {"name":"confirmation_email_status","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":"'pending'","note":""},
+        {"name":"confirmation_email_sent_at","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"updated_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"payment_status","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":"'pending'","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "campaign_session_requests",
+      "group": "Campaigns",
+      "note": "",
+      "sources": [
+        "src/models (CampaignSessionRequest)",
+        "migrations/student_campaign_session_requests.sql"
+      ],
+      "columns": [
+        {"name":"id","type":"INTEGER","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"institution_name","type":"VARCHAR(200)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"institution_type","type":"VARCHAR(50)","nullable":false,"pk":false,"unique":false,"default":"'College / University'","note":""},
+        {"name":"contact_name","type":"VARCHAR(150)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"phone","type":"VARCHAR(10)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"city","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"email","type":"VARCHAR(150)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"expected_attendees","type":"INTEGER","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"preferred_month","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"is_active","type":"BOOLEAN","nullable":true,"pk":false,"unique":false,"default":"true","note":""},
+        {"name":"confirmation_email_status","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":"'pending'","note":""},
+        {"name":"confirmation_email_sent_at","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"updated_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":null,"note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "channels",
+      "group": "Users & accounts",
+      "note": "DRA social media channels",
+      "sources": [
+        "migrations/create_channels.sql",
+        "src/models (Channel)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"channel_type","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"channel_url","type":"VARCHAR(1000)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"is_verified","type":"BOOLEAN","nullable":false,"pk":false,"unique":false,"default":"FALSE","note":""},
+        {"name":"is_active","type":"BOOLEAN","nullable":false,"pk":false,"unique":false,"default":"TRUE","note":""},
+        {"name":"status","type":"VARCHAR(30)","nullable":false,"pk":false,"unique":false,"default":"'pending'","note":""},
+        {"name":"admin_note","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"reviewed_by","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"reviewed_at","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "client_notification_groups",
+      "group": "Notifications",
+      "note": "Targeted groups (a campaign can target 0..N groups; individual UCCs live only on the recipients table since they don't need a separate join row)",
+      "sources": [
+        "migrations/client_notifications.sql",
+        "src/models (ClientNotificationGroup)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"notification_id","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"group_id","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":null,"note":""}
+      ],
+      "uniques": [
+        [
+          "notification_id",
+          "group_id"
+        ]
+      ]
+    },
+    {
+      "name": "client_notification_recipients",
+      "group": "Notifications",
+      "note": "Per-client fan-out — one row per (notification, client), even if the client was reachable via more than one targeted group or both individually and via a group.",
+      "sources": [
+        "migrations/client_notifications.sql",
+        "src/models (ClientNotificationRecipient)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"notification_id","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"client_ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"source","type":"VARCHAR(15)","nullable":false,"pk":false,"unique":false,"default":"'individual'","note":""},
+        {"name":"group_id","type":"INTEGER","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"email_status","type":"VARCHAR(15)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"email_sent_at","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"email_error","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"app_status","type":"VARCHAR(15)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"app_sent_at","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": [
+        [
+          "notification_id",
+          "client_ucc"
+        ]
+      ]
+    },
+    {
+      "name": "client_notifications",
+      "group": "Notifications",
+      "note": "Campaign",
+      "sources": [
+        "migrations/client_notifications.sql",
+        "src/models (ClientNotification)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"ap_ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"title","type":"VARCHAR(255)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"description","type":"TEXT","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"channels","type":"JSONB","nullable":false,"pk":false,"unique":false,"default":"'[]'","note":""},
+        {"name":"products","type":"JSONB","nullable":false,"pk":false,"unique":false,"default":"'[]'","note":""},
+        {"name":"template_type","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"template_vars","type":"JSONB","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"target_type","type":"VARCHAR(15)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"scheduled_at","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"status","type":"VARCHAR(15)","nullable":false,"pk":false,"unique":false,"default":"'pending'","note":""},
+        {"name":"total_recipients","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"total_sent","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"total_failed","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"sent_at","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "daily_brokerage",
+      "group": "Trading & holdings",
+      "note": "",
+      "sources": [
+        "src/models (DailyBrokerage)"
+      ],
+      "columns": [
+        {"name":"id","type":"INTEGER","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"br_id","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"seg_id","type":"VARCHAR(10)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"trade_date","type":"DATE","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ap_brok","type":"DECIMAL(18,4)","nullable":true,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"client_brok","type":"DECIMAL(18,4)","nullable":true,"pk":false,"unique":false,"default":"0","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "daily_mtf_interest",
+      "group": "Trading & holdings",
+      "note": "",
+      "sources": [
+        "src/models (DailyMtfInterest)"
+      ],
+      "columns": [
+        {"name":"id","type":"BIGINT","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"br_id","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"entry_date","type":"DATE","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"interest_amount","type":"DECIMAL(15,4)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"interest_rate","type":"DECIMAL(10,6)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"interest_perday","type":"DECIMAL(15,6)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"updated_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":null,"note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "daily_trades",
+      "group": "Trading & holdings",
+      "note": "",
+      "sources": [
+        "src/models (DailyTrades)"
+      ],
+      "columns": [
+        {"name":"id","type":"INTEGER","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"br_id","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"seg_id","type":"VARCHAR(10)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"trade_date","type":"DATE","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"trade_count","type":"INTEGER","nullable":true,"pk":false,"unique":false,"default":"0","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "dp_account",
+      "group": "Users & accounts",
+      "note": "",
+      "sources": [
+        "src/models (DpAccount)"
+      ],
+      "columns": [
+        {"name":"id","type":"INTEGER","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"dp_type","type":"VARCHAR(4)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"dp_id","type":"VARCHAR(8)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"client_id","type":"VARCHAR(8)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"is_primary","type":"SMALLINT","nullable":true,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"pledge_allow","type":"CHAR(1)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"holders","type":"SMALLINT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ddpi_flag","type":"CHAR(1)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ddpi_id","type":"VARCHAR(16)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ddpi_date","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ddpi_deact_date","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"poa_flag","type":"CHAR(1)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"poa_id","type":"VARCHAR(16)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"poa_date","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"poa_deact_date","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"poa_margin","type":"CHAR(1)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"account_status","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"updated_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":null,"note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "dra_payout_slabs",
+      "group": "Payouts",
+      "note": "",
+      "sources": [
+        "migrations/v13_dra_payout_slabs.sql"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"dra_ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"batch_id","type":"UUID","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"from_date","type":"DATE","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"to_date","type":"DATE","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"product_type","type":"VARCHAR(30)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"count_min","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"count_max","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"brokerage_sharing","type":"NUMERIC(7,4)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"flat_payout","type":"NUMERIC(12,2)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"client_status","type":"VARCHAR(10)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"dra_level_1","type":"NUMERIC(7,4)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"dra_level_2","type":"NUMERIC(7,4)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"remark","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_by","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "ekyc_webhook_logs",
+      "group": "Users & accounts",
+      "note": "stores every DRA onboarding webhook event received from the ekyc system",
+      "sources": [
+        "migrations/ekyc_webhook_logs.sql",
+        "src/models (EkycWebhookLog)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"x_user_id","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ucc","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"pan","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"dob","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"mobile","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"name","type":"VARCHAR(200)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"email","type":"VARCHAR(200)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"state","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"role","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"type","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"current_stage","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"previous_stage","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"stage_at","type":"TIMESTAMP","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"last_login","type":"TIMESTAMP","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"lead_date","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"agent_id","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"branch_id","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"br_id","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"channel_link","type":"VARCHAR(500)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"channel_platform","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"dra_levelz_ref_code","type":"VARCHAR(200)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"utm_source","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"utm_medium","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"utm_campaign","type":"VARCHAR(200)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"utm_agent_id","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"utm_branch_id","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"utm_sub_type","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"dra_prospect","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"raw_payload","type":"JSONB","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"received_at","type":"TIMESTAMP","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""},
+        {"name":"created_at","type":"TIMESTAMP","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""},
+        {"name":"updated_at","type":"TIMESTAMP","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "findost_otps",
+      "group": "Users & accounts",
+      "note": "stores OTPs for login / password reset",
+      "sources": [
+        "migrations/findost_otps.sql",
+        "src/models (FindostOtp)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"login_id","type":"VARCHAR(100)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"otp","type":"VARCHAR(6)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"purpose","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":"'login'","note":""},
+        {"name":"expires_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"verified","type":"BOOLEAN","nullable":false,"pk":false,"unique":false,"default":"FALSE","note":""},
+        {"name":"attempts","type":"SMALLINT","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "findost_sessions",
+      "group": "Users & accounts",
+      "note": "stores refresh token sessions per user",
+      "sources": [
+        "migrations/findost_sessions.sql",
+        "src/models (FindostSession)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"refresh_token","type":"TEXT","nullable":false,"pk":false,"unique":true,"default":null,"note":""},
+        {"name":"login_type","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ip_address","type":"VARCHAR(45)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"user_agent","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"is_active","type":"BOOLEAN","nullable":false,"pk":false,"unique":false,"default":"TRUE","note":""},
+        {"name":"expires_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "group_clients",
+      "group": "Groups",
+      "note": "Group ↔ Client junction",
+      "sources": [
+        "migrations/groups.sql",
+        "src/models (GroupClient)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"group_id","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"client_ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": [
+        [
+          "group_id",
+          "client_ucc"
+        ]
+      ]
+    },
+    {
+      "name": "groups",
+      "group": "Groups",
+      "note": "Groups",
+      "sources": [
+        "migrations/groups.sql",
+        "src/models (Group)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"name","type":"VARCHAR(100)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ap_ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"description","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": [
+        [
+          "ap_ucc",
+          "name"
+        ]
+      ]
+    },
+    {
+      "name": "holdings",
+      "group": "Trading & holdings",
+      "note": "",
+      "sources": [
+        "src/models (Holding)"
+      ],
+      "columns": [
+        {"name":"id","type":"INTEGER","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"short_name","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"security_name","type":"VARCHAR(255)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"holding_qty","type":"DECIMAL(18,4)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"rate","type":"DECIMAL(18,4)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"isin","type":"CHAR(12)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"boscrip","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"rate_date","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"buy_value","type":"DECIMAL(18,2)","nullable":true,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"account_type","type":"VARCHAR(10)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"demat_client_id","type":"VARCHAR(16)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"dpid","type":"VARCHAR(16)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"bl_flag","type":"CHAR(1)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"sec_type","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"updated_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":null,"note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "knowledge_banners",
+      "group": "Knowledge",
+      "note": "promotional banners stored on S3",
+      "sources": [
+        "migrations/knowledge_banners.sql",
+        "src/models (KnowledgeBanner)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"title","type":"VARCHAR(200)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"type","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":"'social_media'","note":""},
+        {"name":"image_url","type":"VARCHAR(500)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"description","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"link_url","type":"VARCHAR(500)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"sort_order","type":"SMALLINT","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"display_from","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"display_until","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"is_active","type":"BOOLEAN","nullable":false,"pk":false,"unique":false,"default":"TRUE","note":""},
+        {"name":"format","type":"VARCHAR(10)","nullable":false,"pk":false,"unique":false,"default":"'image'","note":""},
+        {"name":"svg_markup","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"svg_url","type":"VARCHAR(500)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "knowledge_blogs",
+      "group": "Knowledge",
+      "note": "articles/blogs with optional cover image on S3",
+      "sources": [
+        "migrations/knowledge_blogs.sql",
+        "src/models (KnowledgeBlog)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"title","type":"VARCHAR(200)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"content","type":"TEXT","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"image_url","type":"VARCHAR(500)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"blog_link","type":"VARCHAR(1000)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"author","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"category","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"tags","type":"TEXT[]","nullable":false,"pk":false,"unique":false,"default":"'{}'","note":""},
+        {"name":"read_time_minutes","type":"SMALLINT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"is_featured","type":"BOOLEAN","nullable":false,"pk":false,"unique":false,"default":"FALSE","note":""},
+        {"name":"is_active","type":"BOOLEAN","nullable":false,"pk":false,"unique":false,"default":"TRUE","note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "knowledge_events",
+      "group": "Knowledge",
+      "note": "events with venue, mode, and optional banner on S3",
+      "sources": [
+        "migrations/knowledge_events.sql",
+        "src/models (KnowledgeEvent)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"title","type":"VARCHAR(200)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"description","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"start_time","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"end_time","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"venue","type":"VARCHAR(300)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"mode","type":"VARCHAR(10)","nullable":false,"pk":false,"unique":false,"default":"'online'","note":""},
+        {"name":"image_url","type":"VARCHAR(500)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"registration_link","type":"VARCHAR(1000)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"category","type":"VARCHAR(30)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"sub_category","type":"VARCHAR(30)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"organizer","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"is_free","type":"BOOLEAN","nullable":false,"pk":false,"unique":false,"default":"TRUE","note":""},
+        {"name":"fee_amount","type":"DECIMAL(10,2)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"max_participants","type":"INT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"registration_count","type":"INT","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"is_active","type":"BOOLEAN","nullable":false,"pk":false,"unique":false,"default":"TRUE","note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""},
+        {"name":"meeting_link","type":"VARCHAR(500)","nullable":true,"pk":false,"unique":false,"default":null,"note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "knowledge_forms",
+      "group": "Knowledge",
+      "note": "downloadable PDF forms uploaded by Admin/Superadmin, readable by AP/DRA",
+      "sources": [
+        "migrations/knowledge_forms.sql",
+        "src/models (KnowledgeForm)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"title","type":"VARCHAR(200)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"description","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"category","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"file_url","type":"VARCHAR(500)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"sort_order","type":"SMALLINT","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"display_from","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"display_until","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"is_active","type":"BOOLEAN","nullable":false,"pk":false,"unique":false,"default":"TRUE","note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "knowledge_test_attempts",
+      "group": "Knowledge",
+      "note": "per-user attempt results (marks_obtained lives here, not on the test)",
+      "sources": [
+        "migrations/knowledge_tests.sql"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"test_id","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"attempt_number","type":"SMALLINT","nullable":false,"pk":false,"unique":false,"default":"1","note":""},
+        {"name":"marks_obtained","type":"SMALLINT","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"is_passed","type":"BOOLEAN","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"completed_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "knowledge_tests",
+      "group": "Knowledge",
+      "note": "standalone tests, optionally linked to a knowledge video",
+      "sources": [
+        "migrations/knowledge_tests.sql",
+        "src/models (KnowledgeTest)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"title","type":"VARCHAR(200)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"description","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"category","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"sub_category","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"video_id","type":"INTEGER","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"test_url","type":"VARCHAR(1000)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"thumbnail_url","type":"VARCHAR(500)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"total_questions","type":"SMALLINT","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"total_marks","type":"SMALLINT","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"pass_marks","type":"SMALLINT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"max_attempts","type":"SMALLINT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"duration_minutes","type":"SMALLINT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"is_active","type":"BOOLEAN","nullable":false,"pk":false,"unique":false,"default":"TRUE","note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "knowledge_video_views",
+      "group": "Knowledge",
+      "note": "Tracks which users have opened a knowledge video (used to gate linked tests)",
+      "sources": [
+        "migrations/knowledge_video_views.sql",
+        "src/models (KnowledgeVideoView)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"video_id","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"first_opened_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""},
+        {"name":"last_opened_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""}
+      ],
+      "uniques": [
+        [
+          "video_id",
+          "ucc"
+        ]
+      ]
+    },
+    {
+      "name": "knowledge_videos",
+      "group": "Knowledge",
+      "note": "YouTube videos with optional custom thumbnail",
+      "sources": [
+        "migrations/knowledge_videos.sql",
+        "src/models (KnowledgeVideo)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"title","type":"VARCHAR(200)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"description","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"video_url","type":"VARCHAR(500)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"platform","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":"'youtube'","note":""},
+        {"name":"thumbnail_url","type":"VARCHAR(500)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"category","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"sub_category","type":"VARCHAR(30)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"duration_seconds","type":"INT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"is_featured","type":"BOOLEAN","nullable":false,"pk":false,"unique":false,"default":"FALSE","note":""},
+        {"name":"sort_order","type":"SMALLINT","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"is_active","type":"BOOLEAN","nullable":false,"pk":false,"unique":false,"default":"TRUE","note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "limechat_conversations",
+      "group": "App & content",
+      "note": "",
+      "sources": [
+        "migrations/v11_limechat_conversations.sql"
+      ],
+      "columns": [
+        {"name":"conversation_id","type":"BIGINT","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"ucc","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"freshdesk_id","type":"BIGINT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ticket_id","type":"INTEGER","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"status","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":"'processing'","note":""},
+        {"name":"error","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "margin_shortfall",
+      "group": "Trading & holdings",
+      "note": "",
+      "sources": [
+        "src/models (MarginShortfall)"
+      ],
+      "columns": [
+        {"name":"id","type":"INTEGER","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"br_id","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ledger","type":"DECIMAL(18,4)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"margin","type":"DECIMAL(18,4)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"fd_count","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"total_fd_amount","type":"DECIMAL(18,4)","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"holding_ahc","type":"DECIMAL(18,4)","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"rdate","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"mdate","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"margin_shortfall","type":"DECIMAL(18,4)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"updated_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":null,"note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "mtf_book",
+      "group": "Trading & holdings",
+      "note": "",
+      "sources": [
+        "src/models (MtfBook)"
+      ],
+      "columns": [
+        {"name":"id","type":"INTEGER","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"brid","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":true,"default":null,"note":""},
+        {"name":"total_mtf_clients","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"ytd_mtf_clients","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"mtd_mtf_clients","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"total_open_positions","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"ytd_open_positions","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"mtd_open_positions","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"total_book_value","type":"DECIMAL(18,4)","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"ytd_book_value","type":"DECIMAL(18,4)","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"mtd_book_value","type":"DECIMAL(18,4)","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"total_interest_earned","type":"DECIMAL(18,4)","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"ytd_interest_earned","type":"DECIMAL(18,4)","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"mtd_interest_earned","type":"DECIMAL(18,4)","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"created_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"updated_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "mtf_slab_assignments",
+      "group": "Trading & holdings",
+      "note": "",
+      "sources": [
+        "migrations/mtf_slab_tables.sql",
+        "src/models (MtfSlabAssignment)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"ap_ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"slab_id","type":"INT","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"effective_from","type":"DATE","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"effective_to","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"assigned_by","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": [
+        [
+          "ap_ucc",
+          "effective_from"
+        ]
+      ]
+    },
+    {
+      "name": "mtf_slab_masters",
+      "group": "Trading & holdings",
+      "note": "",
+      "sources": [
+        "migrations/mtf_slab_tables.sql",
+        "src/models (MtfSlabMaster)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"name","type":"VARCHAR(100)","nullable":false,"pk":false,"unique":true,"default":null,"note":""},
+        {"name":"description","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "mtf_slab_tiers",
+      "group": "Trading & holdings",
+      "note": "",
+      "sources": [
+        "migrations/mtf_slab_tables.sql",
+        "src/models (MtfSlabTier)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"slab_id","type":"INT","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"from_amount","type":"NUMERIC(18,2)","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"to_amount","type":"NUMERIC(18,2)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"share_pct","type":"NUMERIC(8,4)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": [
+        [
+          "slab_id",
+          "from_amount"
+        ]
+      ]
+    },
+    {
+      "name": "news_notifications",
+      "group": "Notifications",
+      "note": "",
+      "sources": [
+        "migrations/news_holdings_sync.sql",
+        "src/models (NewsNotification)"
+      ],
+      "columns": [
+        {"name":"id","type":"BIGSERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"news_id","type":"BIGINT","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"isin","type":"VARCHAR(12)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"channel","type":"VARCHAR(15)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"status","type":"VARCHAR(15)","nullable":false,"pk":false,"unique":false,"default":"'pending'","note":""},
+        {"name":"sent_at","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": [
+        [
+          "news_id",
+          "ucc"
+        ]
+      ]
+    },
+    {
+      "name": "nominee",
+      "group": "Users & accounts",
+      "note": "",
+      "sources": [
+        "src/models (Nominee)"
+      ],
+      "columns": [
+        {"name":"id","type":"INTEGER","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"nom_serial","type":"VARCHAR(2)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"name","type":"VARCHAR(250)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"mobile","type":"VARCHAR(15)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"email","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"share_percentage","type":"DECIMAL(18,2)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"relation","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"dob","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"pan","type":"VARCHAR(10)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"nom_uid","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"gender","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"marital_status","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"residential_status","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"nationality","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"occupation","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"id_proof","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"line_1","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"line_2","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"line_3","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"city","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"pincode","type":"VARCHAR(10)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"district","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"state","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"country","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"address_proof","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"updated_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":null,"note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "notification_templates",
+      "group": "Notifications",
+      "note": "",
+      "sources": [
+        "migrations/notification_templates.sql",
+        "src/models (NotificationTemplate)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"type","type":"VARCHAR(30)","nullable":false,"pk":false,"unique":true,"default":null,"note":""},
+        {"name":"body","type":"TEXT","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "orders",
+      "group": "Trading & holdings",
+      "note": "",
+      "sources": [
+        "migrations/orders_ipo.sql"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"client_ucc","type":"VARCHAR(50)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"applier_ucc","type":"VARCHAR(50)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"symbol","type":"VARCHAR(50)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"application_number","type":"VARCHAR(16)","nullable":false,"pk":false,"unique":true,"default":null,"note":""},
+        {"name":"category","type":"VARCHAR(10)","nullable":false,"pk":false,"unique":false,"default":"'IND'","note":""},
+        {"name":"allotment_mode","type":"VARCHAR(10)","nullable":false,"pk":false,"unique":false,"default":"'demat'","note":""},
+        {"name":"non_asba","type":"BOOLEAN","nullable":true,"pk":false,"unique":false,"default":"FALSE","note":""},
+        {"name":"reference_no","type":"VARCHAR(200)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"upi_flag","type":"VARCHAR(1)","nullable":false,"pk":false,"unique":false,"default":"'Y'","note":""},
+        {"name":"upi","type":"VARCHAR(100)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"bank_code","type":"VARCHAR(6)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"location_code","type":"VARCHAR(6)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"sub_broker_code","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":"''","note":""},
+        {"name":"bids","type":"JSONB","nullable":false,"pk":false,"unique":false,"default":"'[]'::jsonb","note":""},
+        {"name":"application_status","type":"ENUM_ORDERS_APPLICATION_STATUS","nullable":true,"pk":false,"unique":false,"default":"'pending'","note":""},
+        {"name":"status_code","type":"INTEGER","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"reason","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"dp_verification_status","type":"VARCHAR(1)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"dp_verification_reason","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"dp_verification_fail_code","type":"VARCHAR(10)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"upi_payment_status","type":"INTEGER","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"upi_payment_reason","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"upi_amount_blocked","type":"NUMERIC","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"execution_status","type":"ENUM_ORDERS_EXECUTION_STATUS","nullable":true,"pk":false,"unique":false,"default":"'pending'","note":""},
+        {"name":"queued_at","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"executed_at","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"scheduled_execution_time","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"execution_attempts","type":"INTEGER","nullable":true,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"max_execution_attempts","type":"INTEGER","nullable":true,"pk":false,"unique":false,"default":"3","note":""},
+        {"name":"last_execution_error","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"api_timestamp","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"last_sync_at","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"dp_type","type":"VARCHAR(4)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"dp_id","type":"VARCHAR(16)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"client_ben_id","type":"VARCHAR(16)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"depository","type":"VARCHAR(4)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"allotment_status","type":"ENUM_ORDERS_ALLOTMENT_STATUS","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"allotment_quantity","type":"INTEGER","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"allotment_amount","type":"NUMERIC","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"executed_exchange","type":"VARCHAR(10)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ipo_exchange","type":"VARCHAR(10)","nullable":false,"pk":false,"unique":false,"default":"'NSE'","note":""},
+        {"name":"allotment_price","type":"NUMERIC","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"allotment_synced_at","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "partner_group_members",
+      "group": "Groups",
+      "note": "Partner group members",
+      "sources": [
+        "migrations/partner_notifications.sql",
+        "src/models (PartnerGroupMember)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"group_id","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"partner_ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": [
+        [
+          "group_id",
+          "partner_ucc"
+        ]
+      ]
+    },
+    {
+      "name": "partner_groups",
+      "group": "Groups",
+      "note": "Partner groups",
+      "sources": [
+        "migrations/partner_notifications.sql",
+        "src/models (PartnerGroup)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"admin_ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"name","type":"VARCHAR(100)","nullable":false,"pk":false,"unique":true,"default":null,"note":""},
+        {"name":"description","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "partner_notification_groups",
+      "group": "Notifications",
+      "note": "Targeted groups",
+      "sources": [
+        "migrations/partner_notifications.sql",
+        "src/models (PartnerNotificationGroup)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"notification_id","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"group_id","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":null,"note":""}
+      ],
+      "uniques": [
+        [
+          "notification_id",
+          "group_id"
+        ]
+      ]
+    },
+    {
+      "name": "partner_notification_recipients",
+      "group": "Notifications",
+      "note": "Per-partner fan-out — one row per (notification, partner), the email delivery record.",
+      "sources": [
+        "migrations/partner_notifications.sql",
+        "src/models (PartnerNotificationRecipient)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"notification_id","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"partner_ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"source","type":"VARCHAR(15)","nullable":false,"pk":false,"unique":false,"default":"'individual'","note":""},
+        {"name":"group_id","type":"INTEGER","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"email_status","type":"VARCHAR(15)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"email_sent_at","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"email_error","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"app_status","type":"VARCHAR(15)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"app_sent_at","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": [
+        [
+          "notification_id",
+          "partner_ucc"
+        ]
+      ]
+    },
+    {
+      "name": "partner_notifications",
+      "group": "Notifications",
+      "note": "Campaign",
+      "sources": [
+        "migrations/partner_notifications.sql",
+        "src/models (PartnerNotification)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"admin_ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"title","type":"VARCHAR(255)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"subtitle","type":"VARCHAR(255)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"description","type":"TEXT","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"image_url","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"products","type":"JSONB","nullable":false,"pk":false,"unique":false,"default":"'[]'","note":""},
+        {"name":"mode","type":"JSONB","nullable":false,"pk":false,"unique":false,"default":"'[\"email\"]'","note":""},
+        {"name":"target_type","type":"VARCHAR(15)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"scheduled_at","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"status","type":"VARCHAR(15)","nullable":false,"pk":false,"unique":false,"default":"'pending'","note":""},
+        {"name":"total_recipients","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"total_delivered","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"total_failed","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"sent_at","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "partner_ranks",
+      "group": "Payouts",
+      "note": "",
+      "sources": [
+        "migrations/v12_partner_ranks.sql"
+      ],
+      "columns": [
+        {"name":"ucc","type":"VARCHAR(20)","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"current_tier","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"previous_tier","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"changed_at","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"acknowledged_at","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "payout",
+      "group": "Payouts",
+      "note": "",
+      "sources": [
+        "src/models (Payout)"
+      ],
+      "columns": [
+        {"name":"id","type":"INTEGER","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"br_id","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"total_amount","type":"DECIMAL(18,4)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"month","type":"CHAR(2)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"year","type":"CHAR(4)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"payment_date","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"updated_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":null,"note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "payout_breakdowns",
+      "group": "Payouts",
+      "note": "",
+      "sources": [
+        "migrations/payout_breakdowns.sql",
+        "src/models (PayoutBreakdown)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"ap_ucc","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"account_type","type":"VARCHAR(10)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"segment","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ex_id","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"value","type":"NUMERIC(10, 2)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"jobb_fut_share","type":"NUMERIC(7, 4)","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"delv_opt_share","type":"NUMERIC(7, 4)","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"sharing_type","type":"VARCHAR(1)","nullable":false,"pk":false,"unique":false,"default":"'P'","note":""},
+        {"name":"effective_from","type":"DATE","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"effective_to","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"remark","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"updated_by","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"account_opening_payout","type":"NUMERIC(10, 2)","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"trade_active_payout","type":"NUMERIC(10, 2)","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"brokerage_sharing","type":"NUMERIC(5, 2)","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"ap_referral","type":"NUMERIC(10, 2)","nullable":false,"pk":false,"unique":false,"default":"0","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "podcast_audios",
+      "group": "Knowledge",
+      "note": "admin-uploaded podcast episodes (audio file on S3 or direct URL)",
+      "sources": [
+        "migrations/podcast_audios.sql",
+        "src/models (PodcastAudio)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"name","type":"VARCHAR(200)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"url","type":"VARCHAR(500)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"pdf_url","type":"VARCHAR(500)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"date","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"duration","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"tab","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":"'stocks'","note":""},
+        {"name":"is_active","type":"BOOLEAN","nullable":false,"pk":false,"unique":false,"default":"TRUE","note":""},
+        {"name":"is_deleted","type":"BOOLEAN","nullable":false,"pk":false,"unique":false,"default":"FALSE","note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "products",
+      "group": "Products & requests",
+      "note": "",
+      "sources": [
+        "migrations/v3_products.sql",
+        "src/models (Product)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"key","type":"VARCHAR(50)","nullable":false,"pk":false,"unique":true,"default":null,"note":""},
+        {"name":"name","type":"VARCHAR(100)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"type","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":"'product'","note":""},
+        {"name":"status","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":"'upcoming'","note":""},
+        {"name":"sort_order","type":"SMALLINT","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "push_notifications",
+      "group": "Notifications",
+      "note": "Push notification campaigns",
+      "sources": [
+        "migrations/push_notifications.sql",
+        "src/models (PushNotification)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"title","type":"VARCHAR(255)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"body","type":"TEXT","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"data","type":"JSONB","nullable":false,"pk":false,"unique":false,"default":"'{}'","note":""},
+        {"name":"filters","type":"JSONB","nullable":false,"pk":false,"unique":false,"default":"'{}'","note":""},
+        {"name":"status","type":"VARCHAR(15)","nullable":false,"pk":false,"unique":false,"default":"'pending'","note":""},
+        {"name":"total_sent","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"total_failed","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":"0","note":""},
+        {"name":"sent_by","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "push_tokens",
+      "group": "Users & accounts",
+      "note": "Device push tokens",
+      "sources": [
+        "migrations/push_notifications.sql",
+        "src/models (PushToken)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"token","type":"TEXT","nullable":false,"pk":false,"unique":true,"default":null,"note":""},
+        {"name":"platform","type":"VARCHAR(10)","nullable":false,"pk":false,"unique":false,"default":null,"note":"android | ios | web"},
+        {"name":"is_active","type":"BOOLEAN","nullable":false,"pk":false,"unique":false,"default":"TRUE","note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "recording_logs",
+      "group": "Knowledge",
+      "note": "tracks user-triggered events (share / download_pdf / speed_event) against a podcast audio, captured from the public web/app client. No auth required to write, so device/browser/location fields are best-effort client-reported data; device_ip is captured server-side from the request.",
+      "sources": [
+        "migrations/recording_logs.sql",
+        "src/models (RecordingLog)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"device_name","type":"VARCHAR(200)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"device_ip","type":"VARCHAR(45)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"device_location","type":"VARCHAR(200)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"browser_name","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"browser_version","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"source","type":"VARCHAR(10)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"event_name","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"category","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"audio_id","type":"INTEGER","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "report_requests",
+      "group": "Products & requests",
+      "note": "",
+      "sources": [
+        "migrations/report_requests.sql",
+        "src/models (ReportRequest)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"category","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"report_type","type":"VARCHAR(100)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"report_label","type":"VARCHAR(200)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"from_date","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"to_date","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"as_on_date","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"client_ucc","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"remarks","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"freshdesk_id","type":"INTEGER","nullable":true,"pk":false,"unique":true,"default":null,"note":""},
+        {"name":"status","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":"'open'","note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "requests",
+      "group": "Products & requests",
+      "note": "",
+      "sources": [
+        "migrations/v3_requests.sql",
+        "src/models (Request)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"type","type":"VARCHAR(50)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"raised_by","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"raised_by_role","type":"VARCHAR(10)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"product_id","type":"INT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"details","type":"JSONB","nullable":false,"pk":false,"unique":false,"default":"'{}'","note":""},
+        {"name":"admin_ucc","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"admin_status","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":"'PENDING'","note":""},
+        {"name":"admin_remarks","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"admin_actioned_at","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"superadmin_ucc","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"superadmin_status","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":"'WAITING'","note":""},
+        {"name":"superadmin_remarks","type":"TEXT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"superadmin_actioned_at","type":"TIMESTAMPTZ","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"status","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":"'PENDING'","note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "segment",
+      "group": "Users & accounts",
+      "note": "",
+      "sources": [
+        "src/models (Segment)"
+      ],
+      "columns": [
+        {"name":"id","type":"INTEGER","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"exchange","type":"VARCHAR(10)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"segment","type":"VARCHAR(10)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"active_date","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"inactive_date","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"trade_allow","type":"CHAR(1)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"permit_to_trade","type":"CHAR(1)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"last_trade_date","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"updated_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":null,"note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "sync_state",
+      "group": "System",
+      "note": "",
+      "sources": [
+        "migrations/news_holdings_sync.sql"
+      ],
+      "columns": [
+        {"name":"job_name","type":"VARCHAR(50)","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"last_synced_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"'1970-01-01'","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "tickets",
+      "group": "App & content",
+      "note": "support tickets raised by AP/DRA, synced with Freshdesk",
+      "sources": [
+        "migrations/tickets.sql",
+        "src/models (Ticket)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"freshdesk_id","type":"INTEGER","nullable":true,"pk":false,"unique":true,"default":null,"note":""},
+        {"name":"subject","type":"VARCHAR(300)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"description","type":"TEXT","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"priority","type":"SMALLINT","nullable":false,"pk":false,"unique":false,"default":"2","note":""},
+        {"name":"status","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":"'open'","note":""},
+        {"name":"created_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""},
+        {"name":"updated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"CURRENT_TIMESTAMP","note":""}
+      ],
+      "uniques": []
+    },
+    {
+      "name": "user_products",
+      "group": "Products & requests",
+      "note": "",
+      "sources": [
+        "migrations/v3_user_products.sql",
+        "src/models (UserProduct)"
+      ],
+      "columns": [
+        {"name":"id","type":"SERIAL","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"user_ucc","type":"VARCHAR(20)","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"product_id","type":"INT","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"activated_at","type":"TIMESTAMPTZ","nullable":false,"pk":false,"unique":false,"default":"NOW()","note":""},
+        {"name":"activated_by","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"request_id","type":"INT","nullable":true,"pk":false,"unique":false,"default":null,"note":""}
+      ],
+      "uniques": [
+        [
+          "user_ucc",
+          "product_id"
+        ]
+      ]
+    },
+    {
+      "name": "users",
+      "group": "Users & accounts",
+      "note": "",
+      "sources": [
+        "src/models (User)"
+      ],
+      "columns": [
+        {"name":"ucc","type":"VARCHAR(20)","nullable":false,"pk":true,"unique":false,"default":null,"note":""},
+        {"name":"name","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"dob","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"email","type":"VARCHAR(100)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"mobile","type":"VARCHAR(15)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"mobile_related_to","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"email_related_to","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"pan","type":"CHAR(10)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"gender","type":"CHAR(1)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"status","type":"SMALLINT","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"account_type","type":"VARCHAR(10)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"risk_category","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"brid","type":"VARCHAR(10)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"subbrid","type":"VARCHAR(10)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"admin_ucc","type":"VARCHAR(20)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"opendate","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"closedate","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"lastmodifdate","type":"TIMESTAMP WITH TIME ZONE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"upi","type":"VARCHAR(25)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"password_hash","type":"VARCHAR(255)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ftd","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ltd","type":"DATE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ltd_seg","type":"VARCHAR(10)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ckyc_category","type":"CHAR(4)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"ckyc_category_desc","type":"VARCHAR(50)","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"welcome_mail_sent_at","type":"TIMESTAMP WITH TIME ZONE","nullable":true,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"created_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":null,"note":""},
+        {"name":"updated_at","type":"TIMESTAMP WITH TIME ZONE","nullable":false,"pk":false,"unique":false,"default":null,"note":""}
+      ],
+      "uniques": []
+    }
+  ],
+  "foreignKeys": [
+    {"from":"addresses","column":"ucc","to":"users","toColumn":"ucc","onDelete":"CASCADE","kind":"db","sources":["src/models (Address)","src/models/index.js (Address.BelongsTo User)","src/models/index.js (User.HasMany Address)"]},
+    {"from":"app_redirect_visits","column":"link_id","to":"app_redirect_links","toColumn":"id","onDelete":"CASCADE","kind":"db","sources":["migrations/v7_app_redirect_links.sql"]},
+    {"from":"bank_account","column":"ucc","to":"users","toColumn":"ucc","onDelete":"CASCADE","kind":"db","sources":["src/models (BankAccount)","src/models/index.js (BankAccount.BelongsTo User)","src/models/index.js (User.HasMany BankAccount)"]},
+    {"from":"campaign_orders","column":"reservation_id","to":"campaign_seat_reservations","toColumn":"id","onDelete":"CASCADE","kind":"db","sources":["migrations/v4_campaign_orders_payments.sql"]},
+    {"from":"campaign_payments","column":"order_id","to":"campaign_orders","toColumn":"id","onDelete":"CASCADE","kind":"db","sources":["migrations/v4_campaign_orders_payments.sql"]},
+    {"from":"campaign_payments","column":"reservation_id","to":"campaign_seat_reservations","toColumn":"id","onDelete":"CASCADE","kind":"db","sources":["migrations/v4_campaign_orders_payments.sql"]},
+    {"from":"channels","column":"ucc","to":"users","toColumn":"ucc","onDelete":"CASCADE","kind":"db","sources":["migrations/create_channels.sql","src/models (Channel)","src/models/index.js (Channel.BelongsTo User)","src/models/index.js (User.HasMany Channel)"]},
+    {"from":"client_notification_groups","column":"group_id","to":"groups","toColumn":"id","onDelete":"CASCADE","kind":"db","sources":["migrations/client_notifications.sql","src/models (ClientNotificationGroup)","src/models/index.js (ClientNotificationGroup.BelongsTo Group)"]},
+    {"from":"client_notification_groups","column":"notification_id","to":"client_notifications","toColumn":"id","onDelete":"CASCADE","kind":"db","sources":["migrations/client_notifications.sql","src/models (ClientNotificationGroup)","src/models/index.js (ClientNotification.HasMany ClientNotificationGroup)","src/models/index.js (ClientNotificationGroup.BelongsTo ClientNotification)"]},
+    {"from":"client_notification_recipients","column":"client_ucc","to":"users","toColumn":"ucc","onDelete":"CASCADE","kind":"db","sources":["migrations/client_notifications.sql","src/models (ClientNotificationRecipient)","src/models/index.js (ClientNotificationRecipient.BelongsTo User)"]},
+    {"from":"client_notification_recipients","column":"group_id","to":"groups","toColumn":"id","onDelete":"SET NULL","kind":"db","sources":["migrations/client_notifications.sql"]},
+    {"from":"client_notification_recipients","column":"notification_id","to":"client_notifications","toColumn":"id","onDelete":"CASCADE","kind":"db","sources":["migrations/client_notifications.sql","src/models (ClientNotificationRecipient)","src/models/index.js (ClientNotification.HasMany ClientNotificationRecipient)","src/models/index.js (ClientNotificationRecipient.BelongsTo ClientNotification)"]},
+    {"from":"client_notifications","column":"ap_ucc","to":"users","toColumn":"ucc","onDelete":"CASCADE","kind":"db","sources":["migrations/client_notifications.sql","src/models (ClientNotification)","src/models/index.js (ClientNotification.BelongsTo User)","src/models/index.js (User.HasMany ClientNotification)"]},
+    {"from":"daily_brokerage","column":"ucc","to":"users","toColumn":"ucc","onDelete":"CASCADE","kind":"db","sources":["src/models (DailyBrokerage)","src/models/index.js (DailyBrokerage.BelongsTo User)","src/models/index.js (User.HasMany DailyBrokerage)"]},
+    {"from":"daily_trades","column":"ucc","to":"users","toColumn":"ucc","onDelete":"CASCADE","kind":"db","sources":["src/models (DailyTrades)","src/models/index.js (DailyTrades.BelongsTo User)","src/models/index.js (User.HasMany DailyTrades)"]},
+    {"from":"dp_account","column":"ucc","to":"users","toColumn":"ucc","onDelete":"CASCADE","kind":"db","sources":["src/models (DpAccount)","src/models/index.js (DpAccount.BelongsTo User)","src/models/index.js (User.HasMany DpAccount)"]},
+    {"from":"dra_payout_slabs","column":"dra_ucc","to":"users","toColumn":"ucc","onDelete":"CASCADE","kind":"db","sources":["migrations/v13_dra_payout_slabs.sql"]},
+    {"from":"findost_sessions","column":"ucc","to":"users","toColumn":"ucc","onDelete":"CASCADE","kind":"db","sources":["src/models (FindostSession)","src/models/index.js (FindostSession.BelongsTo User)","src/models/index.js (User.HasMany FindostSession)"]},
+    {"from":"group_clients","column":"client_ucc","to":"users","toColumn":"ucc","onDelete":"CASCADE","kind":"db","sources":["migrations/groups.sql","src/models (GroupClient)","src/models/index.js (Group.BelongsToMany User)","src/models/index.js (GroupClient.BelongsTo User)","src/models/index.js (User.BelongsToMany Group)"]},
+    {"from":"group_clients","column":"group_id","to":"groups","toColumn":"id","onDelete":"CASCADE","kind":"db","sources":["migrations/groups.sql","src/models (GroupClient)","src/models/index.js (Group.BelongsToMany User)","src/models/index.js (GroupClient.BelongsTo Group)","src/models/index.js (User.BelongsToMany Group)"]},
+    {"from":"groups","column":"ap_ucc","to":"users","toColumn":"ucc","onDelete":"CASCADE","kind":"db","sources":["migrations/groups.sql","src/models (Group)","src/models/index.js (Group.BelongsTo User)","src/models/index.js (User.HasMany Group)"]},
+    {"from":"holdings","column":"ucc","to":"users","toColumn":"ucc","onDelete":"CASCADE","kind":"db","sources":["src/models (Holding)","src/models/index.js (Holding.BelongsTo User)","src/models/index.js (User.HasMany Holding)"]},
+    {"from":"knowledge_test_attempts","column":"test_id","to":"knowledge_tests","toColumn":"id","onDelete":"CASCADE","kind":"db","sources":["migrations/knowledge_tests.sql"]},
+    {"from":"knowledge_tests","column":"video_id","to":"knowledge_videos","toColumn":"id","onDelete":"SET NULL","kind":"db","sources":["migrations/knowledge_tests.sql","src/models (KnowledgeTest)","src/models/index.js (KnowledgeTest.BelongsTo KnowledgeVideo)","src/models/index.js (KnowledgeVideo.HasMany KnowledgeTest)"]},
+    {"from":"knowledge_video_views","column":"video_id","to":"knowledge_videos","toColumn":"id","onDelete":"CASCADE","kind":"db","sources":["migrations/knowledge_video_views.sql","src/models (KnowledgeVideoView)","src/models/index.js (KnowledgeVideo.HasMany KnowledgeVideoView)","src/models/index.js (KnowledgeVideoView.BelongsTo KnowledgeVideo)"]},
+    {"from":"limechat_conversations","column":"ticket_id","to":"tickets","toColumn":"id","onDelete":"SET NULL","kind":"db","sources":["migrations/v11_limechat_conversations.sql"]},
+    {"from":"margin_shortfall","column":"ucc","to":"users","toColumn":"ucc","onDelete":"CASCADE","kind":"db","sources":["src/models (MarginShortfall)","src/models/index.js (MarginShortfall.BelongsTo User)","src/models/index.js (User.HasMany MarginShortfall)"]},
+    {"from":"mtf_slab_assignments","column":"slab_id","to":"mtf_slab_masters","toColumn":"id","onDelete":null,"kind":"db","sources":["migrations/mtf_slab_tables.sql"]},
+    {"from":"mtf_slab_tiers","column":"slab_id","to":"mtf_slab_masters","toColumn":"id","onDelete":"CASCADE","kind":"db","sources":["migrations/mtf_slab_tables.sql"]},
+    {"from":"news_notifications","column":"ucc","to":"users","toColumn":"ucc","onDelete":"CASCADE","kind":"db","sources":["migrations/news_holdings_sync.sql","src/models (NewsNotification)","src/models/index.js (NewsNotification.BelongsTo User)","src/models/index.js (User.HasMany NewsNotification)"]},
+    {"from":"nominee","column":"ucc","to":"users","toColumn":"ucc","onDelete":null,"kind":"logical","sources":["src/models/index.js (Nominee.BelongsTo User)","src/models/index.js (User.HasMany Nominee)"]},
+    {"from":"orders","column":"applier_ucc","to":"users","toColumn":"ucc","onDelete":null,"kind":"db","sources":["migrations/orders_ipo.sql"]},
+    {"from":"orders","column":"client_ucc","to":"users","toColumn":"ucc","onDelete":null,"kind":"db","sources":["migrations/orders_ipo.sql"]},
+    {"from":"partner_group_members","column":"group_id","to":"partner_groups","toColumn":"id","onDelete":"CASCADE","kind":"db","sources":["migrations/partner_notifications.sql","src/models (PartnerGroupMember)","src/models/index.js (PartnerGroup.HasMany PartnerGroupMember)","src/models/index.js (PartnerGroupMember.BelongsTo PartnerGroup)"]},
+    {"from":"partner_group_members","column":"partner_ucc","to":"users","toColumn":"ucc","onDelete":"CASCADE","kind":"db","sources":["migrations/partner_notifications.sql","src/models (PartnerGroupMember)","src/models/index.js (PartnerGroupMember.BelongsTo User)"]},
+    {"from":"partner_groups","column":"admin_ucc","to":"users","toColumn":"ucc","onDelete":"CASCADE","kind":"db","sources":["migrations/partner_notifications.sql","src/models (PartnerGroup)","src/models/index.js (PartnerGroup.BelongsTo User)","src/models/index.js (User.HasMany PartnerGroup)"]},
+    {"from":"partner_notification_groups","column":"group_id","to":"partner_groups","toColumn":"id","onDelete":"CASCADE","kind":"db","sources":["migrations/partner_notifications.sql","src/models (PartnerNotificationGroup)","src/models/index.js (PartnerNotificationGroup.BelongsTo PartnerGroup)"]},
+    {"from":"partner_notification_groups","column":"notification_id","to":"partner_notifications","toColumn":"id","onDelete":"CASCADE","kind":"db","sources":["migrations/partner_notifications.sql","src/models (PartnerNotificationGroup)","src/models/index.js (PartnerNotification.HasMany PartnerNotificationGroup)","src/models/index.js (PartnerNotificationGroup.BelongsTo PartnerNotification)"]},
+    {"from":"partner_notification_recipients","column":"group_id","to":"partner_groups","toColumn":"id","onDelete":"SET NULL","kind":"db","sources":["migrations/partner_notifications.sql"]},
+    {"from":"partner_notification_recipients","column":"notification_id","to":"partner_notifications","toColumn":"id","onDelete":"CASCADE","kind":"db","sources":["migrations/partner_notifications.sql","src/models (PartnerNotificationRecipient)","src/models/index.js (PartnerNotification.HasMany PartnerNotificationRecipient)","src/models/index.js (PartnerNotificationRecipient.BelongsTo PartnerNotification)"]},
+    {"from":"partner_notification_recipients","column":"partner_ucc","to":"users","toColumn":"ucc","onDelete":"CASCADE","kind":"db","sources":["migrations/partner_notifications.sql","src/models (PartnerNotificationRecipient)","src/models/index.js (PartnerNotificationRecipient.BelongsTo User)"]},
+    {"from":"partner_notifications","column":"admin_ucc","to":"users","toColumn":"ucc","onDelete":"CASCADE","kind":"db","sources":["migrations/partner_notifications.sql","src/models (PartnerNotification)","src/models/index.js (PartnerNotification.BelongsTo User)","src/models/index.js (User.HasMany PartnerNotification)"]},
+    {"from":"payout_breakdowns","column":"ap_ucc","to":"users","toColumn":"ucc","onDelete":"CASCADE","kind":"db","sources":["migrations/payout_breakdowns.sql"]},
+    {"from":"push_tokens","column":"ucc","to":"users","toColumn":"ucc","onDelete":"CASCADE","kind":"db","sources":["migrations/push_notifications.sql","src/models (PushToken)","src/models/index.js (PushToken.BelongsTo User)","src/models/index.js (User.HasMany PushToken)"]},
+    {"from":"recording_logs","column":"audio_id","to":"podcast_audios","toColumn":"id","onDelete":"CASCADE","kind":"db","sources":["migrations/recording_logs.sql","src/models (RecordingLog)","src/models/index.js (PodcastAudio.HasMany RecordingLog)","src/models/index.js (RecordingLog.BelongsTo PodcastAudio)"]},
+    {"from":"requests","column":"product_id","to":"products","toColumn":"id","onDelete":"SET NULL","kind":"db","sources":["migrations/v3_requests.sql","src/models (Request)","src/models/index.js (Product.HasMany Request)","src/models/index.js (Request.BelongsTo Product)"]},
+    {"from":"requests","column":"superadmin_ucc","to":"users","toColumn":"ucc","onDelete":"SET NULL","kind":"db","sources":["migrations/v3_requests_superadmin_ucc.sql"]},
+    {"from":"segment","column":"ucc","to":"users","toColumn":"ucc","onDelete":"CASCADE","kind":"db","sources":["src/models (Segment)","src/models/index.js (Segment.BelongsTo User)","src/models/index.js (User.HasMany Segment)"]},
+    {"from":"user_products","column":"product_id","to":"products","toColumn":"id","onDelete":"CASCADE","kind":"db","sources":["migrations/v3_user_products.sql","src/models (UserProduct)","src/models/index.js (Product.BelongsToMany User)","src/models/index.js (User.BelongsToMany Product)","src/models/index.js (UserProduct.BelongsTo Product)"]},
+    {"from":"user_products","column":"request_id","to":"requests","toColumn":"id","onDelete":"SET NULL","kind":"db","sources":["migrations/v3_user_products.sql","src/models (UserProduct)","src/models/index.js (UserProduct.BelongsTo Request)"]},
+    {"from":"user_products","column":"user_ucc","to":"users","toColumn":"ucc","onDelete":"CASCADE","kind":"db","sources":["src/models (UserProduct)","src/models/index.js (Product.BelongsToMany User)","src/models/index.js (User.BelongsToMany Product)","src/models/index.js (UserProduct.BelongsTo User)"]},
+    {"from":"users","column":"admin_ucc","to":"users","toColumn":"ucc","onDelete":"SET NULL","kind":"db","sources":["migrations/v3_admin_ucc.sql"]}
+  ]
+}

@@ -71,6 +71,7 @@ $(function () {
     clock: 'M12 7v5l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z',
     mail: 'M3 5h18v14H3zM3 6l9 7 9-7',
     bell: 'M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8M10 20a2 2 0 0 0 4 0',
+    db: 'M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3',
   };
   const icon = (name, size = 16) =>
     `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${PATHS[name]}"/></svg>`;
@@ -779,8 +780,9 @@ $(function () {
   $doc.on('keydown', (e) => { if (e.key === 'Escape' && $('body').hasClass('sb-open')) closeDrawer(); });
   // which page is open: the board, Sheets or Sanity
   const markNav = () => {
-    $('[data-action="home"].sb-item').toggleClass('on', !sheetsView && !sanity && !adminView && !doneView && !templatesView);
+    $('[data-action="home"].sb-item').toggleClass('on', !sheetsView && !sanity && !adminView && !doneView && !templatesView && !schemaView);
     $('[data-action="templates"]').toggleClass('on', Boolean(templatesView));
+    $('[data-action="schema"]').toggleClass('on', Boolean(schemaView));
     $('[data-action="done"]').toggleClass('on', Boolean(doneView));
     $('[data-action="admin"]').toggleClass('on', Boolean(adminView));
     $('[data-action="sheets"]').toggleClass('on', Boolean(sheetsView));
@@ -3922,9 +3924,10 @@ $(function () {
     const version = current && current.version ? current.version.replace(/^v(?=\d)/i, '') : '';
     $('#sbNav').html(`
       <button class="sb-write" data-action="writer" title="Write an issue on any screen">${icon('plus', 16)}<span class="sb-label">Write issue</span></button>
-      <a href="/" class="sb-item ${!sheetsView && !sanity && !adminView && !templatesView ? 'on' : ''}" data-action="home" title="Board: modules, flows and screens"><span class="sb-ico">${icon('home', 16)}</span><span class="sb-label">Board</span></a>
+      <a href="/" class="sb-item ${!sheetsView && !sanity && !adminView && !templatesView && !schemaView ? 'on' : ''}" data-action="home" title="Board: modules, flows and screens"><span class="sb-ico">${icon('home', 16)}</span><span class="sb-label">Board</span></a>
       ${sbItem({ attrs: 'data-action="sheets"', ico: icon('grid', 16), label: 'Sheets', on: Boolean(sheetsView), title: 'Sheets: typed columns, formulas, links to flows and screens, Excel in and out' })}
       ${sbItem({ attrs: 'data-action="templates"', ico: icon('mail', 16), label: 'Templates', on: Boolean(templatesView), title: 'Templates: the e-mails, WhatsApp, SMS and push messages this app sends' })}
+      ${schemaFor(current) ? sbItem({ attrs: 'data-action="schema"', ico: icon('db', 16), label: 'DB Schema', on: Boolean(schemaView), title: `DB Schema: every table of the ${schemaFor(current).label} database and the foreign keys between them` }) : ''}
       ${sbItem({ attrs: 'data-action="sanity"', ico: icon('check', 16), label: 'Sanity', on: Boolean(sanity), title: 'Daily sanity checklist of this app' })}
       ${sbItem({ attrs: 'data-action="done"', ico: icon('note', 16), label: 'Done today', title: 'Daily journal: done, to-do, in progress, questions and blockers' })}
       <a class="sb-item" href="/api/export" title="Download every task as an Excel sheet"><span class="sb-ico">${icon('download', 16)}</span><span class="sb-label">Excel export</span></a>
@@ -4205,6 +4208,7 @@ $(function () {
       if (sanity) closeSanity();
       if (doneView) closeDone();
       if (templatesView) closeTemplates();
+      if (schemaView) closeSchema();
       adminView = adminView || { q: '', access: '', app: '', panel: null };
       $('#board, #tabs').addClass('hidden');
       $('#adminPage').removeClass('hidden');
@@ -4760,6 +4764,7 @@ $(function () {
     if (sheetsView) openSheets(productId); // on the Sheets page: that app's sheets
     if (doneView) openDone(productId); // on the journal page: that app's journal
     if (templatesView) openTemplates(productId); // on the Templates page: that app's templates
+    if (schemaView) { if (schemaFor(products.find((x) => x.id === productId))) openSchema(productId); else closeSchema(); } // only apps with a schema
   });
   $doc.on('click', '[data-action="add-product"]', () => ask({
     title: 'New product',
@@ -5456,6 +5461,7 @@ $(function () {
     if (sheetsView) closeSheets();
     if (doneView) closeDone();
     if (templatesView) closeTemplates();
+    if (schemaView) closeSchema();
     const f = findFlow(flowId);
     const p = f && productOf(f.moduleId);
     if (!p) { toast('That is no longer here'); return false; }
@@ -5482,6 +5488,7 @@ $(function () {
     if (sheetsView) closeSheets();
     if (doneView) closeDone();
     if (templatesView) closeTemplates();
+    if (schemaView) closeSchema();
     if (!$('#statusModal').hasClass('hidden')) closeStatuses();
     if (bugsView) closeBugs();
     if (adminView) closeAdmin();
@@ -5499,7 +5506,7 @@ $(function () {
   });
 
   // Links from Teams: /#flow=<id>, #screen=<id>, #sanity=<app id>[&view=logs], #done=<app id>[&date=…][&tab=shared|questions|blockers|…],
-  // #templates=<app id>[&tab=email|whatsapp|sms|push|other][&t=<template name>]
+  // #templates=<app id>[&tab=email|whatsapp|sms|push|other][&t=<template name>], #schema=<app id>[&t=<table>][&view=relations]
   function openFromHash() {
     const h = new URLSearchParams(location.hash.slice(1));
     if (![...h.keys()].length) return;
@@ -5515,6 +5522,10 @@ $(function () {
     else if (h.get('templates')) {
       if (products.some((p) => p.id === h.get('templates'))) { selectProduct(h.get('templates')); render(); }
       openTemplates(productId, h.get('tab'), h.get('t'));
+    }
+    else if (h.get('schema')) {
+      if (products.some((p) => p.id === h.get('schema'))) { selectProduct(h.get('schema')); render(); }
+      openSchema(productId, h.get('t'));
     }
     else if (h.get('sanity') || h.get('done')) {
       const pid = h.get('sanity') || h.get('done');
@@ -5562,6 +5573,7 @@ $(function () {
       if (adminView) closeAdmin();
       if (doneView) closeDone();
       if (templatesView) closeTemplates();
+      if (schemaView) closeSchema();
       $('#board, #tabs').addClass('hidden');
       $('#sanityPage').removeClass('hidden');
       markNav();
@@ -5980,6 +5992,7 @@ $(function () {
       if (sheetsView) closeSheets();
       if (adminView) closeAdmin();
       if (templatesView) closeTemplates();
+      if (schemaView) closeSchema();
       renderDone();
       $('#board, #tabs').addClass('hidden');
       $('#journalPage').removeClass('hidden');
@@ -7064,6 +7077,7 @@ $(function () {
       if (sheetsView) closeSheets();
       if (doneView) closeDone();
       if (adminView) closeAdmin();
+      if (schemaView) closeSchema();
       const counts = tplCounts(list);
       const named = name && list.find((t) => t.name === name);
       templatesView = {
@@ -7355,6 +7369,307 @@ $(function () {
   });
   $doc.on('click', '[data-tpl-link]', () => copyText(location.href, 'Link copied'));
 
+  // ---------------------------------------------------------------- DB schema
+  // Every table of an app's database, its columns and the foreign keys between tables, on a page of its own in the
+  // board's place (like Templates); the address (#schema=<app>&t=<table>) keeps it. Only apps with a schema file get
+  // the button (the same list as SCHEMAS in server.js): schemas/<db>.json, made from the backend's migrations and models
+  // by scripts/findost-schema.cjs, sent by GET /api/schema to logins that can open the app.
+
+  const SCHEMAS = [[/findost/i, { label: 'Findost' }]];
+  const schemaFor = (p) => (p && (SCHEMAS.find(([re]) => re.test(p.name)) || [])[1]) || null;
+  const schemaReqs = {}; // database → the request, read once
+  // { productId, data, byName: Map, view: 'tables' | 'relations', search, sel: table name, fkSearch }
+  let schemaView = null;
+
+  function openSchema(pid, name, view) {
+    const p = products.find((x) => x.id === pid);
+    const s = schemaFor(p);
+    if (!s) { dialog.alert('This app has no database schema yet.', 'No schema'); return null; }
+    schemaReqs[s.label] = schemaReqs[s.label] || api('GET', `/api/schema?product=${encodeURIComponent(pid)}`).fail(() => { delete schemaReqs[s.label]; });
+    return schemaReqs[s.label].done((data) => {
+      const keep = schemaView && schemaView.data === data ? schemaView : null;
+      const byName = new Map(data.tables.map((t) => [t.name, t]));
+      const fresh = $('#schemaPage').hasClass('hidden');
+      if (sanity) closeSanity();
+      if (sheetsView) closeSheets();
+      if (doneView) closeDone();
+      if (adminView) closeAdmin();
+      if (templatesView) closeTemplates();
+      schemaView = {
+        productId: pid, data, label: s.label, byName,
+        view: view === 'relations' ? 'relations' : keep && !name ? keep.view : 'tables',
+        search: keep ? keep.search : '', fkSearch: keep ? keep.fkSearch : '',
+        sel: byName.has(name) ? name : keep && byName.has(keep.sel) ? keep.sel : (byName.has('users') ? 'users' : data.tables[0] && data.tables[0].name),
+      };
+      renderSchema();
+      $('#board, #tabs').addClass('hidden');
+      $('#schemaPage').removeClass('hidden');
+      markNav();
+      if (fresh) window.scrollTo(0, 0);
+    });
+  }
+  const schemaHash = () => {
+    const v = schemaView;
+    if (v) history.replaceState(null, '', `${location.pathname}${location.search}#schema=${encodeURIComponent(v.productId)}${v.view === 'relations' ? '&view=relations' : `&t=${encodeURIComponent(v.sel || '')}`}`);
+  };
+
+  function closeSchema() {
+    schemaView = null;
+    $('#schemaPage').addClass('hidden');
+    $('#schemaBody').empty();
+    $('#board, #tabs').removeClass('hidden');
+    markNav();
+    history.replaceState(null, '', location.pathname + location.search);
+  }
+
+  // the keys out of a table (it references) and into it (referenced by)
+  const scOut = (name) => schemaView.data.foreignKeys.filter((f) => f.from === name);
+  const scIn = (name) => schemaView.data.foreignKeys.filter((f) => f.to === name && f.from !== name);
+  const scKind = (f) => (f.kind === 'logical' ? '<span class="sc-tag logical" title="Joined in the code (a Sequelize association with constraints: false), not a key in the database">logical</span>' : '');
+  const scDelete = (f) => (f.onDelete ? `<span class="sc-tag ${/cascade/i.test(f.onDelete) ? 'cascade' : ''}" title="When the referenced row is deleted">ON DELETE ${esc(f.onDelete.toUpperCase())}</span>` : '');
+  const scTable = (name) => (schemaView.byName.has(name)
+    ? `<button type="button" class="sc-ref" data-schema-pick="${esc(name)}">${esc(name)}</button>`
+    : `<span class="sc-ref missing" title="Not in this database's migrations or models">${esc(name)}</span>`);
+  // a search finds tables by name, by what they are for, or by a column
+  const scShown = () => {
+    const q = schemaView.search.trim().toLowerCase();
+    return schemaView.data.tables.filter((t) => !q || t.name.includes(q) || t.note.toLowerCase().includes(q) || t.columns.some((c) => c.name.includes(q)));
+  };
+  const scColHit = (t) => {
+    const q = schemaView.search.trim().toLowerCase();
+    return q && !t.name.includes(q) ? (t.columns.find((c) => c.name.includes(q)) || {}).name : '';
+  };
+
+  // the table with its neighbours: what it references on the left, what references it on the right; each line starts
+  // at the column that holds (or is the target of) the key
+  function scDiagram(t) {
+    const out = scOut(t.name); const into = scIn(t.name);
+    if (!out.length && !into.length) return '<p class="sc-alone">No foreign keys: this table stands on its own.</p>';
+    const byTable = (list, key) => [...list.reduce((m, f) => m.set(f[key], [...(m.get(f[key]) || []), f]), new Map())];
+    const left = byTable(out, 'to'); const right = byTable(into, 'from');
+    const rows = t.columns.filter((c) => c.pk || out.some((f) => f.column === c.name) || into.some((f) => f.toColumn === c.name));
+    const SW = 250; const GAP = 140; const CW = 270; const BH = 46; const BG = 12; const RH = 24; const HEAD = 38;
+    const cx = SW + GAP; const rx = cx + CW + GAP; const W = rx + SW;
+    const ch = HEAD + rows.length * RH + 10;
+    const side = (n) => n * BH + Math.max(0, n - 1) * BG;
+    const H = Math.max(ch, side(left.length), side(right.length)) + 8;
+    const top = (h) => (H - h) / 2;
+    const cy = top(ch);
+    const rowY = (col) => { const i = rows.findIndex((c) => c.name === col); return cy + HEAD + (i < 0 ? 0 : i) * RH + RH / 2; };
+    const cut = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+    const node = (x, y, name, sub) => {
+      const other = schemaView.byName.get(name);
+      return `<g class="sc-node ${other ? '' : 'missing'}" ${other && name !== t.name ? `data-schema-pick="${esc(name)}" tabindex="0" role="button"` : ''}>
+        <title>${esc(name)}${other ? ` · ${other.columns.length} columns` : ' · not in this database'}</title>
+        <rect x="${x}" y="${y}" width="${SW}" height="${BH}" rx="8"/>
+        <text x="${x + 12}" y="${y + 19}" class="sc-node-name">${esc(cut(name === t.name ? `${name} (itself)` : name, 30))}</text>
+        <text x="${x + 12}" y="${y + 35}" class="sc-node-sub">${esc(cut(sub, 36))}</text></g>`;
+    };
+    const curve = (x1, y1, x2, y2, f) => `<path class="sc-edge ${f.kind === 'logical' ? 'logical' : ''}" d="M${x1},${y1} C${(x1 + x2) / 2},${y1} ${(x1 + x2) / 2},${y2} ${x2},${y2}"/>`;
+    let svg = '';
+    let y = top(side(left.length));
+    for (const [name, fs] of left) {
+      svg += node(0, y, name, fs.map((f) => `${f.column} → ${f.toColumn}`).join(', '));
+      fs.forEach((f) => { svg += curve(SW, y + BH / 2, cx, rowY(f.column), f); });
+      y += BH + BG;
+    }
+    y = top(side(right.length));
+    for (const [name, fs] of right) {
+      svg += node(rx, y, name, fs.map((f) => `${f.column} → ${f.toColumn}`).join(', '));
+      fs.forEach((f) => { svg += curve(cx + CW, rowY(f.toColumn), rx, y + BH / 2, f); });
+      y += BH + BG;
+    }
+    svg += `<g class="sc-center"><rect x="${cx}" y="${cy}" width="${CW}" height="${ch}" rx="10"/>
+      <path d="M${cx},${cy + HEAD} H${cx + CW}" class="sc-center-line"/>
+      <text x="${cx + 14}" y="${cy + 24}" class="sc-center-name">${esc(cut(t.name, 30))}</text>
+      ${rows.map((c, i) => `<text x="${cx + 14}" y="${cy + HEAD + i * RH + 16}" class="sc-row"><tspan class="sc-row-key">${c.pk ? 'PK' : out.some((f) => f.column === c.name) ? 'FK' : ''}</tspan><tspan x="${cx + 44}">${esc(cut(c.name, 22))}</tspan><tspan x="${cx + CW - 12}" text-anchor="end" class="sc-row-type">${esc(cut(c.type.toLowerCase(), 12))}</tspan></text>`).join('')}
+      </g>`;
+    return `
+      <div class="sc-legend"><span><i class="sc-dot"></i>References (${left.length})</span><span><i class="sc-dot in"></i>Referenced by (${right.length})</span>
+        ${[...out, ...into].some((f) => f.kind === 'logical') ? '<span><i class="sc-dash"></i>Logical, not a DB key</span>' : ''}</div>
+      <div class="sc-map"><svg viewBox="-2 -2 ${W + 4} ${H + 4}" width="${W}" style="max-width:100%;height:auto" role="img" aria-label="Foreign keys of ${esc(t.name)}">${svg}</svg></div>`;
+  }
+
+  function scColumns(t) {
+    const out = scOut(t.name); const into = scIn(t.name);
+    return `
+      <div class="sc-scroll"><table class="tpl-vtable sc-cols"><thead><tr><th>Column</th><th>Type</th><th>Null</th><th>Default</th><th>Key</th></tr></thead><tbody>
+        ${t.columns.map((c) => {
+    const fk = out.filter((f) => f.column === c.name);
+    const refs = into.filter((f) => f.toColumn === c.name);
+    return `<tr>
+            <td><span class="sc-col">${esc(c.name)}</span>${c.note ? `<small class="sc-note">${esc(c.note)}</small>` : ''}</td>
+            <td><span class="sc-type">${esc(c.type.toLowerCase())}</span></td>
+            <td>${c.nullable ? '<span class="text-slate-400">null</span>' : '<b class="sc-notnull">not null</b>'}</td>
+            <td>${c.default ? `<span class="sc-type">${esc(c.default)}</span>` : '<span class="text-slate-400">—</span>'}</td>
+            <td class="sc-keys">${c.pk ? '<span class="sc-key pk">PK</span>' : ''}${c.unique ? '<span class="sc-key uq">UNIQUE</span>' : ''}
+              ${fk.map((f) => `<span class="sc-key fk">FK</span> → ${scTable(f.to)}<span class="sc-dotcol">.${esc(f.toColumn)}</span> ${scKind(f)}`).join('<br>')}
+              ${refs.length ? `<span class="sc-key in" title="${esc(refs.map((f) => `${f.from}.${f.column}`).join('\n'))}">← ${refs.length} table${refs.length === 1 ? '' : 's'}</span>` : ''}</td>
+          </tr>`;
+  }).join('')}
+      </tbody></table></div>
+      ${t.uniques.length ? `<p class="sc-uniques"><b>Unique together:</b> ${t.uniques.map((u) => `<span class="sc-type">(${esc(u.join(', '))})</span>`).join(' ')}</p>` : ''}`;
+  }
+
+  const scKeyList = (list, dir) => (list.length ? `<ul class="sc-keylist">${list.map((f) => `<li>
+      ${dir === 'out' ? `<span class="sc-col">${esc(f.column)}</span> → ${scTable(f.to)}<span class="sc-dotcol">.${esc(f.toColumn)}</span>`
+    : `${scTable(f.from)}<span class="sc-dotcol">.${esc(f.column)}</span> → <span class="sc-col">${esc(f.toColumn)}</span>`}
+      ${scDelete(f)}${scKind(f)}</li>`).join('')}</ul>` : `<p class="sc-alone">${dir === 'out' ? 'This table references no other table.' : 'No table references this one.'}</p>`);
+
+  // the table as SQL, for pasting into a query tool
+  function scDdl(t) {
+    const out = scOut(t.name).filter((f) => f.kind !== 'logical');
+    const lines = t.columns.map((c) => {
+      const fk = out.find((f) => f.column === c.name);
+      return `  ${c.name} ${c.type}${c.pk ? ' PRIMARY KEY' : ''}${!c.nullable && !c.pk ? ' NOT NULL' : ''}${c.unique ? ' UNIQUE' : ''}${c.default ? ` DEFAULT ${c.default}` : ''}${fk ? ` REFERENCES ${fk.to}(${fk.toColumn})${fk.onDelete ? ` ON DELETE ${fk.onDelete.toUpperCase()}` : ''}` : ''}`;
+    });
+    t.uniques.forEach((u) => lines.push(`  UNIQUE (${u.join(', ')})`));
+    return `CREATE TABLE ${t.name} (\n${lines.join(',\n')}\n);`;
+  }
+
+  function scDetail(t) {
+    if (!t) return `<div class="tpl-none">${icon('db', 28)}<p>No table matches the search.</p></div>`;
+    const out = scOut(t.name); const into = scIn(t.name);
+    return `
+      <div class="tpl-dhead">
+        <span class="tpl-ico sc-ico">${icon('db', 18)}</span>
+        <div class="min-w-0 flex-1">
+          <h2 class="tpl-dtitle sc-title">${esc(t.name)}</h2>
+          <p class="tpl-dname">${esc(t.group)} · ${t.columns.length} columns · ${out.length} out · ${into.length} in</p>
+        </div>
+        <div class="tpl-dactions">
+          <button type="button" class="btn-secondary px-2.5 py-1.5 text-xs" data-schema-ddl title="Copy this table as CREATE TABLE SQL">${icon('copy', 13)} Copy SQL</button>
+          <button type="button" class="btn-secondary px-2.5 py-1.5 text-xs" data-tpl-link title="Copy a link to this table">${icon('link', 13)} Link</button>
+        </div>
+      </div>
+      ${t.note ? `<div class="tpl-when sc-what">${icon('note', 15)}<div><b>What it holds</b><p>${esc(t.note)}</p></div></div>` : ''}
+      <h4 class="tpl-sub">Relations <span>${out.length + into.length}</span></h4>
+      ${scDiagram(t)}
+      <h4 class="tpl-sub">Columns <span>${t.columns.length}</span></h4>
+      ${scColumns(t)}
+      <div class="sc-twocol">
+        <div><h4 class="tpl-sub">References <span>${out.length}</span></h4>${scKeyList(out, 'out')}</div>
+        <div><h4 class="tpl-sub">Referenced by <span>${into.length}</span></h4>${scKeyList(into, 'in')}</div>
+      </div>
+      <p class="tpl-source">${icon('fork', 12)} <span>${t.sources.map(esc).join(' · ')}</span></p>`;
+  }
+
+  function renderScList() {
+    const v = schemaView;
+    const shown = scShown();
+    if (!shown.some((t) => t.name === v.sel)) v.sel = shown[0] ? shown[0].name : null;
+    const html = v.data.groups.map((g) => {
+      const list = shown.filter((t) => t.group === g);
+      if (!list.length) return '';
+      return `<p class="sc-group">${esc(g)} <span>${list.length}</span></p>${list.map((t) => {
+        const hit = scColHit(t);
+        const nOut = scOut(t.name).length; const nIn = scIn(t.name).length;
+        return `<button type="button" class="tpl-item sc-item ${t.name === v.sel ? 'on' : ''}" data-schema-pick="${esc(t.name)}">
+          <span class="min-w-0 flex-1"><b>${esc(t.name)}</b><small>${hit ? `column <span class="sc-col">${esc(hit)}</span>` : `${t.columns.length} columns`}</small></span>
+          <span class="sc-counts">${nOut ? `<span title="References ${nOut} key${nOut === 1 ? '' : 's'}">→${nOut}</span>` : ''}${nIn ? `<span class="in" title="Referenced by ${nIn} key${nIn === 1 ? '' : 's'}">←${nIn}</span>` : ''}</span>
+        </button>`;
+      }).join('')}`;
+    }).join('');
+    $('#scList').html(html || `<p class="tpl-empty">${v.search ? 'Nothing found.' : 'No tables.'}</p>`);
+    $('#scCount').text(`${shown.length} of ${v.data.tables.length} tables`);
+  }
+  function renderScDetail() {
+    $('#scDetail').html(scDetail(schemaView.byName.get(schemaView.sel))).scrollTop(0);
+    schemaHash();
+  }
+
+  // every foreign key of the database in one list
+  function renderScRelations() {
+    const v = schemaView;
+    const q = v.fkSearch.trim().toLowerCase();
+    const list = v.data.foreignKeys.filter((f) => !q || `${f.from}.${f.column} ${f.to}.${f.toColumn}`.includes(q));
+    $('#scRelRows').html(list.map((f) => `<tr>
+        <td>${scTable(f.from)}<span class="sc-dotcol">.${esc(f.column)}</span></td>
+        <td class="sc-arrow">→</td>
+        <td>${scTable(f.to)}<span class="sc-dotcol">.${esc(f.toColumn)}</span></td>
+        <td>${scDelete(f) || '<span class="text-slate-400">—</span>'}</td>
+        <td>${f.kind === 'logical' ? scKind(f) : '<span class="sc-tag db" title="A foreign key constraint in the database">DB key</span>'}</td>
+      </tr>`).join('') || '<tr><td colspan="5" class="tpl-empty">No key matches.</td></tr>');
+    $('#scRelCount').text(`${list.length} of ${v.data.foreignKeys.length}`);
+  }
+
+  function renderSchema() {
+    const v = schemaView;
+    const p = products.find((x) => x.id === v.productId);
+    const d = v.data;
+    const made = d.generatedAt ? new Date(d.generatedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+    $('#schemaBody').html(`
+      <div class="jr-head">
+        <button type="button" class="btn-secondary px-2 py-1 text-xs" data-close-schema title="Back to the board">${icon('left', 12)} Board</button>
+        <div class="min-w-0 flex-1">
+          <h3 class="text-lg font-semibold text-slate-900">DB Schema <span class="font-normal text-slate-400">· ${esc(v.label)} database${p ? ` · ${esc(p.name)}` : ''}</span></h3>
+          <p class="text-xs text-slate-500">${d.tables.length} tables and ${d.foreignKeys.length} foreign keys, read from the backend's migrations and models${made ? ` on ${esc(made)}` : ''}.</p>
+        </div>
+        <div class="seg" role="tablist" aria-label="Show">
+          <button type="button" role="tab" aria-selected="${v.view === 'tables'}" class="${v.view === 'tables' ? 'on' : ''}" data-schema-view="tables">${icon('grid', 12)} Tables</button>
+          <button type="button" role="tab" aria-selected="${v.view === 'relations'}" class="${v.view === 'relations' ? 'on' : ''}" data-schema-view="relations">${icon('link', 12)} All foreign keys</button>
+        </div>
+      </div>
+      ${v.view === 'relations' ? `
+        <div class="sc-rel">
+          <div class="sc-rel-tools">
+            <label class="jr-search">${icon('filter', 13)}<input type="search" data-schema-fksearch value="${esc(v.fkSearch)}" placeholder="Search tables or columns…" aria-label="Search foreign keys"></label>
+            <span class="tpl-count" id="scRelCount"></span>
+          </div>
+          <div class="sc-scroll"><table class="tpl-vtable sc-reltable"><thead><tr><th>From (holds the key)</th><th></th><th>To (referenced)</th><th>On delete</th><th>Kind</th></tr></thead>
+            <tbody id="scRelRows"></tbody></table></div>
+        </div>` : `
+        <div class="tpl-layout">
+          <aside class="tpl-side">
+            <label class="jr-search tpl-search">${icon('filter', 13)}
+              <input type="search" data-schema-search value="${esc(v.search)}" placeholder="Search tables or columns…" aria-label="Search tables">
+            </label>
+            <p class="tpl-count" id="scCount"></p>
+            <div class="tpl-list" id="scList" role="listbox" aria-label="Tables"></div>
+          </aside>
+          <section class="tpl-detail" id="scDetail" aria-live="polite"></section>
+        </div>`}`);
+    if (v.view === 'relations') { renderScRelations(); schemaHash(); } else { renderScList(); renderScDetail(); }
+  }
+
+  $doc.on('click', '[data-action="schema"]', () => (schemaView ? closeSchema() : openSchema(productId)));
+  $doc.on('click', '[data-close-schema]', closeSchema);
+  $doc.on('click', '[data-schema-view]', function () { schemaView.view = $(this).data('schema-view'); renderSchema(); });
+  $doc.on('click keydown', '[data-schema-pick]', function (e) {
+    if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    const v = schemaView;
+    v.sel = String($(this).data('schema-pick'));
+    // a table the search hides (picked from a link): clear the search so it shows in the list
+    if (!scShown().some((t) => t.name === v.sel)) v.search = '';
+    if (v.view !== 'tables') { v.view = 'tables'; renderSchema(); } else { renderScList(); renderScDetail(); }
+    const el = $(`#scList [data-schema-pick="${v.sel}"]`)[0];
+    if (el) el.scrollIntoView({ block: 'nearest' });
+    if (window.innerWidth < 900) document.getElementById('scDetail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  $doc.on('input', '[data-schema-search]', function () {
+    const before = schemaView.sel;
+    schemaView.search = this.value;
+    renderScList();
+    if (schemaView.sel !== before) renderScDetail();
+  });
+  $doc.on('input', '[data-schema-fksearch]', function () { schemaView.fkSearch = this.value; renderScRelations(); });
+  $doc.on('click', '[data-schema-ddl]', () => { const t = schemaView.byName.get(schemaView.sel); if (t) copyText(scDdl(t), 'SQL copied'); });
+  // ↑ / ↓ walk through the tables (not while typing in a box)
+  $doc.on('keydown', (e) => {
+    if (!schemaView || schemaView.view !== 'tables' || !['ArrowUp', 'ArrowDown'].includes(e.key) || $(e.target).is('input, textarea, select') || dialog.isOpen()) return;
+    const order = schemaView.data.groups.flatMap((g) => scShown().filter((t) => t.group === g));
+    const at = order.findIndex((t) => t.name === schemaView.sel);
+    const next = order[Math.min(order.length - 1, Math.max(0, at + (e.key === 'ArrowDown' ? 1 : -1)))];
+    if (!next || next.name === schemaView.sel) return;
+    e.preventDefault();
+    schemaView.sel = next.name;
+    renderScList();
+    renderScDetail();
+    const el = $(`#scList [data-schema-pick="${next.name}"]`)[0];
+    if (el) el.scrollIntoView({ block: 'nearest' });
+  });
+
   // { productId, list, people, canCreate, teams, doc, search, sort: { col, dir }, picked: Set of row ids (to send on Teams),
   //   filters: { columnId: { values, op, a, b, color } } (kept per sheet in this browser) }
   let sheetsView = null;
@@ -7368,6 +7683,7 @@ $(function () {
       if (adminView) closeAdmin();
       if (doneView) closeDone();
       if (templatesView) closeTemplates();
+      if (schemaView) closeSchema();
       const keep = sheetsView && sheetsView.productId === pid ? sheetsView : {};
       sheetsView = {
         productId: pid, list: d.sheets, people: d.people, canCreate: d.canCreate, teams: d.teams, doc: null,

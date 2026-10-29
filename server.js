@@ -478,6 +478,16 @@ function numberedFlows(module) {
   return out;
 }
 
+// The DB Schema page of an app: its database's tables, columns and foreign keys (made by scripts/findost-schema.cjs).
+// Not in public/: only a login that can open the app gets it.
+const SCHEMAS = [[/findost/i, () => require('./schemas/findost.json')]];
+app.get('/api/schema', route(async (req, res) => {
+  const product = await productFor(req, req.query.product, 'view');
+  const found = SCHEMAS.find(([re]) => re.test(product.name));
+  if (!found) throw new HttpError(404, 'This app has no database schema');
+  res.json(found[1]());
+}));
+
 app.get('/api/export', route(async (req, res) => {
   const [board, { rows: tags }] = await Promise.all([loadBoard(req.user), db.query('SELECT id, label FROM statuses')]);
   const statusName = Object.fromEntries(tags.map((t) => [t.id, t.label]));
