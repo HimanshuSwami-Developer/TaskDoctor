@@ -79,6 +79,9 @@
   <!-- Sanity is its own page: shown instead of the board (and the module tabs) -->
   <main id="sanityPage" class="mx-auto hidden w-full max-w-[1400px] px-6 py-6"></main>
 
+  <!-- Done today, the daily journal, is its own page too (Done, To-do, In Progress, Questions, Blockers, Minutes of meeting) -->
+  <main id="journalPage" class="mx-auto hidden w-full max-w-[1400px] px-6 py-6"><div id="doneBody" class="journal-page" aria-label="Daily journal"></div></main>
+
   <!-- Admin (super admins): logins and access, its own page -->
   <main id="adminPage" class="mx-auto hidden w-full max-w-[1400px] px-6 py-6"></main>
 
@@ -160,9 +163,6 @@
     <div id="sanityLogBody" class="popup-card max-w-5xl"></div>
   </div>
 
-  <div id="doneModal" class="overlay hidden">
-    <div id="doneBody" class="popup-card max-w-3xl"></div>
-  </div>
 
   <div id="teamsModal" class="overlay hidden">
     <form id="teamsForm" class="popup-card max-w-lg" novalidate></form>
@@ -198,6 +198,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
   <script src="/formula.js"></script>
   <script src="/graph.js"></script>
+  <script src="/assist.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

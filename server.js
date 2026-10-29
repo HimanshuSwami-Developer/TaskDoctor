@@ -8,6 +8,8 @@ const auth = require('./auth');
 const teams = require('./teams');
 const presence = require('./presence');
 const excel = require('./excel');
+const journal = require('./journal');
+const assist = require('./assist');
 const formula = require('./public/formula');
 const ExcelJS = require('exceljs');
 
@@ -1181,10 +1183,11 @@ async function resolvedToday(req, productId, issue, resolved) {
     return;
   }
   const { rows: [screen] } = await db.query('SELECT name FROM screens WHERE id = $1', [issue.screen_id]);
+  // one entry per issue per day, even when two saves race (a unique index on live rows)
   await db.query(
     `INSERT INTO done_items (id, user_id, product_id, work_date, text, screen_ids, comment_id, created_by, updated_by)
-     SELECT $1, $2, $3, $4, $5, $6, $7, $2, $2
-     WHERE NOT EXISTS (SELECT 1 FROM done_items WHERE comment_id = $7 AND work_date = $4 AND NOT is_deleted)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $2, $2)
+     ON CONFLICT (comment_id, work_date) WHERE comment_id IS NOT NULL AND NOT is_deleted DO NOTHING`,
     [randomUUID(), req.user.id, productId, date, `Resolved${screen ? ` on ${screen.name}` : ''}: ${issue.text}`.slice(0, 1000), [issue.screen_id], issue.id]);
 }
 
@@ -1209,8 +1212,8 @@ function localNow() {
   return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}` };
 }
 const minutes = (hhmm) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3));
-// a day that is today or earlier, else today
-const pastDay = (value, today) => (DATE.test(value || '') && value <= today ? value : today);
+// a real day that is today or earlier, else today
+const { pastDay } = journal;
 
 // Teams buttons open the app at a place (#flow=…, #screen=…, #sanity=…, #done=…).
 // APP_URL in .env, else the address the request came in on (the scheduled reminder needs APP_URL).
@@ -1773,12 +1776,13 @@ async function sanityReminders() {
   }
 }
 
-// ---- done today
+// ---- done today (the daily work journal: Done, To-do, In Progress, Questions, Blockers, Shared with me)
 
 const toDone = (r) => ({
   id: r.id, userId: r.user_id, userName: personName(r), date: r.work_date, text: r.text, screenIds: r.screen_ids,
   sharedAt: r.shared_at, sharedWith: r.shared_with, closedAt: r.closed_at, closedBy: r.closed_by, todoId: r.todo_id,
-  closedByName: personName({ name: r.closer_name, username: r.closer_username }), ...audit(r),
+  closedByName: personName({ name: r.closer_name, username: r.closer_username }), minutes: r.minutes || null,
+  issueId: r.comment_id || null, ...audit(r),
 });
 
 // Testers and super admins close an entry shared with them once they have checked the change
@@ -1803,43 +1807,76 @@ const DONE_SELECT = `SELECT d.*, u.name, u.username, c.name AS closer_name, c.us
   FROM done_items d JOIN users u ON u.id = d.user_id LEFT JOIN users c ON c.id = d.closed_by`;
 const doneById = async (id) => toDone(await one(`${DONE_SELECT} WHERE d.id = $1`, [id]));
 
+// "1 h 30 min" for Teams
+const timeText = (mins) => (mins >= 60 ? `${Math.floor(mins / 60)} h${mins % 60 ? ` ${mins % 60} min` : ''}` : `${mins} min`);
+
 // "• text ↳ screen links" for a Teams message
 async function doneLine(req, productId, r) {
   const screens = await appScreens(productId, r.screen_ids);
   const links = screens.map((x) => { const url = deeplink(req, `screen=${x.id}`); return url ? `[${x.name}](${url})` : x.name; });
-  return `• ${r.text}${links.length ? `\n  ↳ ${links.join(', ')}` : ''}`;
+  return `• ${r.text}${r.minutes ? ` (${timeText(r.minutes)})` : ''}${links.length ? `\n  ↳ ${links.join(', ')}` : ''}`;
 }
 
-// One day of my entries (super admins: everyone's) + every entry shared with me (open ones first, any day)
+/**
+ * A new row with the id the browser made for it (journal.clientId), so a form sent twice saves once: the INSERT does
+ * nothing the second time and the row already saved is answered instead (it must be the same person's).
+ */
+async function insertOnce(sql, params, table, userId, owner = 'user_id') {
+  const { rows } = await db.query(`${sql} ON CONFLICT (id) DO NOTHING RETURNING id`, params);
+  if (rows[0]) return { id: rows[0].id, created: true };
+  const { rows: [had] } = await db.query(`SELECT id, ${owner} AS owner FROM ${table} WHERE id = $1`, [params[0]]);
+  if (!had || had.owner !== userId) throw new HttpError(409, 'This entry was already saved. Refresh and try again.');
+  return { id: had.id, created: false };
+}
+const newId = (req) => journal.clientId(req.body.clientId) || randomUUID();
+
+// Points in priority order (urgent first), then oldest first
+const PRIORITY_ORDER = (col) => `CASE ${col} WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END`;
+
+// One day of my entries (super admins: everyone's) + every entry shared with me (open ones first, any day), my points
+// that were open at the end of that day, and the questions and blockers open on it (unresolved ones carry over).
 app.get('/api/done', route(async (req, res) => {
   const product = await productFor(req, req.query.product, 'view');
   const { date: today } = localNow();
   const date = pastDay(req.query.date, today);
   const everyone = req.user.access === 'super';
-  const [{ rows }, { rows: shared }, { rows: people }, { rows: todos }] = await Promise.all([
+  const [{ rows }, { rows: shared }, { rows: people }, { rows: todos }, { rows: questions }, { rows: blockers }] = await Promise.all([
     db.query(`${DONE_SELECT} WHERE d.product_id = $1 AND d.work_date = $2 AND NOT d.is_deleted AND ($3 OR d.user_id = $4) ORDER BY d.created_at`,
       [product.id, date, everyone, req.user.id]),
     db.query(`${DONE_SELECT} WHERE d.product_id = $1 AND $2 = ANY(d.shared_with) AND NOT d.is_deleted
               ORDER BY d.closed_at IS NOT NULL, d.created_at DESC LIMIT 200`, [product.id, req.user.id]),
     peopleOf(product.id),
-    db.query('SELECT * FROM done_todos WHERE product_id = $1 AND user_id = $2 AND done_at IS NULL AND NOT is_deleted ORDER BY created_at',
-      [product.id, req.user.id]),
+    // a point counts on a day when it was written by then (the team's day) and not ticked off before or on it
+    db.query(`SELECT t.* FROM done_todos t LEFT JOIN done_items di ON di.id = t.done_item_id
+              WHERE t.product_id = $1 AND t.user_id = $2 AND NOT t.is_deleted
+                AND (t.created_at AT TIME ZONE $3)::date <= $4 AND (t.done_at IS NULL OR di.work_date > $4)
+              ORDER BY ${PRIORITY_ORDER('t.priority')}, t.created_at`, [product.id, req.user.id, TIMEZONE, date]),
+    db.query(`${QUESTION_SELECT} WHERE q.product_id = $1 AND NOT q.is_deleted AND ${journal.OPEN_ON('q', '$2')}
+                AND ($3 OR q.user_id = $4 OR q.assignee_id = $4)
+              ORDER BY q.status = 'resolved', ${PRIORITY_ORDER('q.priority')}, q.raised_on, q.created_at LIMIT 300`,
+    [product.id, date, isAdmin(req.user), req.user.id]),
+    db.query(`${BLOCKER_SELECT} WHERE b.product_id = $1 AND NOT b.is_deleted AND ${journal.OPEN_ON('b', '$2')}
+                AND ($3 OR b.user_id = $4 OR b.waiting_on = $4)
+              ORDER BY b.resolved_at IS NOT NULL, ${PRIORITY_ORDER('b.priority')}, b.raised_on, b.created_at LIMIT 300`,
+    [product.id, date, everyone, req.user.id]),
   ]);
   res.json({
     date, today, items: rows.map(toDone), shared: shared.map(toDone), todos: todos.map(toTodo), teams: Boolean(product.teams_webhook),
     people: people.map((u) => ({ id: u.id, name: personName(u), teams: Boolean(u.teams_email) })),
     canClose: canCloseDone(req.user),
+    questions: questions.map((q) => toQuestion(q, req.user)), blockers: blockers.map((b) => toBlocker(b, req.user)),
   });
 }));
 
 app.post('/api/done', route(async (req, res) => {
   const product = await productFor(req, req.body.productId, 'edit');
   const screens = await appScreens(product.id, req.body.screenIds);
-  const { rows } = await db.query(
-    `INSERT INTO done_items (id, user_id, product_id, work_date, text, screen_ids, created_by, updated_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $2, $2) RETURNING id`,
-    [randomUUID(), req.user.id, product.id, localNow().date, required(text(req.body.text, 1000), 'What you did'), screens.map((x) => x.id)]);
-  res.status(201).json(toDone((await db.query(`${DONE_SELECT} WHERE d.id = $1`, [rows[0].id])).rows[0]));
+  const { id, created } = await insertOnce(
+    `INSERT INTO done_items (id, user_id, product_id, work_date, text, screen_ids, minutes, created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $2, $2)`,
+    [newId(req), req.user.id, product.id, localNow().date, required(text(req.body.text, 1000), 'What you did'), screens.map((x) => x.id),
+      journal.minutesValue(req.body.minutes)], 'done_items', req.user.id);
+  res.status(created ? 201 : 200).json(await doneById(id));
 }));
 
 app.patch('/api/done/:id', route(async (req, res) => {
@@ -1847,8 +1884,9 @@ app.patch('/api/done/:id', route(async (req, res) => {
   const fields = {};
   if (req.body.text !== undefined) fields.text = required(text(req.body.text, 1000), 'What you did');
   if (req.body.screenIds !== undefined) fields.screen_ids = (await appScreens(row.product_id, req.body.screenIds)).map((x) => x.id);
+  if (req.body.minutes !== undefined) fields.minutes = journal.minutesValue(req.body.minutes);
   await update('done_items', row.id, fields, req.user.id);
-  res.json(toDone((await db.query(`${DONE_SELECT} WHERE d.id = $1`, [row.id])).rows[0]));
+  res.json(await doneById(row.id));
 }));
 
 app.delete('/api/done/:id', route(async (req, res) => {
@@ -1857,9 +1895,13 @@ app.delete('/api/done/:id', route(async (req, res) => {
   res.json({ ok: true });
 }));
 
-// ---- my to-do points: noted down first, ticked off into "done today"
+// ---- my to-do points: noted down first, moved to In Progress, ticked off into "done today"
 
-const toTodo = (r) => ({ id: r.id, text: r.text, screenIds: r.screen_ids, doneAt: r.done_at, doneItemId: r.done_item_id, ...audit(r) });
+const toTodo = (r) => ({
+  id: r.id, text: r.text, screenIds: r.screen_ids, doneAt: r.done_at, doneItemId: r.done_item_id,
+  stage: r.stage, priority: r.priority, nextAction: r.next_action, startedAt: r.started_at, estMinutes: r.est_minutes || null,
+  ...audit(r),
+});
 
 async function ownTodo(req, id) {
   const row = await live('done_todos', id, '*');
@@ -1868,19 +1910,34 @@ async function ownTodo(req, id) {
   return row;
 }
 
+// stage / priority / next action / estimate of a point, from a request body (only what was sent)
+function todoFields(b, row = {}) {
+  const fields = {};
+  if (b.stage !== undefined) {
+    fields.stage = journal.oneOf(b.stage, journal.STAGES, 'stage');
+    if (fields.stage === 'progress' && !row.started_at) fields.started_at = new Date();
+  }
+  if (b.priority !== undefined) fields.priority = journal.priority(b.priority);
+  if (b.nextAction !== undefined) fields.next_action = text(b.nextAction, 500);
+  if (b.estMinutes !== undefined) fields.est_minutes = journal.minutesValue(b.estMinutes);
+  return fields;
+}
+
 app.post('/api/done/todos', route(async (req, res) => {
   const product = await productFor(req, req.body.productId, 'edit');
   const screens = await appScreens(product.id, req.body.screenIds);
-  const { rows: [row] } = await db.query(
-    `INSERT INTO done_todos (id, user_id, product_id, text, screen_ids, created_by, updated_by)
-     VALUES ($1, $2, $3, $4, $5, $2, $2) RETURNING *`,
-    [randomUUID(), req.user.id, product.id, required(text(req.body.text, 1000), 'The point'), screens.map((x) => x.id)]);
-  res.status(201).json(toTodo(row));
+  const f = { stage: 'todo', priority: 'medium', next_action: '', started_at: null, est_minutes: null, ...todoFields(req.body) };
+  const { id, created } = await insertOnce(
+    `INSERT INTO done_todos (id, user_id, product_id, text, screen_ids, stage, priority, next_action, started_at, est_minutes, created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $2, $2)`,
+    [newId(req), req.user.id, product.id, required(text(req.body.text, 1000), 'The point'), screens.map((x) => x.id),
+      f.stage, f.priority, f.next_action, f.started_at, f.est_minutes], 'done_todos', req.user.id);
+  res.status(created ? 201 : 200).json(toTodo(await live('done_todos', id, '*')));
 }));
 
 app.patch('/api/done/todos/:id', route(async (req, res) => {
   const row = await ownTodo(req, req.params.id);
-  const fields = {};
+  const fields = todoFields(req.body, row);
   if (req.body.text !== undefined) fields.text = required(text(req.body.text, 1000), 'The point');
   if (req.body.screenIds !== undefined) fields.screen_ids = (await appScreens(row.product_id, req.body.screenIds)).map((x) => x.id);
   await update('done_todos', row.id, fields, req.user.id);
@@ -1893,26 +1950,29 @@ app.delete('/api/done/todos/:id', route(async (req, res) => {
   res.json({ ok: true });
 }));
 
-// Tick a point: it becomes an entry of today's "done" (its text and screens). Untick: that entry goes, the point is open again.
+// Tick a point: it becomes an entry of today's "done" (its text and screens, and the time spent if given). Untick: that
+// entry goes, the point is open again. The point is locked while this runs, so two ticks at once make one entry.
 app.put('/api/done/todos/:id/done', route(async (req, res) => {
   const row = await ownTodo(req, req.params.id);
   const done = Boolean(req.body.done);
-  if (done === Boolean(row.done_at)) { res.json({ todo: toTodo(row), item: row.done_item_id ? await doneById(row.done_item_id) : null }); return; }
-  const itemId = await db.tx(async (client) => {
+  const minutes = done ? journal.minutesValue(req.body.minutes) : null;
+  await db.tx(async (client) => {
+    const { rows: [cur] } = await client.query('SELECT done_at, done_item_id FROM done_todos WHERE id = $1 FOR UPDATE', [row.id]);
+    if (done === Boolean(cur.done_at)) return;
     if (!done) {
-      if (row.done_item_id) await client.query('UPDATE done_items SET is_deleted = true, updated_by = $2 WHERE id = $1', [row.done_item_id, req.user.id]);
+      if (cur.done_item_id) await client.query('UPDATE done_items SET is_deleted = true, updated_by = $2 WHERE id = $1', [cur.done_item_id, req.user.id]);
       await client.query('UPDATE done_todos SET done_at = NULL, done_item_id = NULL, updated_by = $2 WHERE id = $1', [row.id, req.user.id]);
-      return null;
+      return;
     }
     const id = randomUUID();
     await client.query(
-      `INSERT INTO done_items (id, user_id, product_id, work_date, text, screen_ids, todo_id, created_by, updated_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $2, $2)`,
-      [id, row.user_id, row.product_id, localNow().date, row.text, row.screen_ids, row.id]);
+      `INSERT INTO done_items (id, user_id, product_id, work_date, text, screen_ids, todo_id, minutes, created_by, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $2, $2)`,
+      [id, row.user_id, row.product_id, localNow().date, row.text, row.screen_ids, row.id, minutes]);
     await client.query('UPDATE done_todos SET done_at = now(), done_item_id = $2, updated_by = $3 WHERE id = $1', [row.id, id, req.user.id]);
-    return id;
   });
-  res.json({ todo: toTodo(await live('done_todos', row.id, '*')), item: itemId ? await doneById(itemId) : null });
+  const todo = await live('done_todos', row.id, '*');
+  res.json({ todo: toTodo(todo), item: todo.done_item_id ? await doneById(todo.done_item_id) : null });
 }));
 
 // Share my day: every entry I wrote on that day, with links to the screens I changed
@@ -1926,10 +1986,11 @@ app.post('/api/done/share', route(async (req, res) => {
   if (!rows.length) throw new HttpError(400, 'Add what you did first');
   if (!product.teams_webhook) throw new HttpError(400, 'This app has no Teams channel yet. A super admin can add it in Sanity → Teams channel.');
   const lines = await Promise.all(rows.map((r) => doneLine(req, product.id, r)));
+  const total = rows.reduce((sum, r) => sum + (r.minutes || 0), 0);
   const sent = await toTeams(product, {
     title: `✅ ${personName(req.user)} — done ${date === today ? 'today' : `on ${date}`}`,
     lines,
-    facts: [['App', product.name], ['Date', date]],
+    facts: [['App', product.name], ['Date', date], ...(total ? [['Time logged', timeText(total)]] : [])],
     actions: [['Open in FlowTrace', deeplink(req, `done=${product.id}`)]],
   });
   if (sent !== 'sent') throw new HttpError(502, sent);
@@ -1985,6 +2046,470 @@ app.put('/api/done/:id/closed', route(async (req, res) => {
     });
   }
   res.json({ item: await doneById(row.id), teams: sent });
+}));
+
+// ---- questions / doubts: collected for a meeting, open until resolved (journal.js has the workflow and rights)
+
+const QUESTION_SELECT = `SELECT q.*, u.name, u.username, a.name AS assignee_name, a.username AS assignee_username
+  FROM journal_questions q JOIN users u ON u.id = q.user_id LEFT JOIN users a ON a.id = q.assignee_id`;
+const toQuestion = (r, user) => ({
+  id: r.id, userId: r.user_id, userName: personName(r), raisedOn: r.raised_on, text: r.text, details: r.details,
+  expected: r.expected, screenIds: r.screen_ids, apis: r.apis, priority: r.priority, assigneeId: r.assignee_id,
+  assigneeName: personName({ name: r.assignee_name, username: r.assignee_username }), meetingDate: r.meeting_date,
+  status: r.status, answer: r.answer, discussedAt: r.discussed_at, resolvedAt: r.resolved_at, resolvedOn: r.resolved_on,
+  resolvedBy: r.resolved_by, rights: journal.questionRights(user, r), ...audit(r),
+});
+
+// A question this login may see (else it looks like it does not exist), with its app checked
+async function questionFor(req, id, level = 'view') {
+  const row = await live('journal_questions', text(id, 80), '*');
+  const product = await productFor(req, row.product_id, level);
+  if (!journal.questionRights(req.user, row).view) throw new HttpError(404, 'Not found');
+  return { row, product };
+}
+const questionById = async (id, user) => toQuestion(await one(`${QUESTION_SELECT} WHERE q.id = $1`, [id]), user);
+
+// Someone of the app (to assign a question, or to say who a blocker waits on); '' / null = nobody
+async function personOf(productId, id, what) {
+  if (!id) return null;
+  const { rows } = await peopleOf(productId);
+  const person = rows.find((u) => u.id === id);
+  if (!person) throw new HttpError(400, `Pick ${what} from the people of this app`);
+  return person;
+}
+
+// @mention the person a question is assigned to (or a blocker waits on) on the app's Teams channel; never fails the save
+async function tellPerson(req, product, person, { title, line, hash }) {
+  if (!person || person.id === req.user.id || !product.teams_webhook) return null;
+  return toTeams(product, {
+    title, lines: [line, person.teams_email ? '' : `For: ${personName(person)}`],
+    facts: [['App', product.name], ['From', personName(req.user)]],
+    actions: [['Open in FlowTrace', deeplink(req, hash)]],
+    mentions: mention(person),
+  });
+}
+
+// question fields from a request body (only what was sent); screens and person are checked against the app
+async function questionFields(b, productId) {
+  const fields = {};
+  if (b.text !== undefined) fields.text = required(text(b.text, 1000), 'The question');
+  if (b.details !== undefined) fields.details = text(b.details, 2000);
+  if (b.expected !== undefined) fields.expected = text(b.expected, 2000);
+  if (b.screenIds !== undefined) fields.screen_ids = (await appScreens(productId, b.screenIds)).map((x) => x.id);
+  if (b.apis !== undefined) fields.apis = journal.apiList(b.apis);
+  if (b.priority !== undefined) fields.priority = journal.priority(b.priority);
+  if (b.assigneeId !== undefined) fields.assignee_id = (await personOf(productId, b.assigneeId, 'who answers it')) ? b.assigneeId : null;
+  if (b.meetingDate !== undefined) fields.meeting_date = journal.meetingDay(b.meetingDate);
+  return fields;
+}
+
+// The same question still open in this app (asked again, or the form sent twice) is not added a second time
+async function sameOpenQuestion(productId, words, exceptId = '') {
+  const { rows } = await db.query(
+    `SELECT id, text FROM journal_questions WHERE product_id = $1 AND NOT is_deleted AND status <> 'resolved' AND id <> $2`,
+    [productId, exceptId]);
+  return rows.find((r) => journal.sameText(r.text) === journal.sameText(words));
+}
+
+app.post('/api/journal/questions', route(async (req, res) => {
+  const product = await productFor(req, req.body.productId, 'edit');
+  const f = await questionFields({ ...req.body, text: req.body.text === undefined ? '' : req.body.text }, product.id);
+  const id = newId(req);
+  const dup = await sameOpenQuestion(product.id, f.text, id);
+  if (dup) throw new HttpError(409, `This question is already open: "${dup.text.slice(0, 120)}"`);
+  const { created } = await insertOnce(
+    `INSERT INTO journal_questions (id, product_id, user_id, raised_on, text, details, expected, screen_ids, apis, priority,
+       assignee_id, meeting_date, created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $3, $3)`,
+    [id, product.id, req.user.id, localNow().date, f.text, f.details || '', f.expected || '', f.screen_ids || [], f.apis || [],
+      f.priority || 'medium', f.assignee_id || null, f.meeting_date || null], 'journal_questions', req.user.id);
+  const teamsSent = created && f.assignee_id ? await tellPerson(req, product, await personOf(product.id, f.assignee_id, ''), {
+    title: `❓ ${personName(req.user)} has a question for you`, line: `• ${f.text}`, hash: `done=${product.id}&tab=questions`,
+  }) : null;
+  res.status(created ? 201 : 200).json({ question: await questionById(id, req.user), teams: teamsSent });
+}));
+
+// Edit a question (author, admins); the person it is assigned to may change only its meeting day and answer
+app.patch('/api/journal/questions/:id', route(async (req, res) => {
+  const { row, product } = await questionFor(req, req.params.id, 'edit');
+  const rights = journal.questionRights(req.user, row);
+  const b = { ...req.body };
+  if (!rights.edit) {
+    if (!rights.move) throw new HttpError(403, 'Only the person who asked, the person it is assigned to, or an admin can change this question');
+    ['text', 'details', 'expected', 'screenIds', 'apis', 'priority', 'assigneeId'].forEach((k) => delete b[k]);
+  }
+  const fields = await questionFields(b, row.product_id);
+  if (b.answer !== undefined) fields.answer = text(b.answer, 2000);
+  if (fields.text) {
+    const dup = await sameOpenQuestion(row.product_id, fields.text, row.id);
+    if (dup && row.status !== 'resolved') throw new HttpError(409, `This question is already open: "${dup.text.slice(0, 120)}"`);
+  }
+  await update('journal_questions', row.id, fields, req.user.id);
+  const teamsSent = fields.assignee_id && fields.assignee_id !== row.assignee_id
+    ? await tellPerson(req, product, await personOf(product.id, fields.assignee_id, ''), {
+      title: `❓ ${personName(req.user)} has a question for you`, line: `• ${fields.text || row.text}`, hash: `done=${product.id}&tab=questions`,
+    }) : null;
+  res.json({ question: await questionById(row.id, req.user), teams: teamsSent });
+}));
+
+// Move a question along: open → ready → discussed → resolved (or back). An answer can be saved with it.
+app.put('/api/journal/questions/:id/status', route(async (req, res) => {
+  const { row } = await questionFor(req, req.params.id, 'edit');
+  if (!journal.questionRights(req.user, row).move) throw new HttpError(403, 'Only the person who asked, the person it is assigned to, or an admin can move this question');
+  const fields = journal.questionStatusFields(row.status, req.body.status, { userId: req.user.id, today: localNow().date });
+  if (req.body.answer !== undefined) fields.answer = text(req.body.answer, 2000);
+  if (fields.status && fields.status !== 'resolved' && row.status === 'resolved') {
+    const dup = await sameOpenQuestion(row.product_id, row.text, row.id);
+    if (dup) throw new HttpError(409, `The same question is open again already: "${dup.text.slice(0, 120)}"`);
+  }
+  await update('journal_questions', row.id, fields, req.user.id);
+  res.json({ question: await questionById(row.id, req.user) });
+}));
+
+app.delete('/api/journal/questions/:id', route(async (req, res) => {
+  const { row } = await questionFor(req, req.params.id, 'edit');
+  if (!journal.questionRights(req.user, row).remove) throw new HttpError(403, 'Only the person who asked or an admin can delete this question');
+  await softDelete('journal_questions', row.id, req.user.id);
+  res.json({ ok: true });
+}));
+
+// The agenda of a meeting day (default today): the unresolved questions set for it, plus those ready for discussion
+// without a meeting yet or left over from an earlier one. Each question once, most urgent first.
+async function agendaOf(req, productId, day) {
+  const { rows } = await db.query(
+    `${QUESTION_SELECT} WHERE q.product_id = $1 AND NOT q.is_deleted AND ${journal.ON_AGENDA('q', '$2')}
+       AND ($3 OR q.user_id = $4 OR q.assignee_id = $4)
+     ORDER BY CASE q.status WHEN 'ready' THEN 0 WHEN 'open' THEN 1 ELSE 2 END, ${PRIORITY_ORDER('q.priority')}, q.raised_on, q.created_at`,
+    [productId, day, isAdmin(req.user), req.user.id]);
+  return rows.map((q) => toQuestion(q, req.user));
+}
+const agendaDay = (value) => (journal.isDay(value) ? value : localNow().date);
+
+app.get('/api/journal/agenda', route(async (req, res) => {
+  const product = await productFor(req, req.query.product, 'view');
+  const date = agendaDay(req.query.date);
+  res.json({ date, items: await agendaOf(req, product.id, date) });
+}));
+
+// Post the agenda to the app's Teams channel, @mentioning the people who answer the questions
+app.post('/api/journal/agenda/share', route(async (req, res) => {
+  const product = await productFor(req, req.body.productId, 'edit');
+  if (!product.teams_webhook) throw new HttpError(400, 'This app has no Teams channel yet. A super admin can add it in Sanity → Teams channel.');
+  const date = agendaDay(req.body.date);
+  const items = await agendaOf(req, product.id, date);
+  if (!items.length) throw new HttpError(400, 'Nothing on this agenda yet. Mark questions "Ready for discussion" or set their meeting date.');
+  const { rows: people } = await peopleOf(product.id);
+  const asked = people.filter((u) => items.some((q) => q.assigneeId === u.id));
+  const sent = await toTeams(product, {
+    title: `🗓️ Meeting agenda · ${product.name} · ${date}`,
+    lines: items.map((q, i) => `${i + 1}. [${q.priority}] ${q.text}${q.assigneeName ? ` → ${q.assigneeName}` : ''}${q.expected ? `\n   Expected: ${q.expected}` : ''}${q.apis.length ? `\n   APIs: ${q.apis.join(', ')}` : ''}`),
+    facts: [['Questions', String(items.length)], ['Date', date]],
+    actions: [['Open in FlowTrace', deeplink(req, `done=${product.id}&tab=questions`)]],
+    mentions: asked.flatMap(mention),
+  });
+  if (sent !== 'sent') throw new HttpError(502, sent);
+  res.json({ teams: sent, count: items.length });
+}));
+
+// ---- blockers: what stops my work, who it waits on and the next action; open until resolved
+
+const BLOCKER_SELECT = `SELECT b.*, u.name, u.username, w.name AS waiting_name, w.username AS waiting_username, t.text AS todo_text
+  FROM journal_blockers b JOIN users u ON u.id = b.user_id LEFT JOIN users w ON w.id = b.waiting_on
+  LEFT JOIN done_todos t ON t.id = b.todo_id AND NOT t.is_deleted`;
+const toBlocker = (r, user) => ({
+  id: r.id, userId: r.user_id, userName: personName(r), raisedOn: r.raised_on, text: r.text, screenIds: r.screen_ids,
+  priority: r.priority, waitingOn: r.waiting_on, waitingName: personName({ name: r.waiting_name, username: r.waiting_username }),
+  nextAction: r.next_action, todoId: r.todo_id, todoText: r.todo_text || '', resolution: r.resolution,
+  resolvedAt: r.resolved_at, resolvedOn: r.resolved_on, resolvedBy: r.resolved_by, rights: journal.blockerRights(user, r), ...audit(r),
+});
+async function blockerFor(req, id) {
+  const row = await live('journal_blockers', text(id, 80), '*');
+  const product = await productFor(req, row.product_id, 'edit');
+  if (!journal.blockerRights(req.user, row).view) throw new HttpError(404, 'Not found');
+  return { row, product };
+}
+const blockerById = async (id, user) => toBlocker(await one(`${BLOCKER_SELECT} WHERE b.id = $1`, [id]), user);
+
+async function blockerFields(req, b, productId) {
+  const fields = {};
+  if (b.text !== undefined) fields.text = required(text(b.text, 1000), 'What blocks you');
+  if (b.screenIds !== undefined) fields.screen_ids = (await appScreens(productId, b.screenIds)).map((x) => x.id);
+  if (b.priority !== undefined) fields.priority = journal.priority(b.priority);
+  if (b.nextAction !== undefined) fields.next_action = text(b.nextAction, 500);
+  if (b.waitingOn !== undefined) fields.waiting_on = (await personOf(productId, b.waitingOn, 'who it waits on')) ? b.waitingOn : null;
+  if (b.todoId !== undefined) {
+    fields.todo_id = null;
+    if (b.todoId) {
+      const { rows } = await db.query('SELECT id FROM done_todos WHERE id = $1 AND product_id = $2 AND user_id = $3 AND NOT is_deleted',
+        [b.todoId, productId, req.user.id]);
+      if (!rows[0]) throw new HttpError(400, 'Pick one of your own points');
+      fields.todo_id = rows[0].id;
+    }
+  }
+  return fields;
+}
+
+app.post('/api/journal/blockers', route(async (req, res) => {
+  const product = await productFor(req, req.body.productId, 'edit');
+  const f = await blockerFields(req, { ...req.body, text: req.body.text === undefined ? '' : req.body.text }, product.id);
+  const { id, created } = await insertOnce(
+    `INSERT INTO journal_blockers (id, product_id, user_id, raised_on, text, screen_ids, priority, waiting_on, next_action, todo_id,
+       created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $3, $3)`,
+    [newId(req), product.id, req.user.id, localNow().date, f.text, f.screen_ids || [], f.priority || 'high', f.waiting_on || null,
+      f.next_action || '', f.todo_id || null], 'journal_blockers', req.user.id);
+  const teamsSent = created && f.waiting_on ? await tellPerson(req, product, await personOf(product.id, f.waiting_on, ''), {
+    title: `⛔ ${personName(req.user)} is blocked, waiting on you`, line: `• ${f.text}${f.next_action ? `\n  Next: ${f.next_action}` : ''}`,
+    hash: `done=${product.id}&tab=blockers`,
+  }) : null;
+  res.status(created ? 201 : 200).json({ blocker: await blockerById(id, req.user), teams: teamsSent });
+}));
+
+app.patch('/api/journal/blockers/:id', route(async (req, res) => {
+  const { row } = await blockerFor(req, req.params.id);
+  if (!journal.blockerRights(req.user, row).edit) throw new HttpError(403, 'You can only change your own blockers');
+  await update('journal_blockers', row.id, await blockerFields(req, req.body, row.product_id), req.user.id);
+  res.json({ blocker: await blockerById(row.id, req.user) });
+}));
+
+// Resolve (with how) or open again: the author, super admins and the person it waits on
+app.put('/api/journal/blockers/:id/resolved', route(async (req, res) => {
+  const { row } = await blockerFor(req, req.params.id);
+  if (!journal.blockerRights(req.user, row).resolve) throw new HttpError(403, 'Only the person blocked or the person it waits on can resolve it');
+  const resolved = Boolean(req.body.resolved);
+  let fields = {};
+  if (!resolved) fields = row.resolved_at ? { resolved_at: null, resolved_on: null, resolved_by: null } : {};
+  else if (row.resolved_at) fields = { resolution: text(req.body.resolution, 1000) }; // already resolved: only the how
+  else fields = { resolved_at: new Date(), resolved_on: localNow().date, resolved_by: req.user.id, resolution: text(req.body.resolution, 1000) };
+  await update('journal_blockers', row.id, fields, req.user.id);
+  res.json({ blocker: await blockerById(row.id, req.user) });
+}));
+
+app.delete('/api/journal/blockers/:id', route(async (req, res) => {
+  const { row } = await blockerFor(req, req.params.id);
+  if (!journal.blockerRights(req.user, row).edit) throw new HttpError(403, 'You can only delete your own blockers');
+  await softDelete('journal_blockers', row.id, req.user.id);
+  res.json({ ok: true });
+}));
+
+// ---- minutes of meeting: a meeting's points, each Done / To be discussed with someone / Deferred, shared on Teams
+
+const toMeeting = (r, user) => ({
+  id: r.id, productId: r.product_id, date: r.meeting_date, title: r.title, attendees: r.attendees, sharedAt: r.shared_at,
+  points: r.points === undefined ? undefined : r.points, done: r.done_count === undefined ? undefined : r.done_count,
+  createdByName: personName({ name: r.creator_name, username: r.creator_username }), rights: journal.meetingRights(user, r), ...audit(r),
+});
+const POINT_SELECT = `SELECT p.*, w.name AS with_name, w.username AS with_username, q.status AS question_status
+  FROM journal_meeting_points p LEFT JOIN users w ON w.id = p.discuss_with LEFT JOIN journal_questions q ON q.id = p.question_id`;
+const toPoint = (r) => ({
+  id: r.id, meetingId: r.meeting_id, text: r.text, status: r.status, discussWith: r.discuss_with,
+  discussWithName: personName({ name: r.with_name, username: r.with_username }), questionId: r.question_id,
+  questionStatus: r.question_status || null, order: r.sort_order, ...audit(r),
+});
+
+async function meetingFor(req, id, level = 'view') {
+  const row = await live('journal_meetings', text(id, 80), '*');
+  const product = await productFor(req, row.product_id, level);
+  return { row, product };
+}
+async function meetingWithPoints(id, user) {
+  const meeting = await one(`SELECT m.*, u.name AS creator_name, u.username AS creator_username
+    FROM journal_meetings m LEFT JOIN users u ON u.id = m.created_by WHERE m.id = $1`, [id]);
+  const { rows } = await db.query(`${POINT_SELECT} WHERE p.meeting_id = $1 AND NOT p.is_deleted ORDER BY p.sort_order, p.created_at`, [id]);
+  return { meeting: toMeeting(meeting, user), points: rows.map(toPoint) };
+}
+// people of the app picked as attendees (others are dropped)
+async function attendeesOf(productId, value) {
+  const wanted = Array.isArray(value) ? value.filter((x) => typeof x === 'string') : [];
+  const { rows } = await peopleOf(productId);
+  return rows.filter((u) => wanted.includes(u.id)).map((u) => u.id);
+}
+
+app.get('/api/journal/meetings', route(async (req, res) => {
+  const product = await productFor(req, req.query.product, 'view');
+  const { rows } = await db.query(
+    `SELECT m.*, u.name AS creator_name, u.username AS creator_username,
+       (SELECT count(*)::int FROM journal_meeting_points p WHERE p.meeting_id = m.id AND NOT p.is_deleted) AS points,
+       (SELECT count(*)::int FROM journal_meeting_points p WHERE p.meeting_id = m.id AND NOT p.is_deleted AND p.status = 'done') AS done_count
+     FROM journal_meetings m LEFT JOIN users u ON u.id = m.created_by
+     WHERE m.product_id = $1 AND NOT m.is_deleted ORDER BY m.meeting_date DESC, m.created_at DESC LIMIT 100`, [product.id]);
+  res.json({ meetings: rows.map((r) => toMeeting(r, req.user)), canCreate: req.user.access !== 'view' });
+}));
+
+app.post('/api/journal/meetings', route(async (req, res) => {
+  const product = await productFor(req, req.body.productId, 'edit');
+  const date = req.body.date ? journal.meetingDay(req.body.date) : localNow().date;
+  if (!date) throw new HttpError(400, 'Meeting date is required');
+  const { id, created } = await insertOnce(
+    `INSERT INTO journal_meetings (id, product_id, meeting_date, title, attendees, created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $6)`,
+    [newId(req), product.id, date, text(req.body.title, 200) || 'Team meeting', await attendeesOf(product.id, req.body.attendees), req.user.id],
+    'journal_meetings', req.user.id, 'created_by');
+  res.status(created ? 201 : 200).json(await meetingWithPoints(id, req.user));
+}));
+
+app.get('/api/journal/meetings/:id', route(async (req, res) => {
+  const { row } = await meetingFor(req, req.params.id);
+  res.json(await meetingWithPoints(row.id, req.user));
+}));
+
+app.patch('/api/journal/meetings/:id', route(async (req, res) => {
+  const { row } = await meetingFor(req, req.params.id, 'edit');
+  const fields = {};
+  if (req.body.title !== undefined) fields.title = required(text(req.body.title, 200), 'Meeting title');
+  if (req.body.date !== undefined) {
+    fields.meeting_date = journal.meetingDay(req.body.date);
+    if (!fields.meeting_date) throw new HttpError(400, 'Meeting date is required');
+  }
+  if (req.body.attendees !== undefined) fields.attendees = await attendeesOf(row.product_id, req.body.attendees);
+  await update('journal_meetings', row.id, fields, req.user.id);
+  res.json(await meetingWithPoints(row.id, req.user));
+}));
+
+app.delete('/api/journal/meetings/:id', route(async (req, res) => {
+  const { row } = await meetingFor(req, req.params.id, 'edit');
+  if (!journal.meetingRights(req.user, row).remove) throw new HttpError(403, 'Only the person who started these minutes or an admin can delete them');
+  await softDelete('journal_meetings', row.id, req.user.id);
+  res.json({ ok: true });
+}));
+
+const nextPointOrder = (meetingId) => db.query(
+  'SELECT coalesce(max(sort_order), 0) + 1 AS n FROM journal_meeting_points WHERE meeting_id = $1', [meetingId]).then(({ rows }) => rows[0].n);
+
+app.post('/api/journal/meetings/:id/points', route(async (req, res) => {
+  const { row } = await meetingFor(req, req.params.id, 'edit');
+  const words = required(text(req.body.text, 1000), 'The point');
+  const pointId = newId(req);
+  const { rows } = await db.query(
+    `INSERT INTO journal_meeting_points (id, meeting_id, text, sort_order, created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $5) ON CONFLICT (id) DO NOTHING RETURNING id`, [pointId, row.id, words, await nextPointOrder(row.id), req.user.id]);
+  if (!rows[0]) {
+    const { rows: [had] } = await db.query('SELECT meeting_id FROM journal_meeting_points WHERE id = $1', [pointId]);
+    if (!had || had.meeting_id !== row.id) throw new HttpError(409, 'This point was already saved. Refresh and try again.');
+  }
+  res.status(rows[0] ? 201 : 200).json(await meetingWithPoints(row.id, req.user));
+}));
+
+// The meeting's agenda (questions set for its day, and ready ones left over) as points, each question once
+app.post('/api/journal/meetings/:id/from-agenda', route(async (req, res) => {
+  const { row } = await meetingFor(req, req.params.id, 'edit');
+  const items = await agendaOf(req, row.product_id, row.meeting_date);
+  let order = await nextPointOrder(row.id);
+  let added = 0;
+  for (const q of items) {
+    const { rowCount } = await db.query(
+      `INSERT INTO journal_meeting_points (id, meeting_id, text, question_id, sort_order, created_by, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $6)
+       ON CONFLICT (meeting_id, question_id) WHERE question_id IS NOT NULL AND NOT is_deleted DO NOTHING`,
+      [randomUUID(), row.id, q.text, q.id, order, req.user.id]);
+    added += rowCount;
+    order += rowCount;
+  }
+  res.json({ added, ...(await meetingWithPoints(row.id, req.user)) });
+}));
+
+// Edit a point, or tick it: Done / To be discussed with someone / Deferred (or open again). A point from a question
+// moves that question along when the login may (journal.questionAfterPoint).
+app.patch('/api/journal/points/:id', route(async (req, res) => {
+  const point = await live('journal_meeting_points', text(req.params.id, 80), '*');
+  const { row: meeting } = await meetingFor(req, point.meeting_id, 'edit');
+  const fields = {};
+  if (req.body.text !== undefined) fields.text = required(text(req.body.text, 1000), 'The point');
+  if (req.body.status !== undefined) {
+    const withId = req.body.status === 'discuss' ? (await personOf(meeting.product_id, req.body.discussWith, 'who it is to be discussed with') || {}).id : null;
+    Object.assign(fields, journal.pointStatusFields(req.body.status, withId));
+  }
+  await update('journal_meeting_points', point.id, fields, req.user.id);
+  let question = null;
+  if (fields.status && point.question_id) {
+    const { rows: [q] } = await db.query('SELECT * FROM journal_questions WHERE id = $1 AND NOT is_deleted', [point.question_id]);
+    const to = q && journal.questionRights(req.user, q).move && journal.questionAfterPoint(fields.status, q.status);
+    if (to) {
+      const qf = journal.questionStatusFields(q.status, to, { userId: req.user.id, today: localNow().date });
+      if (fields.status === 'deferred') qf.meeting_date = null; // on the next agenda, whenever that is
+      await update('journal_questions', q.id, qf, req.user.id);
+      question = to;
+    }
+  }
+  res.json({ ...(await meetingWithPoints(meeting.id, req.user)), question });
+}));
+
+app.delete('/api/journal/points/:id', route(async (req, res) => {
+  const point = await live('journal_meeting_points', text(req.params.id, 80), '*');
+  const { row: meeting } = await meetingFor(req, point.meeting_id, 'edit');
+  await softDelete('journal_meeting_points', point.id, req.user.id);
+  res.json(await meetingWithPoints(meeting.id, req.user));
+}));
+
+const POINT_GROUPS = [['done', '✅ Done'], ['discuss', '💬 To be discussed'], ['deferred', '⏸️ Deferred'], ['open', '• Open']];
+
+// Share the minutes on the app's Teams channel: every point, or only the ones picked; @mentions the people picked and
+// everyone a shared point is to be discussed with
+app.post('/api/journal/meetings/:id/share', route(async (req, res) => {
+  const { row, product } = await meetingFor(req, req.params.id, 'edit');
+  if (!product.teams_webhook) throw new HttpError(400, 'This app has no Teams channel yet. A super admin can add it in Sanity → Teams channel.');
+  const { points } = await meetingWithPoints(row.id, req.user);
+  const picked = Array.isArray(req.body.pointIds) && req.body.pointIds.length ? req.body.pointIds : null;
+  const shared = picked ? points.filter((p) => picked.includes(p.id)) : points;
+  if (!shared.length) throw new HttpError(400, picked ? 'Pick points of these minutes to share' : 'Add points to the minutes first');
+  const { rows: people } = await peopleOf(product.id);
+  const userIds = Array.isArray(req.body.userIds) ? req.body.userIds : [];
+  const mentioned = people.filter((u) => userIds.includes(u.id) || shared.some((p) => p.discussWith === u.id));
+  const lines = [];
+  POINT_GROUPS.forEach(([status, label]) => {
+    const list = shared.filter((p) => p.status === status);
+    if (!list.length) return;
+    lines.push(`**${label}**`);
+    list.forEach((p) => lines.push(`- ${p.text}${status === 'discuss' ? ` → with ${p.discussWithName}` : ''}`));
+  });
+  const note = text(req.body.note, 500);
+  const attendees = people.filter((u) => row.attendees.includes(u.id)).map(personName);
+  const sent = await toTeams(product, {
+    title: `📝 Minutes: ${row.title} · ${row.meeting_date}${picked ? ` (${shared.length} of ${points.length} points)` : ''}`,
+    lines: [...(note ? [note, ''] : []), ...lines],
+    facts: [['App', product.name], ['Date', row.meeting_date], ...(attendees.length ? [['Attended', attendees.join(', ')]] : []), ['Shared by', personName(req.user)]],
+    actions: [['Open in FlowTrace', deeplink(req, `done=${product.id}&tab=minutes&meeting=${row.id}`)]],
+    mentions: mentioned.flatMap(mention),
+  });
+  if (sent !== 'sent') throw new HttpError(502, sent);
+  await db.query('UPDATE journal_meetings SET shared_at = now(), updated_by = $2 WHERE id = $1', [row.id, req.user.id]);
+  res.json({ teams: sent, count: shared.length });
+}));
+
+// ---- search the journal across all days: entries, points, questions and blockers this login can see
+
+app.get('/api/journal/search', route(async (req, res) => {
+  const product = await productFor(req, req.query.product, 'view');
+  const q = text(req.query.q, 100);
+  if (q.length < 2) throw new HttpError(400, 'Type at least 2 characters to search');
+  const like = journal.likePattern(q);
+  const everyone = req.user.access === 'super';
+  const [{ rows: done }, { rows: todos }, { rows: questions }, { rows: blockers }] = await Promise.all([
+    db.query(`${DONE_SELECT} WHERE d.product_id = $1 AND NOT d.is_deleted AND ($2 OR d.user_id = $3) AND d.text ILIKE $4
+              ORDER BY d.work_date DESC, d.created_at DESC LIMIT 30`, [product.id, everyone, req.user.id, like]),
+    db.query(`SELECT * FROM done_todos WHERE product_id = $1 AND user_id = $2 AND NOT is_deleted AND done_at IS NULL
+                AND (text ILIKE $3 OR next_action ILIKE $3) ORDER BY created_at DESC LIMIT 30`, [product.id, req.user.id, like]),
+    db.query(`${QUESTION_SELECT} WHERE q.product_id = $1 AND NOT q.is_deleted AND ($2 OR q.user_id = $3 OR q.assignee_id = $3)
+                AND (q.text ILIKE $4 OR q.details ILIKE $4 OR q.expected ILIKE $4 OR q.answer ILIKE $4 OR array_to_string(q.apis, ' ') ILIKE $4)
+              ORDER BY q.raised_on DESC, q.created_at DESC LIMIT 30`, [product.id, isAdmin(req.user), req.user.id, like]),
+    db.query(`${BLOCKER_SELECT} WHERE b.product_id = $1 AND NOT b.is_deleted AND ($2 OR b.user_id = $3 OR b.waiting_on = $3)
+                AND (b.text ILIKE $4 OR b.next_action ILIKE $4 OR b.resolution ILIKE $4)
+              ORDER BY b.raised_on DESC, b.created_at DESC LIMIT 30`, [product.id, everyone, req.user.id, like]),
+  ]);
+  res.json({
+    q, done: done.map(toDone), todos: todos.map(toTodo),
+    questions: questions.map((x) => toQuestion(x, req.user)), blockers: blockers.map((x) => toBlocker(x, req.user)),
+  });
+}));
+
+// ---- writing assistant (assist.js): grammar / tone suggestions for the journal's text boxes
+
+app.get('/api/assist', (req, res) => res.json({ ai: assist.configured(), tones: assist.TONES, maxText: assist.MAX_TEXT }));
+
+app.post('/api/assist', route(async (req, res) => {
+  need(req, 'edit');
+  const tone = req.body.tone ? text(req.body.tone, 20) : '';
+  res.json(await assist.suggest({ text: typeof req.body.text === 'string' ? req.body.text : '', tone, userId: req.user.id }));
 }));
 
 // ---------------------------------------------------------------- sheets: spreadsheets made inside an app
@@ -2724,19 +3249,25 @@ async function ensureSuperAdmin() {
   console.log(`Super admin "${username}" created.`);
 }
 
-db.init()
-  .then(ensureSuperAdmin)
-  .then(() => {
-    const server = app.listen(PORT, () => {
-    console.log(`FlowTrace running at http://localhost:${PORT}`);
-    if (!cloud.configured()) console.log('Image uploads are off: add the Cloudinary keys to .env to turn them on.');
-    if (!process.env.APP_URL) console.log('APP_URL is not set: Teams reminders will have no "Start sanity" link.');
-    setInterval(() => sanityReminders().catch((err) => console.error('Sanity reminders:', err.message)), 60 * 1000);
+// `npm start` runs this file; the tests require it for the app and start their own server (test/journal.api.test.js)
+if (require.main === module) {
+  db.init()
+    .then(ensureSuperAdmin)
+    .then(() => {
+      const server = app.listen(PORT, () => {
+        console.log(`FlowTrace running at http://localhost:${PORT}`);
+        if (!cloud.configured()) console.log('Image uploads are off: add the Cloudinary keys to .env to turn them on.');
+        if (!process.env.APP_URL) console.log('APP_URL is not set: Teams reminders will have no "Start sanity" link.');
+        if (!assist.configured()) console.log('The AI writing assistant is off: add ANTHROPIC_API_KEY to .env to turn it on (quick checks still run).');
+        setInterval(() => sanityReminders().catch((err) => console.error('Sanity reminders:', err.message)), 60 * 1000);
+      });
+      // who is online: a WebSocket on the same port (/ws)
+      online = presence.attach(server, { db, auth });
+    })
+    .catch((err) => {
+      console.error('Could not connect to the database:', err.message);
+      process.exit(1);
     });
-    // who is online: a WebSocket on the same port (/ws)
-    online = presence.attach(server, { db, auth });
-  })
-  .catch((err) => {
-    console.error('Could not connect to the database:', err.message);
-    process.exit(1);
-  });
+}
+
+module.exports = { app };

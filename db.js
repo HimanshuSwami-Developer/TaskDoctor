@@ -404,6 +404,112 @@ BEGIN
   END IF;
 END $$;
 
+-- Daily work journal (the "Done today" page grown up). A to-do point now has a stage: To-do → In Progress, then ticked
+-- into Done as before. Points and blockers carry a priority and a next action; time is optional (estimate on a point,
+-- minutes spent on a done entry).
+ALTER TABLE done_todos ADD COLUMN IF NOT EXISTS stage text NOT NULL DEFAULT 'todo';
+ALTER TABLE done_todos DROP CONSTRAINT IF EXISTS done_todos_stage_check;
+ALTER TABLE done_todos ADD CONSTRAINT done_todos_stage_check CHECK (stage IN ('todo', 'progress'));
+ALTER TABLE done_todos ADD COLUMN IF NOT EXISTS priority text NOT NULL DEFAULT 'medium';
+ALTER TABLE done_todos DROP CONSTRAINT IF EXISTS done_todos_priority_check;
+ALTER TABLE done_todos ADD CONSTRAINT done_todos_priority_check CHECK (priority IN ('urgent', 'high', 'medium', 'low'));
+ALTER TABLE done_todos ADD COLUMN IF NOT EXISTS next_action text NOT NULL DEFAULT '';
+ALTER TABLE done_todos ADD COLUMN IF NOT EXISTS started_at timestamptz;
+ALTER TABLE done_todos ADD COLUMN IF NOT EXISTS est_minutes int CHECK (est_minutes IS NULL OR est_minutes BETWEEN 1 AND 1440);
+ALTER TABLE done_items ADD COLUMN IF NOT EXISTS minutes int CHECK (minutes IS NULL OR minutes BETWEEN 1 AND 1440);
+
+-- One live "done" entry per resolved issue per day and per ticked point: double clicks and two tabs used to make
+-- copies. Copies already made are soft-deleted (the first one stays) before the unique indexes are built.
+UPDATE done_items d SET is_deleted = true
+WHERE NOT d.is_deleted AND d.comment_id IS NOT NULL AND EXISTS (
+  SELECT 1 FROM done_items o WHERE o.comment_id = d.comment_id AND o.work_date = d.work_date AND NOT o.is_deleted
+    AND (o.created_at, o.id) < (d.created_at, d.id));
+CREATE UNIQUE INDEX IF NOT EXISTS done_items_issue_day_uq ON done_items(comment_id, work_date) WHERE comment_id IS NOT NULL AND NOT is_deleted;
+UPDATE done_items d SET is_deleted = true
+WHERE NOT d.is_deleted AND d.todo_id IS NOT NULL AND EXISTS (
+  SELECT 1 FROM done_items o WHERE o.todo_id = d.todo_id AND NOT o.is_deleted AND (o.created_at, o.id) < (d.created_at, d.id));
+CREATE UNIQUE INDEX IF NOT EXISTS done_items_todo_uq ON done_items(todo_id) WHERE todo_id IS NOT NULL AND NOT is_deleted;
+
+-- Questions / doubts about how the app should work, collected for a meeting. A question stays open from day to day
+-- until it is resolved: open → ready (for discussion) → discussed → resolved. raised_on / resolved_on are the team's
+-- local days (APP_TIMEZONE), so a past day shows the questions that were open then. Seen by the author, the person
+-- it is assigned to and app admins.
+CREATE TABLE IF NOT EXISTS journal_questions (
+  id            text PRIMARY KEY,
+  product_id    text NOT NULL REFERENCES products(id),
+  user_id       text NOT NULL REFERENCES users(id),
+  raised_on     date NOT NULL,
+  text          text NOT NULL,
+  details       text NOT NULL DEFAULT '',
+  expected      text NOT NULL DEFAULT '',
+  screen_ids    text[] NOT NULL DEFAULT '{}',
+  apis          text[] NOT NULL DEFAULT '{}',
+  priority      text NOT NULL DEFAULT 'medium' CHECK (priority IN ('urgent', 'high', 'medium', 'low')),
+  assignee_id   text REFERENCES users(id),
+  meeting_date  date,
+  status        text NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'ready', 'discussed', 'resolved')),
+  answer        text NOT NULL DEFAULT '',
+  discussed_at  timestamptz,
+  resolved_at   timestamptz,
+  resolved_on   date,
+  resolved_by   text REFERENCES users(id),
+  is_deleted    boolean NOT NULL DEFAULT false,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS journal_questions_product_idx ON journal_questions(product_id, status) WHERE NOT is_deleted;
+CREATE INDEX IF NOT EXISTS journal_questions_meeting_idx ON journal_questions(product_id, meeting_date) WHERE NOT is_deleted;
+
+-- Blockers: what stops someone's work, who it waits on and the next action; open ones carry over until resolved.
+-- todo_id: the point (to-do / in progress) it blocks, if any.
+CREATE TABLE IF NOT EXISTS journal_blockers (
+  id            text PRIMARY KEY,
+  product_id    text NOT NULL REFERENCES products(id),
+  user_id       text NOT NULL REFERENCES users(id),
+  raised_on     date NOT NULL,
+  text          text NOT NULL,
+  screen_ids    text[] NOT NULL DEFAULT '{}',
+  priority      text NOT NULL DEFAULT 'high' CHECK (priority IN ('urgent', 'high', 'medium', 'low')),
+  waiting_on    text REFERENCES users(id),
+  next_action   text NOT NULL DEFAULT '',
+  todo_id       text REFERENCES done_todos(id),
+  resolution    text NOT NULL DEFAULT '',
+  resolved_at   timestamptz,
+  resolved_on   date,
+  resolved_by   text REFERENCES users(id),
+  is_deleted    boolean NOT NULL DEFAULT false,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS journal_blockers_product_idx ON journal_blockers(product_id, user_id) WHERE NOT is_deleted;
+
+-- Minutes of meeting: a meeting of an app (day, title, who attended) and its points. Each point is open, done, to be
+-- discussed with someone (discuss_with) or deferred. A point can come from a question on the meeting's agenda
+-- (question_id, once per meeting). The whole team of the app reads and writes minutes.
+CREATE TABLE IF NOT EXISTS journal_meetings (
+  id            text PRIMARY KEY,
+  product_id    text NOT NULL REFERENCES products(id),
+  meeting_date  date NOT NULL,
+  title         text NOT NULL,
+  attendees     text[] NOT NULL DEFAULT '{}',
+  shared_at     timestamptz,
+  is_deleted    boolean NOT NULL DEFAULT false,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS journal_meetings_product_idx ON journal_meetings(product_id, meeting_date DESC) WHERE NOT is_deleted;
+CREATE TABLE IF NOT EXISTS journal_meeting_points (
+  id            text PRIMARY KEY,
+  meeting_id    text NOT NULL REFERENCES journal_meetings(id),
+  text          text NOT NULL,
+  status        text NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done', 'discuss', 'deferred')),
+  discuss_with  text REFERENCES users(id),
+  question_id   text REFERENCES journal_questions(id),
+  sort_order    bigint NOT NULL DEFAULT 0,
+  is_deleted    boolean NOT NULL DEFAULT false,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS journal_meeting_points_meeting_idx ON journal_meeting_points(meeting_id) WHERE NOT is_deleted;
+CREATE UNIQUE INDEX IF NOT EXISTS journal_meeting_points_question_uq ON journal_meeting_points(meeting_id, question_id)
+  WHERE question_id IS NOT NULL AND NOT is_deleted;
+
 -- Audit columns on every table: who created / last changed a row and when. created_by / updated_by are the
 -- signed-in user (NULL for rows made by the server itself, e.g. the seeded statuses or the first super admin).
 -- updated_at starts as created_at for old rows and is kept current by a trigger on every UPDATE.
@@ -418,7 +524,8 @@ DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['products', 'modules', 'flows', 'screens', 'comments', 'statuses', 'users', 'sessions',
                           'sanity_items', 'sanity_runs', 'sanity_results', 'sanity_columns', 'sanity_logs', 'done_items', 'done_todos',
-                          'sheets', 'sheet_columns', 'sheet_rows', 'teams_shares'] LOOP
+                          'sheets', 'sheet_columns', 'sheet_rows', 'teams_shares', 'journal_questions', 'journal_blockers',
+                          'journal_meetings', 'journal_meeting_points'] LOOP
     EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS created_by text REFERENCES users(id)', t);
     EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS updated_by text REFERENCES users(id)', t);
     EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS updated_at timestamptz', t);
