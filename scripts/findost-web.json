@@ -1,0 +1,1539 @@
+{
+  "app": "Findost Web",
+  "device": "web",
+  "modules": [
+    {
+      "name": "Auth",
+      "flows": [
+        {
+          "name": "Login with OTP",
+          "screens": [
+            {
+              "name": "Login to FinDost (OTP)",
+              "page": "/auth/login-with-otp",
+              "kind": "screen",
+              "action": "",
+              "wireframe": "form"
+            },
+            {
+              "name": "Verify OTP",
+              "page": "/auth/verify-otp",
+              "kind": "screen",
+              "action": "Click \"Send OTP\" on Login with OTP",
+              "wireframe": "form"
+            },
+            {
+              "name": "OTP Verification Complete!",
+              "page": "/auth/verify-otp",
+              "kind": "screen",
+              "action": "OTP verified for a user whose status is Init (shown under the DRA Registration dialog)",
+              "wireframe": "detail"
+            },
+            {
+              "name": "DRA Registration",
+              "page": "/auth/verify-otp",
+              "kind": "popup",
+              "action": "Opens on its own after OTP verify when user status is Init",
+              "wireframe": "form"
+            },
+            {
+              "name": "Form Submitted Successfully!",
+              "page": "/auth/verify-otp",
+              "kind": "popup",
+              "action": "Click \"Submit\" in DRA Registration; its button goes to /auth/login-with-otp",
+              "wireframe": "detail"
+            }
+          ]
+        },
+        {
+          "name": "Login with Password",
+          "screens": [
+            {
+              "name": "Login to FinDost (Password)",
+              "page": "/auth/login",
+              "kind": "screen",
+              "action": "Click \"Login with Password\" link; on success goes to /dashboard",
+              "wireframe": "form"
+            }
+          ]
+        },
+        {
+          "name": "Forget Password",
+          "screens": [
+            {
+              "name": "Forget Password?",
+              "page": "/auth/forget-password",
+              "kind": "screen",
+              "action": "Click \"Forget Password?\" on /auth/login",
+              "wireframe": "form"
+            },
+            {
+              "name": "Verify OTP (Forget Password)",
+              "page": "/auth/forget-password/otp",
+              "kind": "screen",
+              "action": "Submit Forget Password form",
+              "wireframe": "form"
+            },
+            {
+              "name": "Forget Password? (Change Password)",
+              "page": "/auth/change-password",
+              "kind": "screen",
+              "action": "OTP verified; on submit goes to /auth/login",
+              "wireframe": "form"
+            }
+          ]
+        },
+        {
+          "name": "DRA Sign Up",
+          "screens": [
+            {
+              "name": "Sign Up as Digital Parnter (DRA)",
+              "page": "/auth/login-with-otp",
+              "kind": "popup",
+              "action": "Auto-opens when arriving with state.openSignup (also from the Marketing page)",
+              "wireframe": "form"
+            },
+            {
+              "name": "Verify OTP (Sign Up)",
+              "page": "/auth/login-with-otp",
+              "kind": "popup",
+              "action": "Submit phone number in the Sign Up popup",
+              "wireframe": "form"
+            },
+            {
+              "name": "DRA Registration",
+              "page": "/auth/login-with-otp",
+              "kind": "popup",
+              "action": "Click \"Verify OTP\"",
+              "wireframe": "form"
+            },
+            {
+              "name": "Form Submitted Successfully!",
+              "page": "/auth/login-with-otp",
+              "kind": "popup",
+              "action": "Click \"Submit\"",
+              "wireframe": "detail"
+            }
+          ]
+        },
+        {
+          "name": "Terms & Conditions",
+          "screens": [
+            {
+              "name": "Terms & Conditions",
+              "page": "/terms-and-conditions",
+              "kind": "screen",
+              "action": "Click the terms link in the sign-up forms",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Privacy Policy",
+              "page": "/terms-and-conditions",
+              "kind": "popup",
+              "action": "Click the Privacy Policy link",
+              "wireframe": "detail"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Dashboard",
+      "flows": [
+        {
+          "name": "Dashboard",
+          "screens": [
+            {
+              "name": "Dashboard",
+              "page": "/dashboard",
+              "kind": "screen",
+              "action": "",
+              "wireframe": "dashboard"
+            },
+            {
+              "name": "DRA Registration",
+              "page": "/dashboard",
+              "kind": "popup",
+              "action": "Auto-opens when a DRA profile has status 8 (Init); cannot be dismissed",
+              "wireframe": "form"
+            },
+            {
+              "name": "Welcome to Findost",
+              "page": "/dashboard",
+              "kind": "popup",
+              "action": "Auto-opens when a DRA profile has status 9 (InProgress); offers \"Open Demat Account\"",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Margin Shortfall",
+              "page": "/dashboard",
+              "kind": "popup",
+              "action": "Click the \"Margin Shortfall\" card",
+              "wireframe": "list"
+            },
+            {
+              "name": "Filter By (widget filters)",
+              "page": "/dashboard",
+              "kind": "popup",
+              "action": "Click the filter icon on Top Performers / Channel Partners / Client Account / Onboarding / Session cards",
+              "wireframe": "form"
+            },
+            {
+              "name": "Video / Event / Banner preview",
+              "page": "/dashboard",
+              "kind": "popup",
+              "action": "Click an item in the Growth card (tabs: Videos, Banners, Events)",
+              "wireframe": "detail"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Admins",
+      "flows": [
+        {
+          "name": "Manage Admins",
+          "screens": [
+            {
+              "name": "Admins",
+              "page": "/dashboard/admins",
+              "kind": "screen",
+              "action": "",
+              "wireframe": "list"
+            },
+            {
+              "name": "Filter",
+              "page": "/dashboard/admins",
+              "kind": "popup",
+              "action": "Click the Filter icon",
+              "wireframe": "form"
+            },
+            {
+              "name": "Sort",
+              "page": "/dashboard/admins",
+              "kind": "popup",
+              "action": "Click the Sort icon",
+              "wireframe": "form"
+            },
+            {
+              "name": "Add New Admin",
+              "page": "/dashboard/admins",
+              "kind": "popup",
+              "action": "Click \"+ Add Admin\"",
+              "wireframe": "form"
+            }
+          ]
+        },
+        {
+          "name": "Admin Details",
+          "screens": [
+            {
+              "name": "Personal Details",
+              "page": "/dashboard/admins/:adminUcc",
+              "kind": "screen",
+              "action": "Click an admin row",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Edit Admin",
+              "page": "/dashboard/admins/:adminUcc",
+              "kind": "popup",
+              "action": "Click \"Edit\" (\"Delete\" uses a browser confirm, then goes to /dashboard/admins)",
+              "wireframe": "form"
+            },
+            {
+              "name": "Channel Partners (tab)",
+              "page": "/dashboard/admins/:adminUcc",
+              "kind": "screen",
+              "action": "Click the \"Channel Partners\" tab; a row goes to /dashboard/channel-partners/:cpUcc, \"View Clients\" goes to /dashboard/channel-partners/:ucc/clients",
+              "wireframe": "list"
+            },
+            {
+              "name": "Assign Admin",
+              "page": "/dashboard/admins/:adminUcc",
+              "kind": "popup",
+              "action": "Row menu \"Assign Admin\" / \"Reassign Admin\" in the Channel Partners tab",
+              "wireframe": "form"
+            },
+            {
+              "name": "Channel Partners (admin filtered)",
+              "page": "/dashboard/admins/:adminUcc/channel-partners",
+              "kind": "screen",
+              "action": "Direct route; shows an \"Admin: <ucc>\" chip",
+              "wireframe": "list"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Channel Partners",
+      "flows": [
+        {
+          "name": "Channel Partner List",
+          "screens": [
+            {
+              "name": "Channel Partners",
+              "page": "/dashboard/channel-partners",
+              "kind": "screen",
+              "action": "",
+              "wireframe": "list"
+            },
+            {
+              "name": "Filter",
+              "page": "/dashboard/channel-partners",
+              "kind": "popup",
+              "action": "Click the Filter icon",
+              "wireframe": "form"
+            },
+            {
+              "name": "Sort",
+              "page": "/dashboard/channel-partners",
+              "kind": "popup",
+              "action": "Click the Sort icon",
+              "wireframe": "form"
+            },
+            {
+              "name": "Assign Admin",
+              "page": "/dashboard/channel-partners",
+              "kind": "popup",
+              "action": "Row menu \"Assign Admin\"/\"Reassign Admin\", or bulk \"Assign Admin\" after selecting rows (title becomes \"Assign Admin to N Partners\")",
+              "wireframe": "form"
+            },
+            {
+              "name": "Make New Group",
+              "page": "/dashboard/channel-partners",
+              "kind": "popup",
+              "action": "Select rows, click \"Create Group (N)\"",
+              "wireframe": "form"
+            },
+            {
+              "name": "My Groups",
+              "page": "/dashboard/channel-partners",
+              "kind": "popup",
+              "action": "Click \"My Groups\"; a row goes to /dashboard/partner-group/:id",
+              "wireframe": "list"
+            },
+            {
+              "name": "Delete Group?",
+              "page": "/dashboard/channel-partners",
+              "kind": "popup",
+              "action": "Row menu \"Delete Group\" in My Groups",
+              "wireframe": "detail"
+            }
+          ]
+        },
+        {
+          "name": "Partner Group",
+          "screens": [
+            {
+              "name": "Partner Group Details",
+              "page": "/dashboard/partner-group/:groupId",
+              "kind": "screen",
+              "action": "Click a group in My Groups",
+              "wireframe": "list"
+            },
+            {
+              "name": "Edit Partner Group",
+              "page": "/dashboard/partner-group/:groupId",
+              "kind": "popup",
+              "action": "Click \"Edit Group\"",
+              "wireframe": "form"
+            }
+          ]
+        },
+        {
+          "name": "Channel Partner Details",
+          "screens": [
+            {
+              "name": "Channel Partner Details",
+              "page": "/dashboard/channel-partners/:cpUcc",
+              "kind": "screen",
+              "action": "Click a row or row menu \"View Details\"",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Clients (tab)",
+              "page": "/dashboard/channel-partners/:cpUcc",
+              "kind": "screen",
+              "action": "Click the \"Clients\" tab",
+              "wireframe": "list"
+            },
+            {
+              "name": "Filter By / Sort By",
+              "page": "/dashboard/channel-partners/:cpUcc",
+              "kind": "popup",
+              "action": "Click the Filter/Sort icon in the Clients tab",
+              "wireframe": "form"
+            },
+            {
+              "name": "Payout Details (tab)",
+              "page": "/dashboard/channel-partners/:cpUcc",
+              "kind": "screen",
+              "action": "Click the \"Payout Details\" tab",
+              "wireframe": "dashboard"
+            },
+            {
+              "name": "New Payout Change / Edit Payout Change",
+              "page": "/dashboard/channel-partners/:cpUcc",
+              "kind": "popup",
+              "action": "Click \"Add Payout Change\" (AP partner), or the Edit icon on a breakdown row",
+              "wireframe": "form"
+            },
+            {
+              "name": "Payout Details (DRA slabs)",
+              "page": "/dashboard/channel-partners/:cpUcc",
+              "kind": "popup",
+              "action": "Click \"Add Payout Change\" for a DRA partner",
+              "wireframe": "form"
+            },
+            {
+              "name": "Delete Payout Change",
+              "page": "/dashboard/channel-partners/:cpUcc",
+              "kind": "popup",
+              "action": "Click the Delete icon on a breakdown row",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Filter Breakdown",
+              "page": "/dashboard/channel-partners/:cpUcc",
+              "kind": "popup",
+              "action": "Click the breakdown filter icon",
+              "wireframe": "form"
+            },
+            {
+              "name": "Filter History",
+              "page": "/dashboard/channel-partners/:cpUcc",
+              "kind": "popup",
+              "action": "Click the payout history filter icon",
+              "wireframe": "form"
+            },
+            {
+              "name": "Payout Change History (tab)",
+              "page": "/dashboard/channel-partners/:cpUcc",
+              "kind": "screen",
+              "action": "Click the \"Payout Change History\" tab",
+              "wireframe": "list"
+            }
+          ]
+        },
+        {
+          "name": "Partner's Clients",
+          "screens": [
+            {
+              "name": "Partner's Clients",
+              "page": "/dashboard/channel-partners/:ucc/clients",
+              "kind": "screen",
+              "action": "Row menu \"View Clients\"; a row goes to /dashboard/client/:ucc",
+              "wireframe": "list"
+            },
+            {
+              "name": "Client Details (via partner)",
+              "page": "/dashboard/client/:ucc",
+              "kind": "screen",
+              "action": "Click a client row (breadcrumb: Channel Partners > partner > Clients)",
+              "wireframe": "detail"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "My Clients",
+      "flows": [
+        {
+          "name": "Client List",
+          "screens": [
+            {
+              "name": "My Clients",
+              "page": "/dashboard/clients",
+              "kind": "screen",
+              "action": "",
+              "wireframe": "list"
+            },
+            {
+              "name": "Invite Client",
+              "page": "/dashboard/clients",
+              "kind": "popup",
+              "action": "Click \"Add Client\"",
+              "wireframe": "form"
+            },
+            {
+              "name": "Send Wishes",
+              "page": "/dashboard/clients",
+              "kind": "popup",
+              "action": "Click the birthday/anniversary celebration banner (tabs: Birthday, Work Anniversary)",
+              "wireframe": "list"
+            },
+            {
+              "name": "Filter By",
+              "page": "/dashboard/clients",
+              "kind": "popup",
+              "action": "Click the Filter icon",
+              "wireframe": "form"
+            },
+            {
+              "name": "Sort By",
+              "page": "/dashboard/clients",
+              "kind": "popup",
+              "action": "Click the Sort icon",
+              "wireframe": "form"
+            },
+            {
+              "name": "Make New Group",
+              "page": "/dashboard/clients",
+              "kind": "popup",
+              "action": "Select clients, click \"Create Group (N)\"",
+              "wireframe": "form"
+            },
+            {
+              "name": "Send Notification",
+              "page": "/dashboard/clients",
+              "kind": "popup",
+              "action": "Select clients, click \"Send Notification\"",
+              "wireframe": "form"
+            },
+            {
+              "name": "Select IPOs",
+              "page": "/dashboard/clients",
+              "kind": "popup",
+              "action": "Click \"+ Attach IPO\" in Send Notification",
+              "wireframe": "list"
+            },
+            {
+              "name": "My Groups",
+              "page": "/dashboard/clients",
+              "kind": "popup",
+              "action": "More (⋮) menu > \"My Groups\"; a row goes to /dashboard/group/:id",
+              "wireframe": "list"
+            },
+            {
+              "name": "Delete Group?",
+              "page": "/dashboard/clients",
+              "kind": "popup",
+              "action": "My Groups row menu > \"Delete Group\"",
+              "wireframe": "detail"
+            }
+          ]
+        },
+        {
+          "name": "Client Details",
+          "screens": [
+            {
+              "name": "Client Details",
+              "page": "/dashboard/client/:ucc",
+              "kind": "screen",
+              "action": "Click a client row, or pick a client in the header client search",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Holdings",
+              "page": "/dashboard/client/:ucc",
+              "kind": "screen",
+              "action": "Click the \"Holdings\" tab",
+              "wireframe": "list"
+            },
+            {
+              "name": "Sort By (Holdings)",
+              "page": "/dashboard/client/:ucc",
+              "kind": "popup",
+              "action": "Click the Sort icon on Holdings",
+              "wireframe": "form"
+            }
+          ]
+        },
+        {
+          "name": "Client Group",
+          "screens": [
+            {
+              "name": "Client Group Details",
+              "page": "/dashboard/group/:groupId",
+              "kind": "screen",
+              "action": "Click a group in My Groups",
+              "wireframe": "list"
+            },
+            {
+              "name": "Sort By",
+              "page": "/dashboard/group/:groupId",
+              "kind": "popup",
+              "action": "Click the Sort icon",
+              "wireframe": "form"
+            },
+            {
+              "name": "Send Notification",
+              "page": "/dashboard/group/:groupId",
+              "kind": "popup",
+              "action": "Click \"Send Notification\" (\"Recommend Product\" only shows a coming-soon toast)",
+              "wireframe": "form"
+            },
+            {
+              "name": "Client Details (in group)",
+              "page": "/dashboard/group/:groupId/client/:ucc",
+              "kind": "screen",
+              "action": "Click a client row",
+              "wireframe": "detail"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Revenue",
+      "flows": [
+        {
+          "name": "Revenue",
+          "screens": [
+            {
+              "name": "Revenue",
+              "page": "/dashboard/revenue",
+              "kind": "screen",
+              "action": "Sidebar, or the earnings card on Dashboard",
+              "wireframe": "dashboard"
+            },
+            {
+              "name": "Payout Detail",
+              "page": "/dashboard/revenue",
+              "kind": "popup",
+              "action": "Click the payout card in the stat overview",
+              "wireframe": "list"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Notifications",
+      "flows": [
+        {
+          "name": "Client Notifications (AP/DRA)",
+          "screens": [
+            {
+              "name": "Notifications",
+              "page": "/dashboard/client-notifications",
+              "kind": "screen",
+              "action": "Tab \"Notifications\"",
+              "wireframe": "list"
+            },
+            {
+              "name": "Send Notification",
+              "page": "/dashboard/client-notifications",
+              "kind": "popup",
+              "action": "Click \"Send Notification\"",
+              "wireframe": "form"
+            },
+            {
+              "name": "Select IPOs",
+              "page": "/dashboard/client-notifications",
+              "kind": "popup",
+              "action": "Click \"+ Attach IPO\"",
+              "wireframe": "list"
+            },
+            {
+              "name": "Title / Description text",
+              "page": "/dashboard/client-notifications",
+              "kind": "popup",
+              "action": "Click a truncated Title/Description cell",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Notification detail (Recipients)",
+              "page": "/dashboard/client-notifications/:id",
+              "kind": "screen",
+              "action": "Click a notification row",
+              "wireframe": "detail"
+            },
+            {
+              "name": "News Notifications",
+              "page": "/dashboard/client-notifications",
+              "kind": "screen",
+              "action": "Tab \"News Notifications\"",
+              "wireframe": "list"
+            },
+            {
+              "name": "News Notification Clients",
+              "page": "/dashboard/client-notifications",
+              "kind": "popup",
+              "action": "Click a news card",
+              "wireframe": "list"
+            }
+          ]
+        },
+        {
+          "name": "Partner Notifications (Admin)",
+          "screens": [
+            {
+              "name": "Sent to Partners",
+              "page": "/dashboard/client-notifications",
+              "kind": "screen",
+              "action": "Tab \"Sent to Partners\"",
+              "wireframe": "list"
+            },
+            {
+              "name": "Send Partner Notification",
+              "page": "/dashboard/client-notifications",
+              "kind": "popup",
+              "action": "Click \"Send Notification\"",
+              "wireframe": "form"
+            },
+            {
+              "name": "Partner notification detail",
+              "page": "/dashboard/partner-notifications/:id",
+              "kind": "screen",
+              "action": "Click a row in Sent to Partners",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Sent to Clients",
+              "page": "/dashboard/client-notifications",
+              "kind": "screen",
+              "action": "Tab \"Sent to Clients\"; a row goes to /dashboard/client-notifications/:id",
+              "wireframe": "list"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Reports",
+      "flows": [
+        {
+          "name": "Reports",
+          "screens": [
+            {
+              "name": "Lead Status Report",
+              "page": "/dashboard/reports",
+              "kind": "screen",
+              "action": "Report-type dropdown (default)",
+              "wireframe": "list"
+            },
+            {
+              "name": "DRA Users Report",
+              "page": "/dashboard/reports",
+              "kind": "screen",
+              "action": "Report-type dropdown",
+              "wireframe": "list"
+            },
+            {
+              "name": "AP Users Report",
+              "page": "/dashboard/reports",
+              "kind": "screen",
+              "action": "Report-type dropdown",
+              "wireframe": "list"
+            },
+            {
+              "name": "Onboarding Report",
+              "page": "/dashboard/reports",
+              "kind": "screen",
+              "action": "Report-type dropdown",
+              "wireframe": "list"
+            },
+            {
+              "name": "Revenue Report",
+              "page": "/dashboard/reports",
+              "kind": "screen",
+              "action": "Report-type dropdown",
+              "wireframe": "list"
+            },
+            {
+              "name": "Filter",
+              "page": "/dashboard/reports",
+              "kind": "popup",
+              "action": "Click the Filter icon (fields depend on report type and role)",
+              "wireframe": "form"
+            },
+            {
+              "name": "Sort",
+              "page": "/dashboard/reports",
+              "kind": "popup",
+              "action": "Click the Sort icon",
+              "wireframe": "form"
+            },
+            {
+              "name": "Request Report",
+              "page": "/dashboard/reports",
+              "kind": "popup",
+              "action": "Click \"Request Report\"",
+              "wireframe": "form"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Products",
+      "flows": [
+        {
+          "name": "Products",
+          "screens": [
+            {
+              "name": "Products",
+              "page": "/dashboard/products",
+              "kind": "screen",
+              "action": "IPO card goes to /dashboard/products/ipo, Mutual Funds card to /dashboard/mutual-funds, others show an \"Upcoming\" toast",
+              "wireframe": "list"
+            }
+          ]
+        },
+        {
+          "name": "IPO",
+          "screens": [
+            {
+              "name": "IPO (Open)",
+              "page": "/dashboard/products/ipo",
+              "kind": "screen",
+              "action": "Tab \"Open\"",
+              "wireframe": "list"
+            },
+            {
+              "name": "IPO (Upcoming)",
+              "page": "/dashboard/products/ipo",
+              "kind": "screen",
+              "action": "Tab \"Upcoming\"",
+              "wireframe": "list"
+            },
+            {
+              "name": "Applied IPO's",
+              "page": "/dashboard/products/ipo",
+              "kind": "screen",
+              "action": "Tab \"Applied IPO's\" (\"Cancel\" uses a browser confirm)",
+              "wireframe": "list"
+            },
+            {
+              "name": "IPO Details",
+              "page": "/dashboard/products/ipo/:symbol",
+              "kind": "screen",
+              "action": "Click an IPO row",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Apply for Clients / Pre-Apply for Clients",
+              "page": "/dashboard/products/ipo/:symbol",
+              "kind": "popup",
+              "action": "Click the Apply / Pre-Apply button (drawer)",
+              "wireframe": "form"
+            },
+            {
+              "name": "Send Notification",
+              "page": "/dashboard/products/ipo/:symbol",
+              "kind": "popup",
+              "action": "Click \"Share\" > \"Email\" (pre-filled with the IPO)",
+              "wireframe": "form"
+            }
+          ]
+        },
+        {
+          "name": "Mutual Funds",
+          "screens": [
+            {
+              "name": "Explore Funds",
+              "page": "/dashboard/mutual-funds",
+              "kind": "screen",
+              "action": "Tab \"Explore Funds\"",
+              "wireframe": "list"
+            },
+            {
+              "name": "Fund Details",
+              "page": "/dashboard/mutual-funds",
+              "kind": "popup",
+              "action": "Click a fund row (drawer, step 1)",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Invest Lumpsum / Start SIP",
+              "page": "/dashboard/mutual-funds",
+              "kind": "popup",
+              "action": "Click \"Invest\" on a fund row (drawer step)",
+              "wireframe": "form"
+            },
+            {
+              "name": "Review Order / Review SIP",
+              "page": "/dashboard/mutual-funds",
+              "kind": "popup",
+              "action": "Continue from the invest step",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Order Status / SIP Status",
+              "page": "/dashboard/mutual-funds",
+              "kind": "popup",
+              "action": "Place the order; buttons go to the My Orders / My SIPs tab or \"Explore More Funds\"",
+              "wireframe": "detail"
+            },
+            {
+              "name": "My Orders",
+              "page": "/dashboard/mutual-funds",
+              "kind": "screen",
+              "action": "Tab \"My Orders\"",
+              "wireframe": "list"
+            },
+            {
+              "name": "Create Bulk Order",
+              "page": "/dashboard/mutual-funds",
+              "kind": "popup",
+              "action": "Click \"Bulk Order\" (drawer; Lumpsum/SIP)",
+              "wireframe": "form"
+            },
+            {
+              "name": "Order Details",
+              "page": "/dashboard/mutual-funds/orders/:orderId",
+              "kind": "screen",
+              "action": "Click an order row",
+              "wireframe": "detail"
+            },
+            {
+              "name": "My SIPs",
+              "page": "/dashboard/mutual-funds",
+              "kind": "screen",
+              "action": "Tab \"My SIPs\"",
+              "wireframe": "list"
+            },
+            {
+              "name": "Client SIPs",
+              "page": "/dashboard/mutual-funds",
+              "kind": "screen",
+              "action": "Tab \"Client SIPs\"",
+              "wireframe": "list"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "My Requests",
+      "flows": [
+        {
+          "name": "Requests",
+          "screens": [
+            {
+              "name": "Payout Requests",
+              "page": "/dashboard/my-request",
+              "kind": "screen",
+              "action": "Tab \"Payout Requests\"",
+              "wireframe": "list"
+            },
+            {
+              "name": "Create Payout Request",
+              "page": "/dashboard/my-request",
+              "kind": "popup",
+              "action": "Click \"+ Create Payout Request\"",
+              "wireframe": "form"
+            },
+            {
+              "name": "Create Breakdown",
+              "page": "/dashboard/my-request",
+              "kind": "popup",
+              "action": "Click \"+ Create Payout Request\"",
+              "wireframe": "form"
+            },
+            {
+              "name": "Product Requests",
+              "page": "/dashboard/my-request",
+              "kind": "screen",
+              "action": "Tab \"Product Requests\"",
+              "wireframe": "list"
+            },
+            {
+              "name": "Create Product Request",
+              "page": "/dashboard/my-request",
+              "kind": "popup",
+              "action": "Click \"+ Create Product Request\"",
+              "wireframe": "form"
+            },
+            {
+              "name": "Filter",
+              "page": "/dashboard/my-request",
+              "kind": "popup",
+              "action": "Click the Filter icon",
+              "wireframe": "form"
+            },
+            {
+              "name": "Sort",
+              "page": "/dashboard/my-request",
+              "kind": "popup",
+              "action": "Click the Sort icon",
+              "wireframe": "form"
+            },
+            {
+              "name": "Review Request",
+              "page": "/dashboard/my-request",
+              "kind": "popup",
+              "action": "Click \"Review\" on a pending request card",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Bulk Review — N Requests",
+              "page": "/dashboard/my-request",
+              "kind": "popup",
+              "action": "Select pending requests, click \"Review Selected (N)\"",
+              "wireframe": "form"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Growth",
+      "flows": [
+        {
+          "name": "Growth Hub",
+          "screens": [
+            {
+              "name": "Growth",
+              "page": "/dashboard/growth",
+              "kind": "screen",
+              "action": "Cards go to: Social Media Banner, Events, Videos, Blogs, Tests, Forms*, App Banners*, Recordings*, Campaigns* (*admin only)",
+              "wireframe": "list"
+            }
+          ]
+        },
+        {
+          "name": "Social Media Banner",
+          "screens": [
+            {
+              "name": "Social Media Banner",
+              "page": "/dashboard/growth/banners",
+              "kind": "screen",
+              "action": "Click the \"Social Media Banner\" card (filter chips: All, Personalised, Standard)",
+              "wireframe": "list"
+            },
+            {
+              "name": "Banner preview",
+              "page": "/dashboard/growth/banners",
+              "kind": "popup",
+              "action": "Click a banner image",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Personalise banner editor",
+              "page": "/dashboard/growth/banners",
+              "kind": "popup",
+              "action": "Click \"✎ Personalise\" on a banner",
+              "wireframe": "form"
+            },
+            {
+              "name": "Sort",
+              "page": "/dashboard/growth/banners",
+              "kind": "popup",
+              "action": "Click the Sort icon",
+              "wireframe": "form"
+            },
+            {
+              "name": "Create Banner / Edit Banner",
+              "page": "/dashboard/growth/banners",
+              "kind": "popup",
+              "action": "Click \"Create Banner\", or Edit on a card",
+              "wireframe": "form"
+            }
+          ]
+        },
+        {
+          "name": "Events",
+          "screens": [
+            {
+              "name": "Events",
+              "page": "/dashboard/growth/events",
+              "kind": "screen",
+              "action": "",
+              "wireframe": "list"
+            },
+            {
+              "name": "Event details",
+              "page": "/dashboard/growth/events",
+              "kind": "popup",
+              "action": "Click an event card",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Filter / Sort",
+              "page": "/dashboard/growth/events",
+              "kind": "popup",
+              "action": "Click the Filter/Sort icons",
+              "wireframe": "form"
+            },
+            {
+              "name": "Create Event / Edit Event",
+              "page": "/dashboard/growth/events",
+              "kind": "popup",
+              "action": "Click \"+ Create Event\", or card menu Edit",
+              "wireframe": "form"
+            }
+          ]
+        },
+        {
+          "name": "Videos",
+          "screens": [
+            {
+              "name": "Videos",
+              "page": "/dashboard/growth/videos",
+              "kind": "screen",
+              "action": "",
+              "wireframe": "list"
+            },
+            {
+              "name": "Video player",
+              "page": "/dashboard/growth/videos",
+              "kind": "popup",
+              "action": "Click a video thumbnail or \"Preview\"",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Filter / Sort",
+              "page": "/dashboard/growth/videos",
+              "kind": "popup",
+              "action": "Click the Filter/Sort icons",
+              "wireframe": "form"
+            },
+            {
+              "name": "Create Video / Edit Video",
+              "page": "/dashboard/growth/videos",
+              "kind": "popup",
+              "action": "Click \"Create Video\", or card menu Edit",
+              "wireframe": "form"
+            }
+          ]
+        },
+        {
+          "name": "Blogs",
+          "screens": [
+            {
+              "name": "Blogs",
+              "page": "/dashboard/growth/blogs",
+              "kind": "screen",
+              "action": "",
+              "wireframe": "list"
+            },
+            {
+              "name": "Blog view",
+              "page": "/dashboard/growth/blogs",
+              "kind": "popup",
+              "action": "Click a blog card",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Filter / Sort",
+              "page": "/dashboard/growth/blogs",
+              "kind": "popup",
+              "action": "Click the Filter/Sort icons",
+              "wireframe": "form"
+            },
+            {
+              "name": "Create Blog / Edit Blog",
+              "page": "/dashboard/growth/blogs",
+              "kind": "popup",
+              "action": "Click \"Create Blog\", or Edit",
+              "wireframe": "form"
+            }
+          ]
+        },
+        {
+          "name": "Tests",
+          "screens": [
+            {
+              "name": "Tests",
+              "page": "/dashboard/growth/tests",
+              "kind": "screen",
+              "action": "",
+              "wireframe": "list"
+            },
+            {
+              "name": "Test Details",
+              "page": "/dashboard/growth/tests",
+              "kind": "popup",
+              "action": "Click a test card",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Filter / Sort",
+              "page": "/dashboard/growth/tests",
+              "kind": "popup",
+              "action": "Click the Filter/Sort icons",
+              "wireframe": "form"
+            },
+            {
+              "name": "Create Test / Edit Test",
+              "page": "/dashboard/growth/tests",
+              "kind": "popup",
+              "action": "Click \"Create Test\", or Edit",
+              "wireframe": "form"
+            }
+          ]
+        },
+        {
+          "name": "Forms",
+          "screens": [
+            {
+              "name": "Forms",
+              "page": "/dashboard/growth/forms",
+              "kind": "screen",
+              "action": "",
+              "wireframe": "list"
+            },
+            {
+              "name": "Form Details",
+              "page": "/dashboard/growth/forms",
+              "kind": "popup",
+              "action": "Card menu View",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Create Form / Edit Form",
+              "page": "/dashboard/growth/forms",
+              "kind": "popup",
+              "action": "Click \"+ Create Form\", or card menu Edit",
+              "wireframe": "form"
+            }
+          ]
+        },
+        {
+          "name": "App Banners",
+          "screens": [
+            {
+              "name": "App Banners",
+              "page": "/dashboard/growth/app-banners",
+              "kind": "screen",
+              "action": "",
+              "wireframe": "list"
+            },
+            {
+              "name": "App Banner Details",
+              "page": "/dashboard/growth/app-banners",
+              "kind": "popup",
+              "action": "Click a banner card",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Filter / Sort",
+              "page": "/dashboard/growth/app-banners",
+              "kind": "popup",
+              "action": "Click the Filter/Sort icons",
+              "wireframe": "form"
+            },
+            {
+              "name": "Create App Banner / Edit App Banner",
+              "page": "/dashboard/growth/app-banners",
+              "kind": "popup",
+              "action": "Click \"+ Create Banner\", or Edit",
+              "wireframe": "form"
+            }
+          ]
+        },
+        {
+          "name": "Recordings (admin)",
+          "screens": [
+            {
+              "name": "Recordings",
+              "page": "/dashboard/growth/recordings",
+              "kind": "screen",
+              "action": "Tabs: Stocks, Markets",
+              "wireframe": "list"
+            },
+            {
+              "name": "Create Recording Episode / Edit Episode",
+              "page": "/dashboard/growth/recordings",
+              "kind": "popup",
+              "action": "Click \"Create Episode\", or Edit",
+              "wireframe": "form"
+            }
+          ]
+        },
+        {
+          "name": "Campaigns",
+          "screens": [
+            {
+              "name": "Individual",
+              "page": "/dashboard/growth/campaigns",
+              "kind": "screen",
+              "action": "Tab \"Individual\" (seat reservations)",
+              "wireframe": "list"
+            },
+            {
+              "name": "Campus",
+              "page": "/dashboard/growth/campaigns",
+              "kind": "screen",
+              "action": "Tab \"Campus\" (session requests)",
+              "wireframe": "list"
+            },
+            {
+              "name": "App Links",
+              "page": "/dashboard/growth/campaigns",
+              "kind": "screen",
+              "action": "Tab \"App Links\"",
+              "wireframe": "list"
+            },
+            {
+              "name": "Create App Link / Edit App Link",
+              "page": "/dashboard/growth/campaigns",
+              "kind": "popup",
+              "action": "Click \"Create Link\", or row \"Edit\"",
+              "wireframe": "form"
+            },
+            {
+              "name": "Link Visits",
+              "page": "/dashboard/growth/campaigns",
+              "kind": "screen",
+              "action": "Tab \"Link Visits\", or row \"Visits\" in App Links",
+              "wireframe": "list"
+            },
+            {
+              "name": "Link visits filter",
+              "page": "/dashboard/growth/campaigns",
+              "kind": "popup",
+              "action": "Click the Filter icon on Link Visits",
+              "wireframe": "form"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Support",
+      "flows": [
+        {
+          "name": "Tickets",
+          "screens": [
+            {
+              "name": "Tickets",
+              "page": "/dashboard/support",
+              "kind": "screen",
+              "action": "Tab \"Tickets\" (AP/DRA: own tickets; ADMIN/SUPERADMIN: all tickets table + \"Sync Tickets\")",
+              "wireframe": "list"
+            },
+            {
+              "name": "Raise Ticket",
+              "page": "/dashboard/support",
+              "kind": "popup",
+              "action": "Click \"Raise Ticket\"",
+              "wireframe": "form"
+            },
+            {
+              "name": "Ticket Details",
+              "page": "/dashboard/support",
+              "kind": "popup",
+              "action": "Click a ticket",
+              "wireframe": "detail"
+            }
+          ]
+        },
+        {
+          "name": "Forms",
+          "screens": [
+            {
+              "name": "Forms",
+              "page": "/dashboard/support",
+              "kind": "screen",
+              "action": "Tab \"Forms\"",
+              "wireframe": "list"
+            },
+            {
+              "name": "Filter By / Sort By",
+              "page": "/dashboard/support",
+              "kind": "popup",
+              "action": "Click the Filter/Sort icons",
+              "wireframe": "form"
+            },
+            {
+              "name": "Form Details",
+              "page": "/dashboard/support",
+              "kind": "popup",
+              "action": "Click a form card",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Create Form / Edit Form",
+              "page": "/dashboard/support",
+              "kind": "popup",
+              "action": "Click \"+ Create Form\", or card menu Edit",
+              "wireframe": "form"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Profile & Account (header)",
+      "flows": [
+        {
+          "name": "My Profile",
+          "screens": [
+            {
+              "name": "Personal Details",
+              "page": "/dashboard/profile",
+              "kind": "screen",
+              "action": "Header profile icon, or the RankPill on Dashboard",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Bank",
+              "page": "/dashboard/profile",
+              "kind": "screen",
+              "action": "Tab \"Bank\"",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Payout Details",
+              "page": "/dashboard/profile",
+              "kind": "screen",
+              "action": "Tab \"Payout Details\"",
+              "wireframe": "dashboard"
+            },
+            {
+              "name": "Payout Change History",
+              "page": "/dashboard/profile",
+              "kind": "screen",
+              "action": "Tab \"Payout Change History\"",
+              "wireframe": "list"
+            },
+            {
+              "name": "Tiers & Levels",
+              "page": "/dashboard/profile",
+              "kind": "popup",
+              "action": "Click \"click here\" in the Partner Rank card (drawer)",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Rank Updated 🎉",
+              "page": "/dashboard/profile",
+              "kind": "popup",
+              "action": "Auto-opens when the partner's rank has changed",
+              "wireframe": "detail"
+            }
+          ]
+        },
+        {
+          "name": "Settings & Logout",
+          "screens": [
+            {
+              "name": "Settings",
+              "page": "/dashboard/settings",
+              "kind": "screen",
+              "action": "Direct URL only (no nav link found)",
+              "wireframe": "form"
+            },
+            {
+              "name": "Logout",
+              "page": "/dashboard",
+              "kind": "popup",
+              "action": "Click \"Logout\" in the sidebar (\"Are you sure you want to logout?\")",
+              "wireframe": "detail"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Public pages",
+      "flows": [
+        {
+          "name": "Influencer Partner landing",
+          "screens": [
+            {
+              "name": "Grow Your Wealth with Growing Your Network",
+              "page": "/Influencer–Partner",
+              "kind": "screen",
+              "action": "",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Sign Up as Digital Parnter (DRA)",
+              "page": "/Influencer–Partner",
+              "kind": "popup",
+              "action": "Click \"Become Influencer Partner\" (native mode; link mode redirects externally). \"Start Refer & Earn\" goes to ekyc.findoc.com",
+              "wireframe": "form"
+            }
+          ]
+        },
+        {
+          "name": "Recordings",
+          "screens": [
+            {
+              "name": "Stocks / Markets Recordings",
+              "page": "/recordings",
+              "kind": "screen",
+              "action": "Tabs: Stocks, Markets; audio player + episode list (bottom sheet on mobile)",
+              "wireframe": "list"
+            },
+            {
+              "name": "PDF preview",
+              "page": "/recordings",
+              "kind": "popup",
+              "action": "Open the episode PDF in the audio player",
+              "wireframe": "detail"
+            }
+          ]
+        },
+        {
+          "name": "Stock Market Classes",
+          "screens": [
+            {
+              "name": "Stock market decoded in 60 minutes",
+              "page": "/stock-market-classes",
+              "kind": "screen",
+              "action": "",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Save your free seat",
+              "page": "/stock-market-classes",
+              "kind": "popup",
+              "action": "Click \"Save my Seat Now →\" / \"Save my seat\" / \"Start free →\"",
+              "wireframe": "form"
+            },
+            {
+              "name": "You're in! 🎉",
+              "page": "/stock-market-classes",
+              "kind": "popup",
+              "action": "Submit Save your free seat",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Session for your institution",
+              "page": "/stock-market-classes",
+              "kind": "popup",
+              "action": "Click \"Request a session →\"",
+              "wireframe": "form"
+            }
+          ]
+        },
+        {
+          "name": "Monthly Report",
+          "screens": [
+            {
+              "name": "Monthly Report — Monthly logins",
+              "page": "/monthly-report",
+              "kind": "screen",
+              "action": "Tab \"Monthly logins (N)\"; presets \"This month\" / \"Last month\"",
+              "wireframe": "dashboard"
+            },
+            {
+              "name": "Monthly Report — Daily logins",
+              "page": "/monthly-report",
+              "kind": "screen",
+              "action": "Tab \"Daily logins (N)\"",
+              "wireframe": "list"
+            }
+          ]
+        },
+        {
+          "name": "Utility",
+          "screens": [
+            {
+              "name": "App link redirect (loader)",
+              "page": "/app/:slug",
+              "kind": "screen",
+              "action": "Redirects to the API, then to the app store",
+              "wireframe": "detail"
+            },
+            {
+              "name": "Oops! Something went wrong",
+              "page": "*",
+              "kind": "screen",
+              "action": "Unknown route; button goes to /dashboard; logged-out users go to /auth/login-with-otp",
+              "wireframe": "detail"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
