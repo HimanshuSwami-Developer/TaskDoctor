@@ -69,6 +69,8 @@ $(function () {
     tag: 'M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8zM7.5 7.5h.01',
     fork: 'M12 3v6M12 9l-6 6v5M12 9l6 6v5M3.5 17.5 6 20l2.5-2.5M15.5 17.5 18 20l2.5-2.5',
     clock: 'M12 7v5l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z',
+    mail: 'M3 5h18v14H3zM3 6l9 7 9-7',
+    bell: 'M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8M10 20a2 2 0 0 0 4 0',
   };
   const icon = (name, size = 16) =>
     `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${PATHS[name]}"/></svg>`;
@@ -338,7 +340,9 @@ $(function () {
             <span class="field-label">${esc(f.label)}${f.required ? '' : ' <span class="font-normal text-slate-400">(optional)</span>'}</span>
             ${f.options
     ? `<select class="input w-full" name="${f.name}">${f.options.map(([v, label]) => `<option value="${esc(v)}" ${v === f.value ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select>`
-    : `<input class="input w-full" name="${f.name}" value="${esc(f.value || '')}" placeholder="${esc(f.placeholder || '')}" maxlength="${f.max || 200}" autocomplete="off" ${f.required ? 'data-required' : ''}>`}
+    : f.rows
+      ? `<textarea class="input w-full font-mono text-xs" name="${f.name}" rows="${f.rows}" placeholder="${esc(f.placeholder || '')}" maxlength="${f.max || 2000}" ${f.required ? 'data-required' : ''}>${esc(f.value || '')}</textarea>`
+      : `<input class="input w-full" name="${f.name}" value="${esc(f.value || '')}" placeholder="${esc(f.placeholder || '')}" maxlength="${f.max || 200}" autocomplete="off" ${f.required ? 'data-required' : ''}>`}
           </label>`).join('')}</div>` : ''}
         <p class="dialog-error mx-5 mt-3 hidden"></p>
         <div class="dialog-actions">
@@ -375,13 +379,13 @@ $(function () {
       const submit = $(this).find('[type=submit]')[0];
       busy = true;
       setBusy(submit, true);
-      $(this).find('[data-dialog-cancel], input, select').prop('disabled', true);
+      $(this).find('[data-dialog-cancel], input, select, textarea').prop('disabled', true);
       onConfirm(values)
         .done(() => close(fields && fields.length ? values : true))
         .fail((xhr) => {
           busy = false;
           setBusy(submit, false);
-          $(this).find('[data-dialog-cancel], input, select').prop('disabled', false);
+          $(this).find('[data-dialog-cancel], input, select, textarea').prop('disabled', false);
           showError(errorText(xhr));
         });
     });
@@ -777,7 +781,8 @@ $(function () {
   $doc.on('keydown', (e) => { if (e.key === 'Escape' && $('body').hasClass('sb-open')) closeDrawer(); });
   // which page is open: the board, Sheets or Sanity
   const markNav = () => {
-    $('[data-action="home"].sb-item').toggleClass('on', !sheetsView && !sanity && !adminView && !doneView);
+    $('[data-action="home"].sb-item').toggleClass('on', !sheetsView && !sanity && !adminView && !doneView && !templatesView);
+    $('[data-action="templates"]').toggleClass('on', Boolean(templatesView));
     $('[data-action="done"]').toggleClass('on', Boolean(doneView));
     $('[data-action="admin"]').toggleClass('on', Boolean(adminView));
     $('[data-action="sheets"]').toggleClass('on', Boolean(sheetsView));
@@ -3919,8 +3924,9 @@ $(function () {
     const version = current && current.version ? current.version.replace(/^v(?=\d)/i, '') : '';
     $('#sbNav').html(`
       <button class="sb-write" data-action="writer" title="Write an issue on any screen">${icon('plus', 16)}<span class="sb-label">Write issue</span></button>
-      <a href="/" class="sb-item ${!sheetsView && !sanity && !adminView ? 'on' : ''}" data-action="home" title="Board: modules, flows and screens"><span class="sb-ico">${icon('home', 16)}</span><span class="sb-label">Board</span></a>
+      <a href="/" class="sb-item ${!sheetsView && !sanity && !adminView && !templatesView ? 'on' : ''}" data-action="home" title="Board: modules, flows and screens"><span class="sb-ico">${icon('home', 16)}</span><span class="sb-label">Board</span></a>
       ${sbItem({ attrs: 'data-action="sheets"', ico: icon('grid', 16), label: 'Sheets', on: Boolean(sheetsView), title: 'Sheets: typed columns, formulas, links to flows and screens, Excel in and out' })}
+      ${sbItem({ attrs: 'data-action="templates"', ico: icon('mail', 16), label: 'Templates', on: Boolean(templatesView), title: 'Templates: the e-mails, WhatsApp, SMS and push messages this app sends' })}
       ${sbItem({ attrs: 'data-action="sanity"', ico: icon('check', 16), label: 'Sanity', on: Boolean(sanity), title: 'Daily sanity checklist of this app' })}
       ${sbItem({ attrs: 'data-action="done"', ico: icon('note', 16), label: 'Done today', title: 'Daily journal: done, to-do, in progress, questions and blockers' })}
       <a class="sb-item" href="/api/export" title="Download every task as an Excel sheet"><span class="sb-ico">${icon('download', 16)}</span><span class="sb-label">Excel export</span></a>
@@ -4200,6 +4206,7 @@ $(function () {
       if (sheetsView) closeSheets();
       if (sanity) closeSanity();
       if (doneView) closeDone();
+      if (templatesView) closeTemplates();
       adminView = adminView || { q: '', access: '', app: '', panel: null };
       $('#board, #tabs').addClass('hidden');
       $('#adminPage').removeClass('hidden');
@@ -4754,6 +4761,7 @@ $(function () {
     if (sanity) openSanity(productId); // on the Sanity page: that app's sanity
     if (sheetsView) openSheets(productId); // on the Sheets page: that app's sheets
     if (doneView) openDone(productId); // on the journal page: that app's journal
+    if (templatesView) openTemplates(productId); // on the Templates page: that app's templates
   });
   $doc.on('click', '[data-action="add-product"]', () => ask({
     title: 'New product',
@@ -5446,9 +5454,10 @@ $(function () {
   // ---------------------------------------------------------------- go to a flow / screen anywhere (any app or module)
 
   function showPlace(flowId) {
-    if (sanity) closeSanity(); // going to a flow or screen leaves the Sanity (or Sheets, or journal) page
+    if (sanity) closeSanity(); // going to a flow or screen leaves the Sanity (or Sheets, journal, Templates) page
     if (sheetsView) closeSheets();
     if (doneView) closeDone();
+    if (templatesView) closeTemplates();
     const f = findFlow(flowId);
     const p = f && productOf(f.moduleId);
     if (!p) { toast('That is no longer here'); return false; }
@@ -5474,6 +5483,7 @@ $(function () {
     if (sanityLog) closeSanityLog();
     if (sheetsView) closeSheets();
     if (doneView) closeDone();
+    if (templatesView) closeTemplates();
     if (!$('#statusModal').hasClass('hidden')) closeStatuses();
     if (bugsView) closeBugs();
     if (adminView) closeAdmin();
@@ -5490,7 +5500,8 @@ $(function () {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   });
 
-  // Links from Teams: /#flow=<id>, #screen=<id>, #sanity=<app id>[&view=logs], #done=<app id>[&date=…][&tab=shared|questions|blockers|…]
+  // Links from Teams: /#flow=<id>, #screen=<id>, #sanity=<app id>[&view=logs], #done=<app id>[&date=…][&tab=shared|questions|blockers|…],
+  // #templates=<app id>[&tab=email|whatsapp|sms|push|other]
   function openFromHash() {
     const h = new URLSearchParams(location.hash.slice(1));
     if (![...h.keys()].length) return;
@@ -5502,6 +5513,10 @@ $(function () {
     else if (h.get('sheets')) {
       if (products.some((p) => p.id === h.get('sheets'))) { selectProduct(h.get('sheets')); render(); }
       openSheets(productId);
+    }
+    else if (h.get('templates')) {
+      if (products.some((p) => p.id === h.get('templates'))) { selectProduct(h.get('templates')); render(); }
+      openTemplates(productId, h.get('tab'));
     }
     else if (h.get('sanity') || h.get('done')) {
       const pid = h.get('sanity') || h.get('done');
@@ -5548,6 +5563,7 @@ $(function () {
       if (sheetsView) closeSheets();
       if (adminView) closeAdmin();
       if (doneView) closeDone();
+      if (templatesView) closeTemplates();
       $('#board, #tabs').addClass('hidden');
       $('#sanityPage').removeClass('hidden');
       markNav();
@@ -5965,6 +5981,7 @@ $(function () {
       if (sanity) closeSanity();
       if (sheetsView) closeSheets();
       if (adminView) closeAdmin();
+      if (templatesView) closeTemplates();
       renderDone();
       $('#board, #tabs').addClass('hidden');
       $('#journalPage').removeClass('hidden');
@@ -7026,6 +7043,194 @@ $(function () {
   const SHEET_SHARES = [['private', 'Private: only me and editors'], ['view', 'Everyone in the app can view'], ['edit', 'Everyone in the app can edit']];
   const TONE_TAG = { success: 'green', pending: 'amber', fail: 'red', other: 'slate' }; // dropdown value → status tag colour
 
+  // ---------------------------------------------------------------- templates
+  // The messages an app sends (e-mail, WhatsApp, SMS, push, other), one tab per channel, on a page of its own in the
+  // board's place (like the journal); the address (#templates=<app>&tab=…) keeps it. Developers and up edit them.
+
+  const TPL_TABS = { email: ['Email', 'mail'], whatsapp: ['WhatsApp', 'chat'], sms: ['SMS', 'chat'], push: ['Push', 'bell'], other: ['Other', 'note'] };
+  // { productId, list, canEdit, tab, search, source: Set of template ids showing their HTML }
+  let templatesView = null;
+
+  function openTemplates(pid, tab) {
+    if (!pid) { dialog.alert('Add an app first.', 'No app'); return null; }
+    const keep = templatesView && templatesView.productId === pid ? templatesView : null;
+    return api('GET', `/api/templates?product=${encodeURIComponent(pid)}`).done((d) => {
+      const fresh = $('#templatesPage').hasClass('hidden');
+      if (sanity) closeSanity();
+      if (sheetsView) closeSheets();
+      if (doneView) closeDone();
+      if (adminView) closeAdmin();
+      const counts = tplCounts(d.templates);
+      const first = Object.keys(TPL_TABS).find((k) => counts[k]) || 'email';
+      templatesView = {
+        productId: pid, list: d.templates, canEdit: d.canEdit, search: keep ? keep.search : '', source: keep ? keep.source : new Set(),
+        tab: TPL_TABS[tab] ? tab : keep ? keep.tab : first,
+      };
+      renderTemplates();
+      $('#board, #tabs').addClass('hidden');
+      $('#templatesPage').removeClass('hidden');
+      markNav();
+      templatesHash();
+      if (fresh) window.scrollTo(0, 0);
+    });
+  }
+  const templatesHash = () => templatesView && history.replaceState(null, '',
+    `${location.pathname}${location.search}#templates=${encodeURIComponent(templatesView.productId)}&tab=${templatesView.tab}`);
+  const reloadTemplates = () => templatesView && openTemplates(templatesView.productId, templatesView.tab);
+
+  function closeTemplates() {
+    templatesView = null;
+    $('#templatesPage').addClass('hidden');
+    $('#tplBody').empty();
+    $('#board, #tabs').removeClass('hidden');
+    markNav();
+    history.replaceState(null, '', location.pathname + location.search);
+  }
+
+  const tplCounts = (list) => list.reduce((c, t) => { c[t.channel] = (c[t.channel] || 0) + 1; return c; }, {});
+  // {{name}}, ${name}, {#var#}, {1}, %name%, [[name]]: the parts filled in when the message is sent
+  const TPL_VAR = /(\{\{\s*[\w.-]+\s*\}\}|\$\{\s*[\w.]+\s*\}|\{#\w+#\}|\{\d+\}|%[A-Za-z_]\w*%|\[\[\w+\]\])/g;
+  const withVars = (textIn) => esc(textIn).replace(TPL_VAR, '<span class="tpl-var">$1</span>');
+  // WhatsApp's own formatting: *bold*, _italic_, ~strike~
+  const waFormat = (textIn) => withVars(textIn)
+    .replace(/\*([^*\n]+)\*/g, '<b>$1</b>').replace(/(^|\s)_([^_\n]+)_/g, '$1<i>$2</i>').replace(/~([^~\n]+)~/g, '<s>$1</s>');
+  const looksHtml = (textIn) => /<(html|body|table|div|p|br|h\d|span|a)\b/i.test(textIn || '');
+
+  // how the message looks where it lands
+  function tplPreview(t) {
+    const v = templatesView;
+    if (t.channel === 'email') {
+      const showSource = v.source.has(t.id);
+      const html = looksHtml(t.body);
+      return `
+        <div class="tpl-mail">
+          <div class="tpl-mail-head"><span>Subject</span><b>${t.title ? withVars(t.title) : '<i class="text-slate-400">No subject</i>'}</b>
+            ${html ? `<button type="button" class="tpl-link" data-tpl-source="${t.id}">${showSource ? 'Preview' : 'HTML'}</button>` : ''}</div>
+          ${html && !showSource
+    ? `<iframe class="tpl-frame" sandbox="" referrerpolicy="no-referrer" srcdoc="${esc(t.body).replace(/"/g, '&quot;')}" title="${esc(t.name)}"></iframe>`
+    : `<pre class="tpl-text">${withVars(t.body)}</pre>`}
+        </div>`;
+    }
+    if (t.channel === 'whatsapp') return `<div class="tpl-chat wa"><div class="tpl-bubble">${t.title ? `<b>${withVars(t.title)}</b><br>` : ''}${waFormat(t.body)}</div></div>`;
+    if (t.channel === 'sms') return `<div class="tpl-chat sms"><div class="tpl-bubble">${withVars(t.body)}</div></div>`;
+    if (t.channel === 'push') {
+      return `<div class="tpl-push"><span class="tpl-push-ico">${icon('bell', 14)}</span><div class="min-w-0">
+        <b>${t.title ? withVars(t.title) : esc(t.name)}</b><p>${withVars(t.body)}</p></div></div>`;
+    }
+    return `<pre class="tpl-text">${t.title ? `<b>${withVars(t.title)}</b>\n` : ''}${withVars(t.body)}</pre>`;
+  }
+
+  function tplCard(t, canEdit) {
+    return `
+      <article class="tpl-card" data-tpl="${t.id}">
+        <header class="tpl-head">
+          <div class="min-w-0 flex-1">
+            <h4 class="tpl-name" title="${esc(t.name)}">${esc(t.name)}</h4>
+            ${t.trigger ? `<p class="tpl-trigger">${icon('clock', 12)}<span>${esc(t.trigger)}</span></p>` : ''}
+          </div>
+          <div class="tpl-actions">
+            <button type="button" class="icon-btn" data-tpl-copy="${t.id}" title="Copy the text">${icon('copy', 14)}</button>
+            ${canEdit ? `<button type="button" class="icon-btn" data-tpl-edit="${t.id}" title="Edit">${icon('edit', 14)}</button>
+              <button type="button" class="icon-btn danger" data-tpl-delete="${t.id}" title="Delete">${icon('trash', 14)}</button>` : ''}
+          </div>
+        </header>
+        ${t.provider || t.externalId ? `<div class="tpl-tags">${t.provider ? `<span class="tpl-tag">${esc(t.provider)}</span>` : ''}${t.externalId ? `<span class="tpl-tag mono" title="Provider template id">${esc(t.externalId)}</span>` : ''}</div>` : ''}
+        ${tplPreview(t)}
+        ${t.variables.length ? `<div class="tpl-vars"><span>Variables</span>${t.variables.map((x) => `<span class="tpl-var" title="${esc(x.note || '')}">${esc(x.name)}</span>`).join('')}</div>` : ''}
+        ${t.source ? `<p class="tpl-source" title="Where it comes from">${esc(t.source)}</p>` : ''}
+      </article>`;
+  }
+
+  function renderTemplates() {
+    const v = templatesView;
+    const p = products.find((x) => x.id === v.productId);
+    const counts = tplCounts(v.list);
+    const q = v.search.trim().toLowerCase();
+    const shown = v.list.filter((t) => t.channel === v.tab
+      && (!q || [t.name, t.title, t.body, t.trigger, t.provider, t.externalId].some((x) => (x || '').toLowerCase().includes(q))));
+    $('#tplBody').html(`
+      <div class="jr-head">
+        <button type="button" class="btn-secondary px-2 py-1 text-xs" data-close-templates title="Back to the board">${icon('left', 12)} Board</button>
+        <div class="min-w-0 flex-1">
+          <h3 class="text-lg font-semibold text-slate-900">Templates <span class="font-normal text-slate-400">· ${esc(p ? p.name : '')}</span></h3>
+          <p class="text-xs text-slate-500">The e-mails, WhatsApp, SMS and push messages this app sends, with their variables and when they go out.</p>
+        </div>
+        ${v.canEdit ? `<button type="button" class="btn-primary px-3 py-1.5 text-sm" data-tpl-new>${icon('plus', 14)} New template</button>` : ''}
+      </div>
+      <div class="jr-tabs" role="tablist">
+        ${Object.entries(TPL_TABS).map(([key, [label, ico]]) => `
+          <button type="button" role="tab" aria-selected="${v.tab === key}" class="${v.tab === key ? 'on' : ''}" data-tpl-tab="${key}">
+            ${icon(ico, 13)} ${label}${counts[key] ? ` <b>${counts[key]}</b>` : ''}</button>`).join('')}
+      </div>
+      <div class="jr-tools">
+        <label class="jr-search">${icon('filter', 13)}
+          <input type="search" data-tpl-search value="${esc(v.search)}" placeholder="Search ${TPL_TABS[v.tab][0]} templates: name, text, when it is sent…" aria-label="Search templates">
+        </label>
+        <span class="text-xs text-slate-500">${shown.length} of ${counts[v.tab] || 0}</span>
+      </div>
+      <div class="tpl-grid">
+        ${shown.map((t) => tplCard(t, v.canEdit)).join('') || `<p class="tpl-empty">${q ? 'No template matches the search.' : `No ${TPL_TABS[v.tab][0]} templates yet.`}</p>`}
+      </div>`);
+  }
+
+  // variables as one per line, "name — what it is"
+  const varsText = (list) => (list || []).map((x) => (x.note ? `${x.name} — ${x.note}` : x.name)).join('\n');
+  const varsList = (textIn) => textIn.split('\n').map((l) => l.trim()).filter(Boolean)
+    .map((l) => { const [name, ...note] = l.split(/\s+[—–-]\s+|:\s+/); return { name: name.trim(), note: note.join(' — ').trim() }; });
+  function editTemplate(t = null) {
+    const v = templatesView;
+    const isNew = !t;
+    const channel = t ? t.channel : v.tab;
+    ask({
+      title: isNew ? 'New template' : 'Edit template',
+      confirmText: isNew ? 'Add template' : 'Save',
+      fields: [
+        { name: 'channel', label: 'Channel', value: channel, options: Object.entries(TPL_TABS).map(([k, [label]]) => [k, label]) },
+        { name: 'name', label: 'Name', value: t && t.name, placeholder: 'e.g. login_otp, ipo_allotment', required: true },
+        { name: 'title', label: 'Subject / title', value: t && t.title, placeholder: 'E-mail subject or push title', max: 500 },
+        { name: 'body', label: 'Text', value: t && t.body, placeholder: 'Hi {{name}}, your OTP is {{otp}}.', rows: 8, max: 50000 },
+        { name: 'trigger', label: 'Sent when', value: t && t.trigger, placeholder: 'e.g. After the client asks for an OTP on login', max: 500 },
+        { name: 'provider', label: 'Provider', value: t && t.provider, placeholder: 'e.g. SES, Gupshup, MSG91, FCM', max: 80 },
+        { name: 'externalId', label: 'Provider template id', value: t && t.externalId, placeholder: 'e.g. DLT id', max: 200 },
+        { name: 'variables', label: 'Variables (one per line: name — meaning)', value: varsText(t && t.variables), rows: 3, max: 5000 },
+      ],
+      save: (vals) => {
+        const body = { ...vals, variables: varsList(vals.variables) };
+        const req = isNew ? api('POST', '/api/templates', { ...body, productId: v.productId }, null, QUIET) : api('PATCH', `/api/templates/${t.id}`, body, null, QUIET);
+        return req.done((saved) => { if (templatesView) templatesView.tab = saved.channel; reloadTemplates(); toast(isNew ? 'Template added' : 'Template saved'); });
+      },
+    });
+  }
+  const tplById = (id) => templatesView && templatesView.list.find((t) => t.id === id);
+
+  $doc.on('click', '[data-action="templates"]', () => (templatesView ? closeTemplates() : openTemplates(productId)));
+  $doc.on('click', '[data-close-templates]', closeTemplates);
+  $doc.on('click', '[data-tpl-tab]', function () { templatesView.tab = $(this).data('tpl-tab'); templatesView.search = ''; renderTemplates(); templatesHash(); });
+  $doc.on('input', '[data-tpl-search]', function () {
+    const pos = this.selectionStart;
+    templatesView.search = this.value;
+    renderTemplates();
+    const box = $('[data-tpl-search]')[0];
+    box.focus(); box.setSelectionRange(pos, pos);
+  });
+  $doc.on('click', '[data-tpl-source]', function () {
+    const id = $(this).data('tpl-source');
+    if (templatesView.source.has(id)) templatesView.source.delete(id); else templatesView.source.add(id);
+    renderTemplates();
+  });
+  $doc.on('click', '[data-tpl-copy]', function () {
+    const t = tplById($(this).data('tpl-copy'));
+    if (t) copyText(t.title ? `${t.title}\n\n${t.body}` : t.body, 'Template copied');
+  });
+  $doc.on('click', '[data-tpl-new]', () => editTemplate());
+  $doc.on('click', '[data-tpl-edit]', function () { const t = tplById($(this).data('tpl-edit')); if (t) editTemplate(t); });
+  $doc.on('click', '[data-tpl-delete]', function () {
+    const t = tplById($(this).data('tpl-delete'));
+    if (!t) return;
+    dialog.confirm({ title: 'Delete template?', message: `"${t.name}" will be removed from this app's templates.`, confirmText: 'Delete', danger: true })
+      .then((ok) => ok && api('DELETE', `/api/templates/${t.id}`).done(() => { reloadTemplates(); toast('Template deleted'); }));
+  });
+
   // { productId, list, people, canCreate, teams, doc, search, sort: { col, dir }, picked: Set of row ids (to send on Teams),
   //   filters: { columnId: { values, op, a, b, color } } (kept per sheet in this browser) }
   let sheetsView = null;
@@ -7038,6 +7243,7 @@ $(function () {
       if (sanity) closeSanity();
       if (adminView) closeAdmin();
       if (doneView) closeDone();
+      if (templatesView) closeTemplates();
       const keep = sheetsView && sheetsView.productId === pid ? sheetsView : {};
       sheetsView = {
         productId: pid, list: d.sheets, people: d.people, canCreate: d.canCreate, teams: d.teams, doc: null,

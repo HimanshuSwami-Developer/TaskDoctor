@@ -7,20 +7,32 @@
  * - The app (product) is created when it does not exist yet (needs a Super admin login); modules, flows and
  *   screens are matched by name, so running it again only adds what is missing.
  * - A screen that is already there gets its page, "opens when", kind and wireframe corrected to the map.
+ * - --images <index.json> also uploads screenshots: the index maps "Module › Flow › Screen" to { file } (a JPG / PNG
+ *   next to it, e.g. made by captures/capture-findost.cjs). Screens that already have an image keep it, unless
+ *   --replace-images is given. Needs image storage (Cloudinary) on the FlowTrace server.
+ * - "templates" (optional) adds the app's message templates to its Templates page, matched by channel + name: new ones are
+ *   added, changed ones updated.
  * - --dry-run lists what would be created or corrected and changes nothing.
  *
  * Map file: { "app": "Findost Web", "device": "web", "modules": [ { "name", "flows": [ { "name", "screens": [
- *   { "name", "page", "kind": "screen" | "popup", "action", "wireframe": "form" | "list" | "dashboard" | "detail" } ] } ] } ] }
+ *   { "name", "page", "kind": "screen" | "popup", "action", "wireframe": "form" | "list" | "dashboard" | "detail" } ] } ] } ],
+ *   "templates": [ { "channel": "email" | "whatsapp" | "sms" | "push" | "other", "name", "title", "body", "variables": [ { "name", "note" } ],
+ *   "trigger", "provider", "externalId", "source" } ] }
  */
 const fs = require('fs');
 const path = require('path');
 
 const WIREFRAMES = ['form', 'list', 'dashboard', 'detail'];
+const CHANNELS = ['email', 'whatsapp', 'sms', 'push', 'other'];
+const TEMPLATE_FIELDS = ['title', 'body', 'trigger', 'provider', 'externalId', 'source'];
 const KINDS = ['screen', 'popup'];
 
 const args = process.argv.slice(2);
 const dry = args.includes('--dry-run');
-const file = args.find((a) => !a.startsWith('--'));
+const imagesAt = args.indexOf('--images');
+const imagesFile = imagesAt >= 0 ? args[imagesAt + 1] : '';
+const replaceImages = args.includes('--replace-images');
+const file = args.find((a, i) => !a.startsWith('--') && (imagesAt < 0 || i !== imagesAt + 1));
 const base = (process.env.FLOWTRACE_URL || 'http://localhost:4000').replace(/\/+$/, '');
 const { FLOWTRACE_USER: username, FLOWTRACE_PASSWORD: password } = process.env;
 
@@ -55,6 +67,10 @@ const same = (a, b) => String(a || '').trim().replace(/\s+/g, ' ').toLowerCase()
 function check(map) {
   const problems = [];
   if (!map || !map.app) problems.push('"app" (the app name) is missing');
+  (map.templates || []).forEach((t) => {
+    if (!t.name) problems.push('a template has no name');
+    if (!CHANNELS.includes(t.channel)) problems.push(`${t.name}: channel must be one of ${CHANNELS.join(', ')}`);
+  });
   (map.modules || []).forEach((m) => {
     if (!m.name) problems.push('a module has no name');
     (m.flows || []).forEach((f) => {
@@ -74,7 +90,23 @@ async function main() {
   const problems = check(map);
   if (problems.length) throw new Error(`The map has problems:\n- ${problems.join('\n- ')}`);
   const device = map.device === 'app' ? 'app' : 'web';
-  const count = { modules: 0, flows: 0, screens: 0, popups: 0, corrected: 0 };
+  const count = { modules: 0, flows: 0, screens: 0, popups: 0, corrected: 0, images: 0, templates: 0, templatesUpdated: 0 };
+  const images = imagesFile ? JSON.parse(fs.readFileSync(path.resolve(imagesFile), 'utf8')) : {};
+  const imageDir = imagesFile ? path.dirname(path.resolve(imagesFile)) : '';
+  // a screen's screenshot as a data URL, when the index has one
+  const shotOf = (key) => {
+    const hit = images[key];
+    if (!hit || !hit.file) return null;
+    const type = /\.png$/i.test(hit.file) ? 'png' : 'jpeg';
+    return `data:image/${type};base64,${fs.readFileSync(path.join(imageDir, hit.file)).toString('base64')}`;
+  };
+  async function upload(id, key, hasImage) {
+    if (hasImage && !replaceImages) return;
+    const shot = shotOf(key);
+    if (!shot) return;
+    console.log(`    ▣ image ${key}`); count.images += 1;
+    if (!dry) await api('POST', `/api/screens/${id}/image`, { dataUrl: shot });
+  }
 
   await api('POST', '/api/login', { username, password });
   const board = await api('GET', '/api/board');
@@ -84,7 +116,7 @@ async function main() {
     product = dry ? { id: null, modules: [] } : { ...(await api('POST', '/api/products', { name: map.app })), modules: [] };
   }
 
-  for (const m of map.modules) {
+  for (const m of map.modules || []) {
     let mod = product.modules.find((x) => same(x.name, m.name));
     if (!mod) {
       console.log(`+ module ${m.name}`); count.modules += 1;
@@ -102,11 +134,13 @@ async function main() {
         const had = flow.screens.find((x) => x.type !== 'condition' && same(x.name, s.name));
         if (!had) {
           console.log(`    + ${want.kind} ${s.name} [${want.wireframe}]`); count[want.kind === 'popup' ? 'popups' : 'screens'] += 1;
-          if (dry) continue;
+          if (dry) { await upload(null, `${m.name} › ${f.name} › ${s.name}`, false); continue; }
           const made = await api('POST', `/api/flows/${flow.id}/screens`, { name: s.name, page: want.page, kind: want.kind, action: want.action, device });
           await api('PATCH', `/api/screens/${made.id}`, { wireframe: want.wireframe });
+          await upload(made.id, `${m.name} › ${f.name} › ${s.name}`, false);
           continue;
         }
+        await upload(had.id, `${m.name} › ${f.name} › ${s.name}`, Boolean(had.image));
         // already there: correct what differs from the map
         const fix = {};
         if (s.page !== undefined && had.page !== want.page) fix.page = want.page;
@@ -119,8 +153,29 @@ async function main() {
       }
     }
   }
+  if (map.templates && map.templates.length) {
+    const had = product.id ? (await api('GET', `/api/templates?product=${product.id}`)).templates : [];
+    const vars = (list) => JSON.stringify((list || []).map((v) => ({ name: v.name || '', note: v.note || '' })));
+    for (const t of map.templates) {
+      // a variable is { name, note } or "name: what it is"
+      const asVar = (v) => { if (typeof v !== 'string') return v; const at = v.indexOf(': '); return at > 0 ? { name: v.slice(0, at), note: v.slice(at + 2) } : { name: v, note: '' }; };
+      const body = { channel: t.channel, name: t.name, variables: (t.variables || []).map(asVar) };
+      TEMPLATE_FIELDS.forEach((k) => { body[k] = t[k] == null ? '' : String(t[k]); });
+      const old = had.find((x) => x.channel === t.channel && same(x.name, t.name));
+      if (!old) {
+        console.log(`+ template ${t.channel} › ${t.name}`); count.templates += 1;
+        if (!dry) await api('POST', '/api/templates', { ...body, productId: product.id });
+        continue;
+      }
+      const changed = TEMPLATE_FIELDS.filter((k) => (old[k] || '') !== body[k]).concat(vars(old.variables) !== vars(body.variables) ? ['variables'] : []);
+      if (!changed.length) continue;
+      console.log(`~ template ${t.channel} › ${t.name}: ${changed.join(', ')}`); count.templatesUpdated += 1;
+      if (!dry) await api('PATCH', `/api/templates/${old.id}`, body);
+    }
+  }
   console.log(`${dry ? 'Would add' : 'Added'} ${count.modules} modules, ${count.flows} flows, ${count.screens} screens, ${count.popups} popups; `
-    + `${dry ? 'would correct' : 'corrected'} ${count.corrected} screens.`);
+    + `${dry ? 'would correct' : 'corrected'} ${count.corrected} screens${imagesFile ? `; ${dry ? 'would upload' : 'uploaded'} ${count.images} images` : ''}`
+    + `${map.templates ? `; ${dry ? 'would add' : 'added'} ${count.templates} templates, ${dry ? 'would update' : 'updated'} ${count.templatesUpdated}` : ''}.`);
 }
 
 main().catch((err) => { console.error(err.message); process.exit(1); });

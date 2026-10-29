@@ -1,0 +1,449 @@
+{
+  "app": "Findost Web",
+  "templates": [
+    {
+      "channel": "email",
+      "name": "otpTemplate",
+      "title": "Your FinDost OTP Code",
+      "body": "<div style=\"font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e0e0e0;border-radius:8px;overflow:hidden;\"><div style=\"background:#1a237e;padding:24px;text-align:center;\"><h2 style=\"color:#fff;margin:0;font-size:22px;\">FinDost</h2></div><div style=\"padding:32px;\"><p style=\"font-size:16px;color:#333;margin-bottom:8px;\">Your one-time password (OTP) is:</p><div style=\"background:#f5f5f5;border-radius:8px;padding:24px;text-align:center;margin:20px 0;\"><span style=\"font-size:42px;font-weight:bold;letter-spacing:10px;color:#1a237e;\">${otp}</span></div><p style=\"color:#555;font-size:14px;\">This OTP is valid for <strong>${ttlMin} minutes</strong>. Do not share it with anyone.</p><p style=\"color:#999;font-size:12px;margin-top:24px;\">If you did not request this OTP, please ignore this email.</p></div></div>",
+      "variables": ["otp: generated OTP", "ttlMin: OTP validity in minutes (OTP_TTL_MIN, default 2)"],
+      "trigger": "Login OTP request (POST /auth/send-otp); sent together with the SMS OTP. Plain-text part: \"Your FinDost OTP is: ${otp} Valid for ${ttlMin} minutes. Do not share with anyone.\"",
+      "provider": "SMTP (nodemailer)",
+      "source": "findost_be/src/utilities/email/templates/otp.template.js:1"
+    },
+    {
+      "channel": "email",
+      "name": "resetPasswordTemplate",
+      "title": "FinDost — Reset Your Password",
+      "body": "<div style=\"font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e0e0e0;border-radius:8px;overflow:hidden;\"><div style=\"background:#1a237e;padding:24px;text-align:center;\"><h2 style=\"color:#fff;margin:0;font-size:22px;\">FinDost</h2></div><div style=\"padding:32px;\"><h3 style=\"color:#333;margin-bottom:8px;\">Password Reset Request</h3><p style=\"font-size:15px;color:#555;\">Use the OTP below to reset your password:</p><div style=\"background:#fff3e0;border-radius:8px;padding:24px;text-align:center;margin:20px 0;border:2px dashed #ff6f00;\"><span style=\"font-size:42px;font-weight:bold;letter-spacing:10px;color:#ff6f00;\">${otp}</span></div><p style=\"color:#555;font-size:14px;\">This OTP is valid for <strong>${ttlMin} minutes</strong>. Do not share it with anyone.</p><p style=\"color:#999;font-size:12px;margin-top:24px;\">If you did not request a password reset, please contact support immediately.</p></div></div>",
+      "variables": ["otp: generated OTP", "ttlMin: OTP validity in minutes"],
+      "trigger": "Forgot password (purpose 'reset'); sent together with the SMS OTP. Plain-text part: \"FinDost Password Reset OTP: ${otp} Valid for ${ttlMin} minutes. Do not share with anyone.\"",
+      "provider": "SMTP (nodemailer)",
+      "source": "findost_be/src/utilities/email/templates/resetPassword.template.js:1"
+    },
+    {
+      "channel": "email",
+      "name": "partnerApprovedTemplate",
+      "title": "Welcome to Findoc – Your ${roleLabel} Account is Approved",
+      "body": "[Text content only; the full HTML (~150 lines) is the Findoc branded layout with the FINDOST header and legal footer]\n\nWelcome to the Findoc ${roleLabel} Network\n\nDear ${name},\nCongratulations! Welcome to the Findoc ${roleLabel} Network.\n${applicationLabel} has been successfully verified and approved. You are now officially a Findoc ${roleLabel}.\n\nYour Partner Details\n${codeLabel}: ${code}\nRegistered Mobile: ${mobileNumber}\nRelationship Manager: ${rmName}\nRM Contact: ${rmContact}\n\nNext Steps\nYou will shortly receive a separate email with your Partner Console login credentials, referral link setup instructions, and partner resources.\nFor onboarding, payout and business support, please connect with your RM, ${rmName}.\nFor dashboard, product training and growth-related queries, you can contact the Training & Development Manager.\n\nWe are excited to have you on board and look forward to a successful long-term partnership.\n\nWarm regards,\nTeam Findoc",
+      "variables": ["roleLabel: 'DRA Partner' if accountType is DRA, else 'Partner'", "name: partner name", "applicationLabel: 'Your DRA (Digital Referral Associate) application' / 'Your Partner application'", "codeLabel: 'DRA Code' / 'Partner Code'", "code: partner UCC", "mobileNumber: registered mobile", "rmName: relationship manager", "rmContact: RM contact"],
+      "trigger": "Backoffice approves an AP/DRA account: welcomeMail cron (every 10 min) or admin POST welcome-mail; first of two mails",
+      "provider": "SMTP (nodemailer)",
+      "source": "findost_be/src/utilities/email/templates/partnerApproved.template.js:1"
+    },
+    {
+      "channel": "email",
+      "name": "partnerCredentialsTemplate",
+      "title": "Your Findoc Partner Console Access + Key Resources",
+      "body": "[Text content only; full HTML ~210 lines]\n\nYour Partner Console Access + Key Resources\n\nDear ${name},\nHere are your login credentials and the essential links to get started as a Findoc Partner.\n\n🔐 Login Credentials\nPartner Console: findost.findoc.com/auth/login\n${codeLabel}: ${code}\nLogin Method: Password - ${password} / OTP sent to ${mobileNumber}\n\n🔗 Generate Your Client Referral Link\nLog in to the Partner Console\nGo to Dashboard > Copy your invite link\nAlternate method: Log in to the Partner Console\nMy Clients > Add Clients > Copy Link / Generate QR / Add Parameters > Click Generate & Share Link\n\n📚 Stay Connected\nFindost Partner Community (WhatsApp) - Join\nFindost Instagram - Follow\nDaily/Weekly Market Reports (WhatsApp) - Join\nFindost Youtube - Subscribe\nPartner Handbook / FAQs - View\n\nNeed Help?\nYour RM, ${rmName}, is available at ${rmContact} for any onboarding-related matters.\n\nWelcome aboard — here's to building great things together.\n\nBest regards,\nTeam Findoc",
+      "variables": ["name: partner name", "codeLabel: 'DRA Code / User ID' or 'Partner Code / User ID'", "code: partner UCC", "password: initial password", "mobileNumber: registered mobile", "rmName: relationship manager", "rmContact: RM contact (any e-mail part removed)"],
+      "trigger": "Second mail right after partnerApproved on AP/DRA approval (sent without CC, BCC kept)",
+      "provider": "SMTP (nodemailer)",
+      "source": "findost_be/src/utilities/email/templates/partnerCredentials.template.js:1"
+    },
+    {
+      "channel": "email",
+      "name": "welcomeApTemplate",
+      "title": "Welcome to FinDost — Your Login Credentials",
+      "body": "[Text content only; full HTML ~100 lines]\n\nWelcome to FinDost\n\nHi ${name},\nHere are your login credentials to access the portal.\n\nLogin Credentials\nPartner Code: ${username}\nPassword: ${password}\nPortal: <a href=\"${portalUrl}\">Login Here</a>\n\nWarm regards,\nFindoc Team",
+      "variables": ["name: partner name", "username: partner code", "password: initial password", "portalUrl: PORTAL_URL (default https://findost.findoc.com/)"],
+      "trigger": "Legacy single welcome mail (emailService.sendWelcomeMail); no caller found, replaced by partnerApproved + partnerCredentials",
+      "provider": "SMTP (nodemailer)",
+      "source": "findost_be/src/utilities/email/templates/welcomeAp.template.js:1"
+    },
+    {
+      "channel": "email",
+      "name": "draReportTemplate",
+      "title": "DRA Daily Report — ${dateStr} [${envLabel}]",
+      "body": "[Text content only]\n\nFinDost — DRA Daily Report\n${dateStr}\n\nToday's Activity\nNew Init registrations today: ${todayInit}\nNew Inprocess registrations today: ${todayInProgress}\n\nOverall DRA Totals\nTotal Init DRAs: ${totalInit}\nTotal Inprocess DRAs: ${totalInProgress}\nTotal DRAs (all statuses): ${totalDra}\n\nDRA Prospects (eKYC — dra_prospect=yes)\nTotal DRA prospect leads: ${totalProspects}\nAlready registered as DRA: ${prospectsRegistered}\nNot yet registered: ${prospectsNotRegistered}\n\nTwo CSV files are attached:\n1. dra_report_*.csv — All DRA users with their latest eKYC stage\n2. dra_prospects_*.csv — All leads with dra_prospect=yes and their registration status\n\nEnvironment: ${envLabel}",
+      "variables": ["dateStr: report date", "envLabel: 'Live' or 'Development'", "todayInit", "todayInProgress", "totalInit", "totalInProgress", "totalDra", "totalProspects", "prospectsRegistered", "prospectsNotRegistered: computed"],
+      "trigger": "Daily cron at 18:00 (draReport.job) to the DRA report recipients, with 2 CSV attachments",
+      "provider": "SMTP (nodemailer)",
+      "source": "findost_be/src/utilities/email/templates/draReport.template.js:1"
+    },
+    {
+      "channel": "email",
+      "name": "draProspectNotifyTemplate",
+      "title": "DRA Onboarding Alert — ${onboarded.length} New DRA(s) Onboarded — ${dateStr}",
+      "body": "<div style=\"font-family:Arial,sans-serif;max-width:860px;margin:0 auto;\"><div style=\"background:#1a237e;padding:20px 32px;color:#fff;\"><h2 style=\"margin:0;\">FinDost — DRA Onboarding Alert</h2><p style=\"margin:4px 0 0;\">${dateStr} at ${timeStr}</p></div><div style=\"padding:28px 32px;\"><p><strong>${onboarded.length}</strong> DRA prospect(s) reached <code>DRACOMPLETED</code> in the last <strong>${sinceMinutes} minutes</strong>.</p><table style=\"border-collapse:collapse;width:100%;font-size:13px;\"><thead><tr><th>Mobile</th><th>Name</th><th>Email</th><th>UTM Source</th><th>UTM Medium</th><th>Onboarded At</th></tr></thead><tbody>${rows}</tbody></table><p style=\"color:#999;font-size:12px;\">This is an automated notification sent by FinDost every hour. Do not reply to this email.</p></div></div>",
+      "variables": ["onboarded.length: number of new DRAs", "dateStr", "timeStr", "sinceMinutes: 65, or 'all' when forced", "rows: one row per DRA (mobile, name, email, utm_source, utm_medium, stage_at)"],
+      "trigger": "Hourly cron (draProspectNotify.job) when new DRACOMPLETED prospects exist",
+      "provider": "SMTP (nodemailer)",
+      "source": "findost_be/src/utilities/email/templates/draProspectNotify.template.js:1"
+    },
+    {
+      "channel": "email",
+      "name": "birthdayToClient",
+      "title": "🎂 Happy Birthday from FinDost, ${firstName}!",
+      "body": "<div style=\"font-family:Arial,sans-serif;max-width:600px;margin:0 auto;\"><div style=\"background:#1a237e;padding:24px;text-align:center;font-size:40px;\">🎂</div><div style=\"padding:28px;\"><h2>Happy Birthday, ${firstName}! 🎉</h2><p>On behalf of the entire FinDost team, we wish you a wonderful birthday filled with joy, health, and prosperity.</p><div style=\"background:#f5f5f5;border-radius:8px;padding:16px;\"><p>Thank you for trusting FinDost on your financial journey. We are committed to helping you grow and achieve your investment goals — today and every day.</p></div><p>Here's to a year ahead full of great investments and even greater returns! 🥂</p><p>Warm regards,<br /><strong>The FinDost Team</strong></p><p style=\"color:#999;font-size:12px;\">This is an automated message from FinDost.<br/>Please do not reply to this email.</p></div></div>",
+      "variables": ["firstName: first word of the client's name, default 'Valued Client'"],
+      "trigger": "AP/DRA 'Send Wishes' > Birthday tab > Send (POST /clients/birthdays/send-email). The custom message typed in the popup is ignored by this e-mail",
+      "provider": "SMTP (nodemailer)",
+      "source": "findost_be/src/utilities/email/templates/client.templates.js:88"
+    },
+    {
+      "channel": "email",
+      "name": "anniversaryToClient",
+      "title": "🏅 Happy Account Anniversary from FinDost, ${firstName}!",
+      "body": "<div style=\"font-family:Arial,sans-serif;max-width:600px;margin:0 auto;\"><div style=\"background:#1b5e20;padding:24px;text-align:center;font-size:40px;\">🏅</div><div style=\"padding:28px;\"><h2>Happy Demat Account Anniversary, ${firstName}! 🎊</h2><p>Today marks another year of your investment journey with FinDost. We are truly grateful to have you as part of our community.</p><div style=\"background:#f5f5f5;border-radius:8px;padding:16px;\"><p>You have been part of the FinDost family for <strong>${yearsAgo} year(s)</strong> — thank you for your continued trust!</p><p>Your trust fuels our commitment to deliver the best trading experience. Here's to many more years of growth together! 📈</p></div><p>With gratitude,<br /><strong>The FinDost Team</strong></p></div></div>",
+      "variables": ["firstName: first word of the client's name", "yearsAgo: years since the account open date"],
+      "trigger": "AP/DRA 'Send Wishes' > Anniversary tab > Send (POST /clients/anniversaries/send-email)",
+      "provider": "SMTP (nodemailer)",
+      "source": "findost_be/src/utilities/email/templates/client.templates.js:121"
+    },
+    {
+      "channel": "email",
+      "name": "shortfallNotification",
+      "title": "⚠️ Margin Shortfall Alert — Action Required",
+      "body": "<div style=\"font-family:Arial,sans-serif;max-width:600px;margin:0 auto;\"><div style=\"background:#b71c1c;padding:24px;text-align:center;font-size:40px;\">⚠️</div><div style=\"padding:28px;\"><h2>Margin Shortfall Notice</h2><p>Dear <strong>${firstName}</strong>,<br /><br />We have detected a margin shortfall in your trading account. Please review the details below and take immediate action to avoid any disruption to your positions.</p><div style=\"background:#f5f5f5;border-radius:8px;padding:16px;\">Shortfall Date: ${dateStr}<br/>Shortfall Amount: ${amount}</div><p><strong>Action required:</strong> Please deposit the required funds or reduce your open positions at the earliest to avoid margin call or forced square-off.</p><p>If you have already taken action, please disregard this notice.</p><p>Regards,<br /><strong>FinDost Risk Management Team</strong></p></div></div>",
+      "variables": ["firstName: client's first name", "dateStr: shortfall date (dd Mon yyyy)", "amount: ₹ formatted shortfall amount"],
+      "trigger": "AP/DRA notifies margin-shortfall clients with channel 'email' (Dashboard > Margin Shortfall)",
+      "provider": "SMTP (nodemailer)",
+      "source": "findost_be/src/utilities/email/templates/client.templates.js:158"
+    },
+    {
+      "channel": "email",
+      "name": "notificationToClient",
+      "title": "${title}",
+      "body": "<h1 style=\"margin:0 0 20px 0;font-size:22px;font-weight:bold;color:#000000;\">${title}</h1><p>Dear <strong>${firstName}</strong>,</p><table width=\"100%\"><tr><td style=\"font-size:15px;line-height:1.6;white-space:pre-line;\">${description}</td></tr></table><p>Regards,</p><p>${senderName}</p>",
+      "variables": ["title: entered by the AP/DRA", "firstName: client's first name", "description: entered by the AP/DRA", "senderName: AP/DRA name, else 'Your FinDost Partner'"],
+      "trigger": "AP/DRA 'Send Notification' to clients with channel e-mail (clientNotification cron sends pending / scheduled ones). Inside the Findoc branded layout",
+      "provider": "SMTP (nodemailer)",
+      "source": "findost_be/src/utilities/email/templates/client.templates.js:223"
+    },
+    {
+      "channel": "email",
+      "name": "ipo (notification_templates)",
+      "title": "New IPO Opportunity: ${IPO_name}",
+      "body": "Dear <ClientName>\n\nYou can use below link to apply for <IPO_name> IPO:\n\n<link_hyperlink>\n\nRegards\n<Partner Name>",
+      "variables": ["ClientName: client's first name", "IPO_name: IPO name", "link_hyperlink: https://ipo.findoc.com/ipo/<slug>-ipo (a link in the e-mail)", "Partner Name: AP name, else 'Your FinDost Partner'"],
+      "trigger": "Client notification with template type 'ipo': the AP attaches exactly one IPO and keeps the pre-filled text. Also pre-fills the Send Notification preview",
+      "provider": "SMTP (nodemailer)",
+      "externalId": "notification_templates.type = 'ipo'",
+      "source": "findost_be/migrations/notification_templates.sql:16; findost_be/src/utilities/email/templates/ipoNotification.template.js:17"
+    },
+    {
+      "channel": "email",
+      "name": "adminNotificationToPartner",
+      "title": "${title}",
+      "body": "<h1>${title}</h1><p>${subtitle}</p><p>Dear <strong>${firstName}</strong>,</p><img src=\"${imageUrl}\" alt=\"\" style=\"max-width:100%;\"><table width=\"100%\"><tr><td style=\"white-space:pre-line;\">${description}</td></tr></table><p>Regards,</p><p>${senderName}</p>",
+      "variables": ["title", "subtitle: optional", "firstName: partner's first name, default 'Partner'", "imageUrl: optional", "description", "senderName: admin name, else 'Team FinDost'"],
+      "trigger": "Admin sends a partner notification to AP/DRA with mode 'email' (partnerNotification cron). Inside the Findoc branded layout",
+      "provider": "SMTP (nodemailer)",
+      "source": "findost_be/src/utilities/email/templates/partnerNotification.template.js:6"
+    },
+    {
+      "channel": "email",
+      "name": "newsAlertToClient",
+      "title": "${companyName}: ${heading}",
+      "body": "<p style=\"font-size:12px;color:#8c83f6;text-transform:uppercase;\">${companyName}</p><h1>${heading}</h1><p>Dear <strong>${firstName}</strong>,</p><p>You're receiving this because you currently hold <strong>${companyName}</strong> in your portfolio.</p><p style=\"font-style:italic;\">${caption}</p><table width=\"100%\"><tr><td>${detailsHtml}</td></tr></table><p style=\"color:#999;font-size:12px;\">This is a market news update, not investment advice. Please consult your advisor before acting on it.</p>",
+      "variables": ["companyName", "heading", "firstName", "caption", "detailsHtml: news details (Accord Fintech)"],
+      "trigger": "Defined for news alerts to holders, but no caller found (news is forwarded by push only)",
+      "provider": "SMTP (nodemailer)",
+      "source": "findost_be/src/utilities/email/templates/newsAlert.template.js:7"
+    },
+    {
+      "channel": "email",
+      "name": "requestRaisedForAdmin",
+      "title": "[Action Required] New ${typeLabel} Request from ${raisedByName} — FinDost",
+      "body": "[Text content; card layout with logo and footer]\n\nNew Request — Action Required\n${createdAt}\n\nHi ${adminName},\nA new ${typeLabel} request has been raised by ${raisedByName} (${raisedByRole}: ${raisedByUcc}) and is pending your review.\n\nRequest Details\nRequest ID: #${id}\nType: ${typeLabel}\nRaised By: ${raisedByName} (${raisedByUcc})\nRole: ${raisedByRole}\n[Product | Segment, Effective From, Effective To, Value ₹, Jobbing/Fut Share %, Delv/Opt Share %, Scope]\nRaised On: ${createdAt}\n\nPlease log in to the FinDost portal to review and take action on this request.\n\nWarm regards,\nFindoc Team",
+      "variables": ["typeLabel: 'Product Activation' or 'Payout Change'", "raisedByName", "raisedByRole", "raisedByUcc", "adminName", "id: request id", "createdAt", "details / productName"],
+      "trigger": "AP/DRA raises a Product Activation or Payout Change request and has an assigned admin",
+      "provider": "SMTP (nodemailer)",
+      "source": "findost_be/src/utilities/email/templates/requestNotification.template.js:120"
+    },
+    {
+      "channel": "email",
+      "name": "requestRaisedForSuperadmin",
+      "title": "[Direct Review] New ${typeLabel} Request from ${raisedByName} — FinDost",
+      "body": "[Text content; card layout]\n\nNew Request — Direct Review Required\n${createdAt}\n\nHi Team,\nA new ${typeLabel} request has been raised by ${raisedByName} (${raisedByRole}: ${raisedByUcc}).\n⚠ This partner has no admin assigned — the request requires your direct review.\n\nRequest Details\n(same rows as requestRaisedForAdmin)\n\nPlease log in to the FinDost portal to review and take action on this request.",
+      "variables": ["typeLabel", "raisedByName", "raisedByRole", "raisedByUcc", "id", "createdAt", "details / productName"],
+      "trigger": "AP/DRA raises a request and has no admin assigned; sent to all super admins",
+      "provider": "SMTP (nodemailer)",
+      "source": "findost_be/src/utilities/email/templates/requestNotification.template.js:150"
+    },
+    {
+      "channel": "email",
+      "name": "adminApprovedForSuperadmin",
+      "title": "[Final Approval Needed] ${typeLabel} Request #${id} Approved by Admin — FinDost",
+      "body": "[Text content; card layout]\n\nAdmin Approval — Final Action Required\n${actionedAt}\n\nHi Team,\nAdmin ${adminName} (${adminUcc}) has approved a ${typeLabel} request from ${raisedByName} (${raisedByUcc}). This request now requires your final review and approval.\n\nRequest Details\nRequest ID, Type, Raised By, [detail rows], Admin, Admin Action: APPROVED on ${actionedAt}, Admin Remarks: ${remarks}\n\nPlease log in to the FinDost portal to take final action on this request.",
+      "variables": ["id", "typeLabel", "adminName", "adminUcc", "raisedByName", "raisedByUcc", "remarks: '—' when empty", "actionedAt"],
+      "trigger": "Admin approves an AP/DRA request; super admins are told",
+      "provider": "SMTP (nodemailer)",
+      "source": "findost_be/src/utilities/email/templates/requestNotification.template.js:183"
+    },
+    {
+      "channel": "email",
+      "name": "adminRejectedForApDra",
+      "title": "Your ${typeLabel} Request #${id} has been Rejected — FinDost",
+      "body": "[Text content; card layout]\n\nYour Request has been Rejected\n${actionedAt}\n\nHi ${raisedByName},\nYour ${typeLabel} request (Request #${id}) has been reviewed and REJECTED by your admin.\n\nRequest Details\nRequest ID, Type, Rejected By: ${adminName} (${adminUcc}), Rejected On, Remarks: ${remarks}\n\nIf you have any questions about this decision, please contact your admin.",
+      "variables": ["id", "typeLabel", "raisedByName", "adminName", "adminUcc", "remarks: 'No remarks provided' when empty", "actionedAt"],
+      "trigger": "Admin rejects an AP/DRA request",
+      "provider": "SMTP (nodemailer)",
+      "source": "findost_be/src/utilities/email/templates/requestNotification.template.js:215"
+    },
+    {
+      "channel": "email",
+      "name": "superadminApprovedForApDra",
+      "title": "Your ${typeLabel} Request #${id} has been Approved — FinDost",
+      "body": "[Text content; card layout]\n\nYour Request has been Approved\n${actionedAt}\n\nHi ${raisedByName},\nGreat news! Your ${typeLabel} request (Request #${id}) has been APPROVED by the compliance team. The payout structure has been updated accordingly. / Your product has been activated successfully.\n\nApproval Details\nRequest ID, Type, [detail rows], Approved By: ${saName}, Approved On, Remarks\n\nYou can log in to the FinDost portal to view the updated details.",
+      "variables": ["id", "typeLabel", "raisedByName", "saName: super admin name", "remarks", "details / productName", "actionedAt"],
+      "trigger": "Super admin gives final approval (sent with CC)",
+      "provider": "SMTP (nodemailer)",
+      "source": "findost_be/src/utilities/email/templates/requestNotification.template.js:244"
+    },
+    {
+      "channel": "email",
+      "name": "superadminRejectedForApDra",
+      "title": "Your ${typeLabel} Request #${id} has been Rejected — FinDost",
+      "body": "[Text content; card layout]\n\nYour Request has been Rejected\n${actionedAt}\n\nHi ${raisedByName},\nWe regret to inform you that your ${typeLabel} request (Request #${id}) has been REJECTED by the compliance team.\n\nRequest Details\nRequest ID, Type, Rejected By: ${saName}, Rejected On, Remarks: ${remarks}\n\nIf you have any questions about this decision, please contact your admin or the FinDost support team.",
+      "variables": ["id", "typeLabel", "raisedByName", "saName: super admin name", "remarks: 'No remarks provided' when empty", "actionedAt"],
+      "trigger": "Super admin rejects a request (sent with CC)",
+      "provider": "SMTP (nodemailer)",
+      "source": "findost_be/src/utilities/email/templates/requestNotification.template.js:275"
+    },
+    {
+      "channel": "email",
+      "name": "payoutDirectChangeForApDra",
+      "title": "Payout Breakdown ${actionLabel} for ${segment} — FinDost",
+      "body": "[Text content; card layout]\n\nPayout Breakdown ${actionLabel}\n${actionedAt}\n\nHi ${apName},\nYour payout breakdown for ${segment} has been ${action} by the superadmin. Please review the details below.\n\nBreakdown Details\nSegment, Action (${actionLabel}), Effective From, [Effective To, Value ₹, Jobbing/Fut Share %, Delv/Opt Share %, Remark], Actioned By: ${saName}, Actioned On\n\nIf you have any questions, please contact the FinDost support team.",
+      "variables": ["actionLabel: Set, Updated or Removed", "action: created, updated or deleted", "segment", "apName", "changes: effective dates, value, shares, remark", "saName: super admin name", "actionedAt"],
+      "trigger": "Super admin directly creates, updates or deletes an AP/DRA payout breakdown",
+      "provider": "SMTP (nodemailer)",
+      "source": "findost_be/src/utilities/email/templates/requestNotification.template.js:304"
+    },
+    {
+      "channel": "email",
+      "name": "payoutStructureUpdateForApDra",
+      "title": "Update on Payout Structure",
+      "body": "<h1>Update on Payout Structure</h1><p>Hi Partner,</p><p>Please note that your payout structure has been revised and will be effective from <strong>${effectiveFrom}</strong>.</p><p>From this date onwards, the flat payout will be applicable only on active accounts. We request you to plan and optimize your campaigns accordingly to maximize eligible conversions.</p><p>Should you have any questions or require further clarification, please feel free to reach out.</p><p>Thanks &amp; Regards,</p><p>Team FinDost</p>",
+      "variables": ["effectiveFrom: date the new structure starts ('the specified date' when not set)"],
+      "trigger": "Bulk payout structure (flat payout) revision by the super admin; sent to each affected AP/DRA",
+      "provider": "SMTP (nodemailer)",
+      "source": "findost_be/src/utilities/email/templates/requestNotification.template.js:342"
+    },
+    {
+      "channel": "email",
+      "name": "seatReservationConfirmation",
+      "title": "Seat Reserved – Findoc Stock Market Class",
+      "body": "[Text content; Findoc branded layout]\n\nYour Seat is Reserved\n\nDear ${fullName},\nThank you for registering for the Findoc stock market class. We have received your seat reservation, and our campus team will reach out to you shortly with the session details.\n\nYour Registration Details\nName: ${fullName}\nMobile: ${phone}\nEmail: ${email}\nCollege / Company: ${collegeOrCompany}\n\nJoining Link\nUse the link below to join the session on Microsoft Teams at the scheduled time.\n[Join the Session] Or open this link in your browser: ${SESSION_JOIN_LINK}\n\nThis is an educational session only — no tips, calls or advisory services are provided.\n\nWarm regards,\nTeam Findoc",
+      "variables": ["fullName", "phone", "email", "collegeOrCompany", "SESSION_JOIN_LINK: fixed Microsoft Teams event link"],
+      "trigger": "Public student campaign page (Stock Market Classes): seat reservation form submitted",
+      "provider": "SMTP (nodemailer)",
+      "source": "findost_be/src/utilities/email/templates/campaign.template.js:75"
+    },
+    {
+      "channel": "email",
+      "name": "sessionRequestConfirmation",
+      "title": "Session Request Received – ${institutionName}",
+      "body": "[Text content; Findoc branded layout]\n\nWe've Received Your Session Request\n\nDear ${contactName},\nThank you for your interest in hosting a Findoc stock market session at ${institutionName}. Our team will get in touch with you shortly to plan the session.\n\nYour Request Details\nInstitution, Institution Type, Contact Person, Mobile, Email, City, Expected Attendees, Preferred Month\n\nThis is an educational session only — no tips, calls or advisory services are provided.\n\nWarm regards,\nTeam Findoc",
+      "variables": ["contactName", "institutionName", "institutionType", "phone", "email", "city", "expectedAttendees", "preferredMonth"],
+      "trigger": "Public campaign page: 'Session for your institution' request form submitted",
+      "provider": "SMTP (nodemailer)",
+      "source": "findost_be/src/utilities/email/templates/campaign.template.js:109"
+    },
+    {
+      "channel": "email",
+      "name": "webinarSeatReserved",
+      "title": "Your Seat Is Reserved – Findoc Webinar, ${WEBINAR.day} ${WEBINAR.date}, ${WEBINAR.time}",
+      "body": "Your Seat Is Reserved!\n\nHi ${name}!\n\nThank you for registering for Findoc's free webinar:\nDecoding the Stock Market – Start Small. Learn Smart. Use AI.\n\nDate: 25-10-2026\nDay: Sunday\nTime: 11 AM\n\nWhat will you learn?\n- 4 ways to enter the stock market\n- What 10 years of mutual fund data reveals\n- How IPOs work and common investing traps to avoid\n- 5 AI prompts to understand industries, IPOs, and company results\n- Career opportunities in financial markets with Findoc\n\nBONUS: Stay until the end to receive your free AI Prompt Cheat Sheet!\n\nJoin the webinar on Microsoft Teams: ${teamsLink}\nSave this link and join a few minutes before the session starts.\n\nSee you there!\nTeam Findoc\n\nDisclaimer: This session is for educational purposes only and does not constitute investment advice. Investments in securities markets are subject to market risks.",
+      "variables": ["name: registrant's full name (Title Case, default 'there')", "WEBINAR: title, date, day and time are fixed in code", "teamsLink: fixed Microsoft Teams event link"],
+      "trigger": "Manual bulk script (scripts/sendCampaignWebinarMail.js) to everyone who reserved a seat; has a test-send mode. Date and link are hard-coded",
+      "provider": "SMTP (nodemailer)",
+      "source": "findost_be/src/utilities/email/templates/campaign.template.js:163"
+    },
+    {
+      "channel": "email",
+      "name": "layout_findocBranded",
+      "title": "(shared header and footer)",
+      "body": "[Shared wrapper for notificationToClient, ipo, adminNotificationToPartner, newsAlert and the campaign e-mails]\n\nHeader: Findost logo + 'FINDOST'\nBody: ${bodyHtml}\nFooter: Findoc Investmart Private Limited / Registered Office: 1210/1211/1212/1213,1213A, Exchange Plaza, Near Mercury Hotel, Opp. WTC Tower, Gift City, Gandhi Nagar - 382355, Gujarat, India / CIN: U74992GJ2010PTC146228 / SEBI Registration: INZ000164436 / NSDL: IN-DP-469-2020 | MF ARN: 76027 / Member IDs: NSE - 14697 | BSE - 6529 | MCX - 55205 | NCDEX - 01152 | MSEI - 16870 / Powered by FINDOC",
+      "variables": ["bodyHtml: the e-mail inside the layout"],
+      "trigger": "Wraps other e-mails",
+      "provider": "SMTP (nodemailer)",
+      "source": "findost_be/src/utilities/email/templates/findocLayout.js:7"
+    },
+    {
+      "channel": "sms",
+      "name": "login",
+      "title": "Login OTP SMS",
+      "body": "Dear Client ${name}, your OTP for login is ${otp} and is valid for ${ttl} min. Do not share this OTP with anyone for security reasons. - FINDOC",
+      "variables": ["name: user's name ('' for DRA registration)", "otp: generated OTP", "ttl: OTP validity in minutes (default 2)"],
+      "trigger": "Login OTP request; also used for DRA registration (purpose 'register' has no text of its own)",
+      "provider": "SMS gateway (HTTP, Transactional route)",
+      "externalId": "DLT template id from SMS_TEMPLATE_ID; sender id from SMS_ID",
+      "source": "findost_be/src/services/sms.service.js:23"
+    },
+    {
+      "channel": "sms",
+      "name": "reset",
+      "title": "Reset password OTP SMS",
+      "body": "Dear Client ${name}, your OTP for login is ${otp} and is valid for ${ttl} min. Do not share this OTP with anyone for security reasons. - FINDOC",
+      "variables": ["name: user's name", "otp: generated OTP", "ttl: OTP validity in minutes"],
+      "trigger": "Forgot / reset password OTP. Same text as login (it still says 'OTP for login'), likely to match the one DLT template",
+      "provider": "SMS gateway (HTTP)",
+      "externalId": "SMS_TEMPLATE_ID (same as login)",
+      "source": "findost_be/src/services/sms.service.js:25"
+    },
+    {
+      "channel": "whatsapp",
+      "name": "FinDost Notification (margin shortfall)",
+      "title": "FinDost Notification",
+      "body": "Dear {{1}} {{2}} Thank you for choosing FinDost.",
+      "variables": ["{{1}}: client name followed by a comma ('Customer,' when unknown)", "{{2}}: your trading account (Client Code ${ucc}) has a margin shortfall of ₹${amount} as on ${date}. Please add funds at the earliest to avoid square-off of your positions."],
+      "trigger": "AP/DRA notifies margin-shortfall clients with channel 'whatsapp' (default channels: e-mail + WhatsApp). Body text known only from a code comment, not from the provider",
+      "provider": "LimeChat (Meta-approved template)",
+      "externalId": "LIMECHAT_TEMPLATE_ID",
+      "source": "findost_be/src/services/notification.service.js:53; findost_be/src/services/limechatWhatsapp.service.js:32"
+    },
+    {
+      "channel": "whatsapp",
+      "name": "celebration_wish_wa_me",
+      "title": "Send Wishes (WhatsApp)",
+      "body": "Hi ${name},\n\n${activeMessage}\n\nBest regards,\nTeam Findoc",
+      "variables": ["name: client name", "activeMessage: the typed message, else 'Wishing you a very Happy Birthday! 🎉🎂' (Birthday) or 'Wishing you a Happy Work Anniversary! 🎊' (Anniversary)"],
+      "trigger": "My Clients > Send Wishes popup > WhatsApp icon on a client; opens wa.me/<91mobile>. Note: says 'Work Anniversary' while the e-mail is a Demat account anniversary",
+      "provider": "wa.me link (no backend)",
+      "source": "findost_r_fe/src/pages/dashboard-pages/clients/clients-view/components/celebration-popup/CelebrationPopup.jsx:41"
+    },
+    {
+      "channel": "whatsapp",
+      "name": "client_notification_wa_me",
+      "title": "Send Notification (WhatsApp, one client)",
+      "body": "Hi ${client.name},\n\n${title}\n\n${description}",
+      "variables": ["client.name: client name", "title: entered by the AP/DRA", "description: entered by the AP/DRA (<ClientName> replaced with the client's name)"],
+      "trigger": "Send Notification popup, channel WhatsApp, only for exactly one client and no groups",
+      "provider": "wa.me link",
+      "source": "findost_r_fe/src/pages/dashboard-pages/client-notifications/components/SendNotificationPopup.jsx:38"
+    },
+    {
+      "channel": "whatsapp",
+      "name": "partner_notification_wa_me",
+      "title": "Partner Notification (WhatsApp)",
+      "body": "Hi ${name},\n\n${title}\n\n${description}",
+      "variables": ["name: recipient name", "title", "description"],
+      "trigger": "Admin Send Partner Notification popup, WhatsApp channel, one recipient",
+      "provider": "wa.me link",
+      "source": "findost_r_fe/src/pages/dashboard-pages/partner-notifications/components/SendPartnerNotificationPopup.jsx:49"
+    },
+    {
+      "channel": "whatsapp",
+      "name": "ipo_share_wa_me",
+      "title": "IPO Share (WhatsApp / Copy)",
+      "body": "Title: ${title}\n\nDescription: ${description}",
+      "variables": ["title: 'New IPO Opportunity: <IPO name>' for one IPO, else 'New IPO Opportunities'", "description: 'Here is the IPO link:' (or 'are the IPO links') then, per IPO, its name and https://ipo.findoc.com/ipo/<slug>-ipo"],
+      "trigger": "IPO Details > Share > WhatsApp (wa.me/?text=) or Copy; the same title and description pre-fill Send Notification > Attach IPO",
+      "provider": "wa.me link / clipboard",
+      "source": "findost_r_fe/src/pages/dashboard-pages/ipo/IpoDetail.jsx:30; findost_r_fe/src/pages/dashboard-pages/client-notifications/components/ipoShareText.js:17"
+    },
+    {
+      "channel": "whatsapp",
+      "name": "news_share_wa_me",
+      "title": "News Notification share",
+      "body": "Title: ${title}\n\nDescription: ${body}",
+      "variables": ["title: news title", "body: news text"],
+      "trigger": "Notifications > News tab > Share on WhatsApp / Copy",
+      "provider": "wa.me link / clipboard",
+      "source": "findost_r_fe/src/pages/dashboard-pages/client-notifications/ClientNotifications.jsx:102"
+    },
+    {
+      "channel": "whatsapp",
+      "name": "kc_content_share",
+      "title": "Growth content share caption",
+      "body": "This is ${contentType} content from Growth in Findoc.\n\n${title}\n\n${url}\n\nOpen your Demat & Trading account with Findoc in just a few minutes — your Findoc partner: ${partnerName}.\n👉 ${onboardingLink}",
+      "variables": ["contentType: recording, banner, blog or video", "title", "url: content link or share page (left out for banners)", "partnerName: signed-in partner (the dash part is left out when empty)", "onboardingLink: partner eKYC link (?subType=..&agentId=..&branchId=..); for banners, the share page link"],
+      "trigger": "Growth share buttons (recordings, banners, blogs, videos): wa.me or the phone's share sheet with the image",
+      "provider": "wa.me / Web Share",
+      "source": "findost_r_fe/src/pages/dashboard-pages/knowledge-center/utils/kcShare.js:16"
+    },
+    {
+      "channel": "whatsapp",
+      "name": "partner_creative_share",
+      "title": "Personalised banner share caption",
+      "body": "Open your Demat & Trading account with Findoc in just a few minutes.\n\nYour Findoc partner: ${partnerName}\n\n👉 ${link}",
+      "variables": ["partnerName: name typed in the banner editor", "link: partner onboarding link tagged with the banner id"],
+      "trigger": "Growth > Social Media Banner > Personalise (banner editor) > Share",
+      "provider": "Web Share / wa.me",
+      "source": "findost_r_fe/src/pages/dashboard-pages/knowledge-center/utils/partnerCreative.js:20"
+    },
+    {
+      "channel": "whatsapp",
+      "name": "onboarding_whatsapp_link_fallback",
+      "title": "Account-opening WhatsApp link",
+      "body": "Hi, I want to open an account (ref:RM|AHM|AHM)",
+      "variables": [],
+      "trigger": "Fallback WhatsApp link when the backend's EKYC_WHATSAPP_ONBOARDING_URL is not set; opens a chat with Findoc's number",
+      "provider": "wa.me link",
+      "source": "findost_r_fe/src/store/client/store/useClientStore.js:397; findost_be/src/services/admin/channelPartner.service.js:475"
+    },
+    {
+      "channel": "push",
+      "name": "partner_notification_fcm",
+      "title": "${title}",
+      "body": "${description}",
+      "variables": ["title: entered by the admin", "description: entered by the admin", "notification_id: sent in data"],
+      "trigger": "Admin partner notification with mode 'app' to AP/DRA with push tokens; also creates an in-app entry",
+      "provider": "FCM (Android channel 'findost_push')",
+      "source": "findost_be/src/services/partnerNotification.service.js:472; findost_be/src/services/fcm.service.js:13"
+    },
+    {
+      "channel": "push",
+      "name": "admin_push_notification",
+      "title": "${title}",
+      "body": "${body}",
+      "variables": ["title", "body", "data: custom key-values", "filters: audience"],
+      "trigger": "Admin composes a push notification (push_notifications table, sent by pushNotification.job)",
+      "provider": "FCM",
+      "source": "findost_be/src/services/pushNotification.service.js:151"
+    },
+    {
+      "channel": "push",
+      "name": "client_notification_finzoom_push",
+      "title": "${title}",
+      "body": "${description}",
+      "variables": ["title: entered by the AP/DRA", "description: entered by the AP/DRA"],
+      "trigger": "AP/DRA client notification with channel 'app'",
+      "provider": "Finzoom notifications API",
+      "source": "findost_be/src/services/clientNotification.service.js:316; findost_be/src/services/finzoomPush.service.js:13"
+    },
+    {
+      "channel": "push",
+      "name": "news_forward_push",
+      "title": "${scrip_name}: ${heading}",
+      "body": "${caption}",
+      "variables": ["scrip_name: company (title is just the heading without it)", "heading: news heading, HTML removed", "caption: news caption or details, HTML removed"],
+      "trigger": "AP/DRA forwards a news item to clients who hold that ISIN",
+      "provider": "Finzoom push",
+      "source": "findost_be/src/services/newsNotification.service.js:270"
+    },
+    {
+      "channel": "push",
+      "name": "web_push_fallback_title",
+      "title": "Findost Notification",
+      "body": "${body}",
+      "variables": ["body: from the push payload (notification.body or data.body)"],
+      "trigger": "Web push shown in the browser (foreground or background) when the payload has no title",
+      "provider": "FCM web (service worker)",
+      "source": "findost_r_fe/src/hooks/usePushNotification.js:130; findost_r_fe/public/firebase-messaging-sw.js:27"
+    },
+    {
+      "channel": "other",
+      "name": "limechat_freshdesk_ticket",
+      "title": "LimeChat #${conversationId} — ${synopsis}",
+      "body": "Chat details\nConversation: #${conversationId}\nChannel: ${channel}\nCustomer: ${contactName} (UCC ${ucc})\nMobile: ${mobile}\nChat created: ${chatCreated}\nChat closed: ${chatClosed}\nTags: ${labels}\nSynopsis: L1 ${l1} / L2 ${l2} / L3 ${l3}\n\nCaptured details\n${key}: ${value}\n\nConversation\n[${time}] ${who}: ${text}",
+      "variables": ["conversationId", "synopsis: L1 / L2 / L3, else the first query, else 'Support chat'", "channel", "contactName", "ucc", "mobile", "chatCreated / chatClosed: IST", "labels", "l1 / l2 / l3: synopsis levels", "key / value: captured flow details", "transcript lines: time, who, text"],
+      "trigger": "LimeChat webhook 'conversation_resolved' creates a Freshdesk ticket (subject cut to 250 characters, priority 2)",
+      "provider": "Freshdesk",
+      "source": "findost_be/src/services/limechatWebhook.service.js:197"
+    },
+    {
+      "channel": "other",
+      "name": "kc_share_page_og",
+      "title": "og:title = ${title}",
+      "body": "og:description = ${desc}\nDefault / banner description: 'Open your Demat & Trading account with Findoc in just a few minutes.'\nBlog: content as plain text, button 'Continue to the blog'\nVideo: description as plain text, button 'Watch the video'\nog:site_name = 'Findoc'",
+      "variables": ["title", "desc", "image"],
+      "trigger": "Static share page published per Growth banner / blog / video (gives the WhatsApp link preview)",
+      "provider": "S3 static page",
+      "source": "findost_be/src/services/kcSharePage.service.js:32"
+    }
+  ]
+}

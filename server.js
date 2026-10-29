@@ -3223,6 +3223,69 @@ app.get('/api/sheets/:id/export', route(async (req, res) => {
 
 // ---------------------------------------------------------------- errors + start
 
+// ---------------------------------------------------------------- templates
+
+// The messages an app sends, per channel (its Templates page). Everyone who opens the app reads them; Developers and up
+// add, change and remove them (scripts/import-app.cjs fills them from a map file).
+const CHANNELS = ['email', 'whatsapp', 'sms', 'push', 'other'];
+const toTemplate = (r) => ({
+  id: r.id, productId: r.product_id, channel: r.channel, name: r.name, title: r.title, body: r.body, variables: r.variables || [],
+  trigger: r.trigger, provider: r.provider, externalId: r.external_id, source: r.source, order: r.sort_order, ...audit(r),
+});
+
+// fields of a template from a request body (only what was sent)
+function templateFields(b) {
+  const fields = {};
+  if (b.channel !== undefined) fields.channel = oneOf(b.channel, CHANNELS, 'channel');
+  if (b.name !== undefined) fields.name = required(text(b.name, 200), 'Name');
+  if (b.title !== undefined) fields.title = text(b.title, 500);
+  if (b.body !== undefined) fields.body = typeof b.body === 'string' ? b.body.slice(0, 50000) : '';
+  if (b.trigger !== undefined) fields.trigger = text(b.trigger, 500);
+  if (b.provider !== undefined) fields.provider = text(b.provider, 80);
+  if (b.externalId !== undefined) fields.external_id = text(b.externalId, 200);
+  if (b.source !== undefined) fields.source = text(b.source, 300);
+  if (b.variables !== undefined) {
+    if (!Array.isArray(b.variables)) throw new HttpError(400, 'Invalid variables');
+    fields.variables = JSON.stringify(b.variables.slice(0, 50)
+      .map((v) => (typeof v === 'string' ? { name: v } : v || {}))
+      .map((v) => ({ name: text(v.name, 80), note: text(v.note, 300) }))
+      .filter((v) => v.name));
+  }
+  return fields;
+}
+
+app.get('/api/templates', route(async (req, res) => {
+  const product = await productFor(req, req.query.product, 'view');
+  const { rows } = await db.query(
+    'SELECT * FROM templates WHERE product_id = $1 AND NOT is_deleted ORDER BY channel, sort_order, lower(name)', [product.id]);
+  res.json({ templates: rows.map(toTemplate), canEdit: auth.atLeast(req.user, 'developer') });
+}));
+
+app.post('/api/templates', route(async (req, res) => {
+  const product = await productFor(req, req.body.productId, 'developer');
+  const f = templateFields({ channel: 'email', title: '', body: '', trigger: '', provider: '', externalId: '', source: '', variables: [], ...req.body });
+  required(f.name, 'Name');
+  const { rows } = await db.query(
+    `INSERT INTO templates (id, product_id, channel, name, title, body, variables, trigger, provider, external_id, source, sort_order, created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13) RETURNING *`,
+    [randomUUID(), product.id, f.channel, f.name, f.title, f.body, f.variables, f.trigger, f.provider, f.external_id, f.source, Date.now(), req.user.id]);
+  res.status(201).json(toTemplate(rows[0]));
+}));
+
+app.patch('/api/templates/:id', route(async (req, res) => {
+  const row = await live('templates', req.params.id, 'id, product_id');
+  await productFor(req, row.product_id, 'developer');
+  await update('templates', row.id, templateFields(req.body), req.user.id);
+  res.json(toTemplate(await live('templates', row.id, '*')));
+}));
+
+app.delete('/api/templates/:id', route(async (req, res) => {
+  const row = await live('templates', req.params.id, 'id, product_id');
+  await productFor(req, row.product_id, 'developer');
+  await softDelete('templates', row.id, req.user.id);
+  res.json({ ok: true });
+}));
+
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
 // eslint-disable-next-line no-unused-vars
