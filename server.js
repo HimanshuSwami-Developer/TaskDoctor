@@ -3258,7 +3258,7 @@ if (require.main === module) {
         console.log(`FlowTrace running at http://localhost:${PORT}`);
         if (!cloud.configured()) console.log('Image uploads are off: add the Cloudinary keys to .env to turn them on.');
         if (!process.env.APP_URL) console.log('APP_URL is not set: Teams reminders will have no "Start sanity" link.');
-        if (!assist.configured()) console.log('The AI writing assistant is off: add ANTHROPIC_API_KEY to .env to turn it on (quick checks still run).');
+        if (!assist.configured()) console.log('The AI writing assistant is off: add GROQ_API_KEY to .env to turn it on (quick checks still run).');
         setInterval(() => sanityReminders().catch((err) => console.error('Sanity reminders:', err.message)), 60 * 1000);
       });
       // who is online: a WebSocket on the same port (/ws)

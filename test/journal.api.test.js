@@ -21,7 +21,7 @@ const localDay = (offset = 0) => {
 };
 
 test('journal API', { skip }, async (t) => {
-  Object.assign(process.env, { DATABASE_URL: url, APP_TIMEZONE: TZ, ANTHROPIC_API_KEY: '' });
+  Object.assign(process.env, { DATABASE_URL: url, APP_TIMEZONE: TZ, GROQ_API_KEY: '' });
   const db = require('../db');
   const auth = require('../auth');
   await db.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
@@ -300,7 +300,7 @@ test('journal API', { skip }, async (t) => {
     assert.equal((await call('alice', 'GET', `/api/journal/meetings/${mid}`)).status, 404);
   });
 
-  await t.test('writing assistant: off without ANTHROPIC_API_KEY', async () => {
+  await t.test('writing assistant: off without GROQ_API_KEY', async () => {
     assert.equal((await call('alice', 'GET', '/api/assist')).body.ai, false);
     assert.equal((await call('alice', 'POST', '/api/assist', { text: 'teh build' })).status, 503);
     assert.equal((await call('carol', 'POST', '/api/assist', { text: 'teh build' })).status, 403);

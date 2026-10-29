@@ -1,23 +1,44 @@
 'use strict';
 /**
  * Writing assistant for the journal's text boxes: grammar, spelling, punctuation and clarity fixes, or a rewrite in
- * a tone (professional, simple, concise). Uses Claude through the Anthropic SDK when ANTHROPIC_API_KEY is set in
+ * a tone (professional, simple, concise). Uses Groq's OpenAI-compatible chat API when GROQ_API_KEY is set in
  * .env; without it the browser falls back to its own quick checks (public/assist.js) and tones are off.
  * The answer is only ever a suggestion: the browser shows it and the person applies it or not.
  */
-const Anthropic = require('@anthropic-ai/sdk');
-
-const MODEL = process.env.ASSIST_MODEL || 'claude-opus-5-5';
+const ENDPOINT = 'https://api.groq.com/openai/v1/chat/completions';
+const MODEL = process.env.ASSIST_MODEL || 'llama-3.3-70b-versatile';
+// short timeout: a suggestion that comes late is no use while someone types
+const TIMEOUT = 20 * 1000;
 const MAX_TEXT = 2000;
 const TONES = ['professional', 'simple', 'concise'];
 const KINDS = ['grammar', 'spelling', 'punctuation', 'clarity', 'tone'];
 
-let client = null;
-const configured = () => Boolean(process.env.ANTHROPIC_API_KEY);
-function api() {
-  // short timeout and one retry: a suggestion that comes late is no use while someone types
-  if (!client) client = new Anthropic({ timeout: 20 * 1000, maxRetries: 1 });
-  return client;
+const configured = () => Boolean(process.env.GROQ_API_KEY);
+
+// One call to Groq, retried once on a dropped connection or a 5xx
+async function api(body, retries = 1) {
+  let res;
+  try {
+    res = await fetch(ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(TIMEOUT),
+    });
+  } catch (err) {
+    if (retries > 0) return api(body, retries - 1);
+    throw failure(503, 'Could not reach the AI assistant. Try again.');
+  }
+  if (res.status >= 500 && retries > 0) return api(body, retries - 1);
+  if (res.ok) return res.json();
+  const detail = await res.text().catch(() => '');
+  if (res.status === 429) throw failure(429, 'The AI assistant is busy. Try again in a moment.');
+  if (res.status === 401 || res.status === 403) {
+    console.error('Writing assistant:', res.status, detail.slice(0, 300));
+    throw failure(503, 'The AI writing assistant key is not valid. Ask an admin to check GROQ_API_KEY.');
+  }
+  console.error('Writing assistant:', res.status, detail.slice(0, 300));
+  throw failure(502, 'The AI assistant could not check this text right now.');
 }
 
 const SYSTEM = `You are the writing assistant inside a software team's daily work journal (done items, to-dos, blockers and questions about how an app should behave).
@@ -28,30 +49,8 @@ With a tone, rewrite it in that tone:
 - simple: plain, short words a non-native speaker reads easily.
 - concise: the shortest wording that keeps every fact.
 Always keep the meaning, every fact, names of people, screens and features, API paths, code, numbers, ticket ids and URLs exactly as written. Never add information.
-List each change you made as { kind, from, to, note } where note is at most eight words. If nothing needs changing, return the text unchanged with an empty list.`;
-
-const SCHEMA = {
-  type: 'object',
-  properties: {
-    text: { type: 'string' },
-    changes: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          kind: { type: 'string', enum: KINDS },
-          from: { type: 'string' },
-          to: { type: 'string' },
-          note: { type: 'string' },
-        },
-        required: ['kind', 'from', 'to', 'note'],
-        additionalProperties: false,
-      },
-    },
-  },
-  required: ['text', 'changes'],
-  additionalProperties: false,
-};
+List each change you made as { kind, from, to, note } where note is at most eight words. If nothing needs changing, return the text unchanged with an empty list.
+Reply with one JSON object only, shaped {"text": "<the improved text>", "changes": [{"kind": "grammar|spelling|punctuation|clarity|tone", "from": "...", "to": "...", "note": "..."}]}.`;
 
 // What comes back is checked again before it reaches the browser: strings only, sizes kept small.
 function clean(raw, original) {
@@ -98,7 +97,7 @@ function failure(status, message) {
 
 /** → { text, changes: [{ kind, from, to, note }], unchanged } */
 async function suggest({ text, tone, userId }) {
-  if (!configured()) throw failure(503, 'The AI writing assistant is not set up: add ANTHROPIC_API_KEY to .env.');
+  if (!configured()) throw failure(503, 'The AI writing assistant is not set up: add GROQ_API_KEY to .env.');
   if (typeof text !== 'string' || !text.trim()) throw failure(400, 'Nothing to check');
   if (text.length > MAX_TEXT) throw failure(400, `Text is too long to check (over ${MAX_TEXT} characters)`);
   if (tone && !TONES.includes(tone)) throw failure(400, 'Invalid tone');
@@ -106,35 +105,20 @@ async function suggest({ text, tone, userId }) {
   if (cache.has(key)) return cache.get(key);
   if (throttled(userId)) throw failure(429, 'Too many suggestions in a minute. Wait a moment and try again.');
 
-  let response;
-  try {
-    response = await api().beta.messages.create({
-      model: MODEL,
-      max_tokens: 4000,
-      output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
-      // a declined request is re-run on a fitting model in the same call
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default',
-      system: SYSTEM,
-      messages: [{ role: 'user', content: `${tone ? `Tone: ${tone}\n` : 'Fix only, no tone change.\n'}<text>\n${text}\n</text>` }],
-    });
-  } catch (err) {
-    if (err instanceof Anthropic.RateLimitError) throw failure(429, 'The AI assistant is busy. Try again in a moment.');
-    if (err instanceof Anthropic.AuthenticationError || err instanceof Anthropic.PermissionDeniedError) {
-      console.error('Writing assistant:', err.message);
-      throw failure(503, 'The AI writing assistant key is not valid. Ask an admin to check ANTHROPIC_API_KEY.');
-    }
-    if (err instanceof Anthropic.APIConnectionError) throw failure(503, 'Could not reach the AI assistant. Try again.');
-    if (err instanceof Anthropic.APIError) {
-      console.error('Writing assistant:', err.status, err.message);
-      throw failure(502, 'The AI assistant could not check this text right now.');
-    }
-    throw err;
-  }
-  if (response.stop_reason === 'refusal' || response.stop_reason === 'max_tokens') return { text, changes: [], unchanged: true };
-  const block = response.content.find((b) => b.type === 'text');
+  const response = await api({
+    model: MODEL,
+    max_tokens: 4000,
+    temperature: 0.2,
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: SYSTEM },
+      { role: 'user', content: `${tone ? `Tone: ${tone}\n` : 'Fix only, no tone change.\n'}<text>\n${text}\n</text>` },
+    ],
+  });
+  const choice = response && Array.isArray(response.choices) ? response.choices[0] : null;
+  if (!choice || choice.finish_reason === 'length') return { text, changes: [], unchanged: true };
   let parsed = null;
-  try { parsed = block ? JSON.parse(block.text) : null; } catch (e) { parsed = null; }
+  try { parsed = JSON.parse(choice.message && choice.message.content); } catch (e) { parsed = null; }
   if (!parsed) return { text, changes: [], unchanged: true };
   return remember(key, clean(parsed, text));
 }

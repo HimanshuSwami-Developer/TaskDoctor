@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 const journal = require('../journal');
 const { check, diffWords } = require('../public/assist');
 
-process.env.ANTHROPIC_API_KEY = ''; // never call the AI from the tests
+process.env.GROQ_API_KEY = ''; // never call the AI from the tests
 const assist = require('../assist');
 
 test('isDay accepts only real calendar days', () => {

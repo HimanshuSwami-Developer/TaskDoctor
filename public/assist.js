@@ -6,7 +6,7 @@
  * since.
  *
  * Two sources: quick checks in this file (no network, run on every pause) and, when the server has
- * ANTHROPIC_API_KEY, the AI (POST /api/assist, assist.js), which also does the tones.
+ * GROQ_API_KEY, the AI (POST /api/assist, assist.js), which also does the tones.
  *
  * Node: require('./public/assist') → { check, diffWords } for the tests; browser: window.flowAssist.
  */
