@@ -1692,3 +1692,47 @@ html.dark .owner-chip.me { border-color: #5e6ad2; background: #5e6ad2; }
 .sc-rel-tools .jr-search { flex: none; width: 320px; max-width: 100%; }
 .sc-arrow { color: #94a3b8; text-align: center; }
 @media (max-width: 900px) { .sc-twocol { grid-template-columns: 1fr; } .sc-rel { padding: 12px 16px; } }
+
+/* Video call (public/call.js). The stage is dark in both themes, like any video. */
+.call-page { display: grid; gap: 14px; }
+.call-page .hidden { display: none; } /* over the display of the videos below */
+.call-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 8px 16px; }
+.call-status { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #334155; }
+.call-dot, .call-live { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #16a34a; box-shadow: 0 0 0 3px rgba(22, 163, 74, .2); }
+.call-live { margin-left: auto; flex-shrink: 0; }
+.call-stage { position: relative; height: clamp(260px, calc(100vh - 300px), 760px); border-radius: 14px; overflow: hidden; background: #0b1120; }
+.call-remote { width: 100%; height: 100%; object-fit: contain; background: #0b1120; }
+.call-self { position: absolute; right: 14px; bottom: 14px; width: min(30%, 320px); aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden; background: #1e293b; border: 1px solid rgba(255, 255, 255, .15); box-shadow: 0 8px 24px rgba(0, 0, 0, .45); }
+.call-stage.solo .call-self { inset: 0; width: 100%; height: 100%; aspect-ratio: auto; border: 0; border-radius: 0; box-shadow: none; background: #0b1120; }
+/* your own picture, mirrored like a mirror (only here: what is sent is not mirrored) */
+.call-self canvas, .call-self video { display: block; width: 100%; height: 100%; object-fit: contain; transform: scaleX(-1); }
+.call-self .call-offscreen { position: absolute; width: 2px; height: 2px; opacity: 0; pointer-events: none; }
+.call-wait { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 24px; color: #cbd5e1; text-align: center; }
+.call-wait.over { inset: auto 0 0 0; padding-top: 48px; background: linear-gradient(transparent, rgba(2, 6, 23, .75)); }
+.call-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.call-join { display: flex; flex-wrap: wrap; gap: 8px; }
+.call-join .input { width: 220px; max-width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.call-chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 6px; background: #eef2ff; color: #3730a3; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.call-tog.on { border-color: #a5b4fc; color: #3730a3; }
+.call-tog.off { border-color: #fecaca; color: #b91c1c; }
+.call-select { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #475569; }
+.call-select .input { width: auto; padding-top: 6px; padding-bottom: 6px; }
+.call-sep { width: 1px; height: 24px; background: #e2e8f0; }
+.call-help { font-size: 13px; color: #64748b; }
+.call-check { position: absolute; left: 12px; top: 12px; z-index: 2; max-width: min(420px, calc(100% - 24px)); padding: 10px 12px; border-radius: 10px; background: rgba(2, 6, 23, .78); color: #e2e8f0; font-size: 12px; line-height: 1.6; font-variant-numeric: tabular-nums; }
+.call-check b { color: #fff; }
+.call-check-on, .call-check-pressed { color: #4ade80; font-weight: 600; }
+.call-check-far, .call-check-released, .call-check-touching { color: #fbbf24; font-weight: 600; }
+.call-check-off { color: #94a3b8; }
+.call-check-snap { color: #f472b6; font-size: 14px; font-weight: 700; }
+.call-check-hint { margin-top: 4px; color: #94a3b8; }
+.call-capture { position: absolute; inset: 0; z-index: 3; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; background: rgba(2, 6, 23, .45); color: #f8fafc; text-align: center; pointer-events: none; }
+.call-capture b { font-size: 18px; font-weight: 600; }
+.call-capture span { font-size: 44px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.call-capture small { font-size: 13px; color: #cbd5e1; }
+.call-page .call-capture.hidden { display: none; }
+html.dark .call-check { background: rgba(0, 0, 0, .78); color: #e2e8f0; }
+html.dark .call-stage, html.dark .call-remote, html.dark .call-stage.solo .call-self { background: #0b0c0e; }
+html.dark .call-self { background: #16171a; }
+html.dark .call-wait { color: #cbd5e1; }
+@media (max-width: 640px) { .call-self { width: 38%; right: 8px; bottom: 8px; } .call-sep { display: none; } }

@@ -780,7 +780,8 @@ $(function () {
   $doc.on('keydown', (e) => { if (e.key === 'Escape' && $('body').hasClass('sb-open')) closeDrawer(); });
   // which page is open: the board, Sheets or Sanity
   const markNav = () => {
-    $('[data-action="home"].sb-item').toggleClass('on', !sheetsView && !sanity && !adminView && !doneView && !templatesView && !schemaView);
+    $('[data-action="home"].sb-item').toggleClass('on', !sheetsView && !sanity && !adminView && !doneView && !templatesView && !schemaView && !callView);
+    $('[data-action="call"]').toggleClass('on', Boolean(callView));
     $('[data-action="templates"]').toggleClass('on', Boolean(templatesView));
     $('[data-action="schema"]').toggleClass('on', Boolean(schemaView));
     $('[data-action="done"]').toggleClass('on', Boolean(doneView));
@@ -3924,12 +3925,13 @@ $(function () {
     const version = current && current.version ? current.version.replace(/^v(?=\d)/i, '') : '';
     $('#sbNav').html(`
       <button class="sb-write" data-action="writer" title="Write an issue on any screen">${icon('plus', 16)}<span class="sb-label">Write issue</span></button>
-      <a href="/" class="sb-item ${!sheetsView && !sanity && !adminView && !templatesView && !schemaView ? 'on' : ''}" data-action="home" title="Board: modules, flows and screens"><span class="sb-ico">${icon('home', 16)}</span><span class="sb-label">Board</span></a>
+      <a href="/" class="sb-item ${!sheetsView && !sanity && !adminView && !templatesView && !schemaView && !callView ? 'on' : ''}" data-action="home" title="Board: modules, flows and screens"><span class="sb-ico">${icon('home', 16)}</span><span class="sb-label">Board</span></a>
       ${sbItem({ attrs: 'data-action="sheets"', ico: icon('grid', 16), label: 'Sheets', on: Boolean(sheetsView), title: 'Sheets: typed columns, formulas, links to flows and screens, Excel in and out' })}
       ${sbItem({ attrs: 'data-action="templates"', ico: icon('mail', 16), label: 'Templates', on: Boolean(templatesView), title: 'Templates: the e-mails, WhatsApp, SMS and push messages this app sends' })}
       ${schemaFor(current) ? sbItem({ attrs: 'data-action="schema"', ico: icon('db', 16), label: 'DB Schema', on: Boolean(schemaView), title: `DB Schema: every table of the ${schemaFor(current).label} database and the foreign keys between them` }) : ''}
       ${sbItem({ attrs: 'data-action="sanity"', ico: icon('check', 16), label: 'Sanity', on: Boolean(sanity), title: 'Daily sanity checklist of this app' })}
       ${sbItem({ attrs: 'data-action="done"', ico: icon('note', 16), label: 'Done today', title: 'Daily journal: done, to-do, in progress, questions and blockers' })}
+      ${sbItem({ attrs: 'data-action="call"', ico: icon('video', 16), label: 'Video call', on: Boolean(callView), extra: window.flowCall.active() ? '<span class="call-live" title="In a call"></span>' : '', title: 'Video call: one to one, peer to peer, with background blur and snap effects' })}
       <a class="sb-item" href="/api/export" title="Download every task as an Excel sheet"><span class="sb-ico">${icon('download', 16)}</span><span class="sb-label">Excel export</span></a>
       ${sbItem({ attrs: 'data-action="admin"', ico: icon('shield', 16), label: 'Users & access', on: Boolean(adminView), title: 'Admin: logins, passwords and access' })}`);
     $('#account').html(`
@@ -4121,12 +4123,14 @@ $(function () {
     ws.onopen = () => {
       live.tries = 0;
       sendBeat();
+      window.flowCall.reconnected();
       clearInterval(live.beat);
       live.beat = setInterval(sendBeat, 30000);
     };
     ws.onmessage = (e) => {
       let m;
       try { m = JSON.parse(e.data); } catch (err) { return; }
+      if (typeof m.type === 'string' && m.type.startsWith('call-')) { window.flowCall.signal(m); return; }
       if (m.type !== 'presence') return;
       live.users = new Map(m.users.map((u) => [u.id, u]));
       paintPresence();
@@ -4209,6 +4213,7 @@ $(function () {
       if (doneView) closeDone();
       if (templatesView) closeTemplates();
       if (schemaView) closeSchema();
+      if (callView) closeCall();
       adminView = adminView || { q: '', access: '', app: '', panel: null };
       $('#board, #tabs').addClass('hidden');
       $('#adminPage').removeClass('hidden');
@@ -5462,6 +5467,7 @@ $(function () {
     if (doneView) closeDone();
     if (templatesView) closeTemplates();
     if (schemaView) closeSchema();
+    if (callView) closeCall();
     const f = findFlow(flowId);
     const p = f && productOf(f.moduleId);
     if (!p) { toast('That is no longer here'); return false; }
@@ -5489,6 +5495,7 @@ $(function () {
     if (doneView) closeDone();
     if (templatesView) closeTemplates();
     if (schemaView) closeSchema();
+    if (callView) closeCall();
     if (!$('#statusModal').hasClass('hidden')) closeStatuses();
     if (bugsView) closeBugs();
     if (adminView) closeAdmin();
@@ -5506,12 +5513,14 @@ $(function () {
   });
 
   // Links from Teams: /#flow=<id>, #screen=<id>, #sanity=<app id>[&view=logs], #done=<app id>[&date=…][&tab=shared|questions|blockers|…],
-  // #templates=<app id>[&tab=email|whatsapp|sms|push|other][&t=<template name>], #schema=<app id>[&t=<table>][&view=relations]
+  // #templates=<app id>[&tab=email|whatsapp|sms|push|other][&t=<template name>], #schema=<app id>[&t=<table>][&view=relations],
+  // #call[=<room>]
   function openFromHash() {
     const h = new URLSearchParams(location.hash.slice(1));
     if (![...h.keys()].length) return;
     history.replaceState(null, '', location.pathname + location.search);
     if (h.has('admin')) { if (can('super')) openAdmin(); }
+    else if (h.has('call')) openCall(h.get('call'));
     else if (h.get('flow')) showFlow(h.get('flow'));
     else if (h.get('screen')) showScreen(h.get('screen'));
     else if (h.get('sheet')) api('GET', `/api/sheets/${encodeURIComponent(h.get('sheet'))}`).done((x) => openSheets(x.productId, x.id));
@@ -5574,6 +5583,7 @@ $(function () {
       if (doneView) closeDone();
       if (templatesView) closeTemplates();
       if (schemaView) closeSchema();
+      if (callView) closeCall();
       $('#board, #tabs').addClass('hidden');
       $('#sanityPage').removeClass('hidden');
       markNav();
@@ -5993,6 +6003,7 @@ $(function () {
       if (adminView) closeAdmin();
       if (templatesView) closeTemplates();
       if (schemaView) closeSchema();
+      if (callView) closeCall();
       renderDone();
       $('#board, #tabs').addClass('hidden');
       $('#journalPage').removeClass('hidden');
@@ -7078,6 +7089,7 @@ $(function () {
       if (doneView) closeDone();
       if (adminView) closeAdmin();
       if (schemaView) closeSchema();
+      if (callView) closeCall();
       const counts = tplCounts(list);
       const named = name && list.find((t) => t.name === name);
       templatesView = {
@@ -7395,6 +7407,7 @@ $(function () {
       if (doneView) closeDone();
       if (adminView) closeAdmin();
       if (templatesView) closeTemplates();
+      if (callView) closeCall();
       schemaView = {
         productId: pid, data, label: s.label, byName,
         view: view === 'relations' ? 'relations' : keep && !name ? keep.view : 'tables',
@@ -7670,6 +7683,52 @@ $(function () {
     if (el) el.scrollIntoView({ block: 'nearest' });
   });
 
+  // ---------------------------------------------------------------- video call (public/call.js)
+  // A page of its own, in the board's place: a one-to-one call, peer to peer, signalled over the presence socket.
+  // Going to another page keeps the call going (the sidebar item shows a dot); only Leave call ends it.
+  // The address (#call=<room>) keeps it; a shared link fills in the room, and Join call starts the camera.
+
+  let callView = null;
+  window.flowCall.setup({
+    send: (m) => { if (live.ws && live.ws.readyState === 1) live.ws.send(JSON.stringify(m)); },
+    ice: () => api('GET', '/api/call/ice', null, null, QUIET).then((r) => r.iceServers, () => []),
+    icon,
+    toast,
+    alert: (message, title) => dialog.alert(message, title),
+    onChange: () => { if (me) renderAccount(); callHash(); },
+    onLeft: () => { if (callView) closeCall(); }, // a snap ended the call: back to the board
+  });
+
+  function openCall(room) {
+    const fresh = $('#callPage').hasClass('hidden');
+    if (sanity) closeSanity();
+    if (sheetsView) closeSheets();
+    if (doneView) closeDone();
+    if (adminView) closeAdmin();
+    if (templatesView) closeTemplates();
+    if (schemaView) closeSchema();
+    callView = {};
+    window.flowCall.open($('#callBody')[0], room);
+    $('#board, #tabs').addClass('hidden');
+    $('#callPage').removeClass('hidden');
+    markNav();
+    callHash();
+    if (fresh) window.scrollTo(0, 0);
+  }
+  const callHash = () => {
+    const room = window.flowCall.room();
+    if (callView) history.replaceState(null, '', `${location.pathname}${location.search}#call${room ? `=${encodeURIComponent(room)}` : ''}`);
+  };
+
+  function closeCall() {
+    callView = null;
+    $('#callPage').addClass('hidden');
+    $('#board, #tabs').removeClass('hidden');
+    markNav();
+    history.replaceState(null, '', location.pathname + location.search);
+  }
+  $doc.on('click', '[data-action="call"]', () => (callView ? closeCall() : openCall()));
+
   // { productId, list, people, canCreate, teams, doc, search, sort: { col, dir }, picked: Set of row ids (to send on Teams),
   //   filters: { columnId: { values, op, a, b, color } } (kept per sheet in this browser) }
   let sheetsView = null;
@@ -7684,6 +7743,7 @@ $(function () {
       if (doneView) closeDone();
       if (templatesView) closeTemplates();
       if (schemaView) closeSchema();
+      if (callView) closeCall();
       const keep = sheetsView && sheetsView.productId === pid ? sheetsView : {};
       sheetsView = {
         productId: pid, list: d.sheets, people: d.people, canCreate: d.canCreate, teams: d.teams, doc: null,

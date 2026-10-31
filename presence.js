@@ -10,14 +10,18 @@
  *   offline  no tab open; lastSeen says when they were last here (kept in the presence table, so after a restart too)
  * Super admins get the whole list pushed to them whenever it changes ({ type: 'presence', users: [...] }); nobody else
  * gets anything (the sockets of other logins only count them as present).
+ *
+ * Video calls ride on the same socket: messages "call-…" go to calls.js, which pairs two tabs and passes their WebRTC
+ * offers, answers and ICE candidates along.
  */
 const { WebSocketServer } = require('ws');
 
 const ACTIVE = 2 * 60 * 1000; // used in the last 2 minutes = online
 const SWEEP = 30 * 1000;
 
-function attach(server, { db, auth }) {
-  const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 1024 });
+function attach(server, { db, auth, calls = null }) {
+  // 64 KB: a call's offer (SDP) is a few KB; a beat is a few bytes
+  const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 64 * 1024 });
   // user id → { sockets: Set, lastActive: ms, lastSeen: ms, super: bool }
   const people = new Map();
   let last = ''; // the list as last sent, to send only changes
@@ -71,7 +75,7 @@ function attach(server, { db, auth }) {
     let user = null;
     if (token) {
       const { rows } = await db.query(
-        `SELECT u.id, u.access FROM sessions s JOIN users u ON u.id = s.user_id
+        `SELECT u.id, u.access, u.name, u.username FROM sessions s JOIN users u ON u.id = s.user_id
          WHERE s.token_hash = $1 AND s.expires_at > now() AND NOT u.is_deleted`, [auth.hashToken(token)]).catch(() => ({ rows: [] }));
       [user] = rows;
     }
@@ -91,9 +95,10 @@ function attach(server, { db, auth }) {
         p.lastSeen = Date.now();
         if (m.active) p.lastActive = Date.now();
         broadcastSoon();
-      }
+      } else if (calls && m && typeof m.type === 'string' && m.type.startsWith('call-')) calls.message(ws, user, m);
     });
     ws.on('close', () => {
+      if (calls) calls.leave(ws);
       p.sockets.delete(ws);
       p.lastSeen = Date.now();
       if (!p.sockets.size) save([user.id]);
