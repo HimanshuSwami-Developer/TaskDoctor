@@ -82,3 +82,20 @@ test('ICE: STUN by default; TURN with a 12-hour login from the shared secret, or
   assert.deepEqual(fixed, { urls: ['turn:t:3478'], username: 'me', credential: 'pw' });
   assert.equal(calls.iceServers({ TURN_URLS: 'turn:t:3478' }, 'u1').length, 1); // no login: TURN left out
 });
+
+test('a gesture goes to the other one in the room, and only a known one', () => {
+  const c = calls.create();
+  const [a, b, other] = [socket(), socket(), socket()];
+  c.message(a, ann, { type: 'call-join', room: 'one' });
+  c.message(b, bob, { type: 'call-join', room: 'one' });
+  c.message(other, bob, { type: 'call-join', room: 'two' });
+  const before = other.got.length;
+  c.message(a, ann, { type: 'call-gesture', gesture: 'both-hands-raised', extra: '<b>' });
+  assert.deepEqual(last(b), { type: 'call-gesture', gesture: 'both-hands-raised' });
+  const n = b.got.length;
+  c.message(a, ann, { type: 'call-gesture', gesture: 'anything' });
+  c.message(a, ann, { type: 'call-gesture' });
+  assert.equal(b.got.length, n);
+  assert.equal(other.got.length, before);
+  assert.equal(a.got.filter((m) => m.type === 'call-gesture').length, 0);
+});

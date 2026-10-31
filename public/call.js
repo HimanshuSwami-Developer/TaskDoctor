@@ -15,6 +15,8 @@
  *               noise), the fine ash rising and heavier flakes falling; then it all plays backwards and you are back
  *   left hand   Voxels: you break into 3D cubes that spin off into the room, then they walk back in, each on its
  *               own path, and build you again from the feet up, locking in with a flash of neon
+ * Both hands raised: "Absolute cinema" on both screens (black and white, letterbox, the caption), the other tab told
+ * over the socket ({ type: 'call-gesture' }, calls.js). Only page classes change: no render, no change to the video sent.
  * Behind you while you are gone: the room as last seen around you (kept as you move), or the studio backdrop.
  *
  * Three.js and MediaPipe load from jsDelivr the first time the page needs them; without them (offline, no WebGL)
@@ -36,6 +38,7 @@ window.flowCall = (() => {
   // back together. Voxels: you break up, are gone, the cubes walk back in and build you, then they melt into the video.
   const TIMING = { ash: { away: 4600, back: 1800 }, voxel: { out: 900, gone: 400, build: 3200, settle: 700 } };
   const BG = { camera: 'Camera', blur: 'Blur', studio: 'Studio' };
+  const CINEMA_MS = 3200; // how long Absolute cinema shows (the CSS animation is as long)
 
   let opts = { send() {}, ice: () => Promise.resolve([]), icon: () => '', toast() {}, alert() {}, onChange() {} };
   const st = {
@@ -84,6 +87,10 @@ window.flowCall = (() => {
           <div class="call-wait" data-call-wait></div>
           <div class="call-check hidden" data-call-check><p>Waiting for hand tracking…</p></div>
           <div class="call-capture hidden" data-call-capture></div>
+          <div class="call-cinema" data-call-cinema aria-hidden="true">
+            <span class="call-cinema-bar top"></span><span class="call-cinema-bar bottom"></span>
+            <p class="call-cinema-who" data-call-cinema-who></p><p class="call-cinema-title">Absolute cinema</p>
+          </div>
           <div class="call-self">
             <video class="call-cam" data-call-cam autoplay playsinline muted></video>
             <canvas class="call-canvas hidden" data-call-canvas></canvas>
@@ -92,7 +99,7 @@ window.flowCall = (() => {
         <div class="call-bar" data-call-bar></div>
         <p class="call-help">Snap your fingers (thumb and middle finger) in front of the camera:
           <b>right hand</b> turns you to dust that the wind carries off, <b>left hand</b> breaks you into cubes that walk
-          back and build you again. The other person sees it too.
+          back and build you again. The other person sees it too. <b>Raise both hands</b>: absolute cinema, on both screens.
           Keep the whole hand in view (wrist too), in good light. Missed snaps? <b>Gesture check</b> shows what the camera sees.</p>
         <p class="call-help hidden" data-call-roomseen></p>
       </div>`;
@@ -148,11 +155,12 @@ window.flowCall = (() => {
           <select class="input" data-call-bg ${fxReady && st.fxOn && st.vision ? '' : 'disabled'}>
             ${Object.entries(BG).map(([k, v]) => `<option value="${k}" ${k === st.bg ? 'selected' : ''}>${v}</option>`).join('')}
           </select></label>
-        ${tog('gestures', st.gestures, st.gestures ? 'Gestures on' : 'Gestures off', 'Snap your fingers to start the effects')}
+        ${tog('gestures', st.gestures, st.gestures ? 'Gestures on' : 'Gestures off', 'Snap your fingers for the effects; raise both hands for Absolute cinema')}
         <button type="button" class="btn-secondary" data-call="capture" ${st.vision && st.fxOn ? '' : 'disabled'} title="Step out of view for a moment, so the room behind you is kept: you then vanish into your real room">Capture room</button>
         <button type="button" class="btn-secondary call-tog ${st.check ? 'on' : ''}" data-call="check" aria-pressed="${st.check}" ${st.vision ? '' : 'disabled'} title="Show what the camera sees of your hands">Gesture check</button>
         <button type="button" class="btn-secondary" data-call="ash" ${fxReady && st.fxOn ? '' : 'disabled'} title="Dust (snap with your right hand)">Dust</button>
         <button type="button" class="btn-secondary" data-call="voxel" ${fxReady && st.fxOn ? '' : 'disabled'} title="Voxels (snap with your left hand)">Voxels</button>
+        <button type="button" class="btn-secondary" data-call="cinema" title="Absolute cinema, on both screens (raise both hands)">Cinema</button>
         <span class="call-sep"></span>
         <button type="button" class="btn-danger" data-call="leave">${st.room ? 'Leave call' : 'Stop camera'}</button>` : ''}`;
   }
@@ -170,6 +178,7 @@ window.flowCall = (() => {
     else if (what === 'gestures') { st.gestures = !st.gestures; render(); }
     else if (what === 'check') { st.check = !st.check; render(); }
     else if (what === 'capture') captureRoom();
+    else if (what === 'cinema') cinema(null);
     else if (what === 'ash' || what === 'voxel') { if (st.fx) st.fx.trigger(what, 0.5, 0.75); }
   }
   function onChange(e) {
@@ -265,13 +274,20 @@ window.flowCall = (() => {
   const snaps = {}; // one detector per hand (public/gesture.js)
   const seen = {}; // hand → its last { gap, curl, state, at }, for Gesture check
   let lastSnap = null; // { side, at }
+  const raise = window.flowGesture.raiseDetector();
+  let raised = null; // its last { up, state, parts }, for Gesture check
   function onVision(now, hands, mask, mw, mh) {
     const fx = st.fx;
     if (!fx) return;
-    if (mask) { fx.mask(mask, mw, mh); paintRoomSeen(); }
+    fx.mask(mask, mw, mh, hands ? hands.landmarks : []);
+    if (mask) paintRoomSeen();
     const cam = $q('[data-call-cam]');
     const w = cam.videoWidth;
     const h = cam.videoHeight;
+    if (hands) {
+      raised = raise(hands.landmarks, now, w / h);
+      if (raised.fire && st.gestures) cinema(null);
+    }
     (hands ? hands.landmarks : []).forEach((lm, n) => {
       // MediaPipe names hands as if the picture were mirrored; the camera's picture is not, so "Left" is your right hand
       const side = (hands.handedness[n] && hands.handedness[n][0] && hands.handedness[n][0].categoryName) || 'Right';
@@ -289,6 +305,27 @@ window.flowCall = (() => {
       }
     });
     if (st.check) paintCheck(now);
+  }
+
+  // Absolute cinema, by you (name null: tell the other tab too) or by the other person. Restarting it restarts the CSS
+  // animation; only classes and one line of text change.
+  let cinemaTimer = null;
+  function cinema(name) {
+    const stage = $q('[data-call-stage]');
+    if (!stage) return;
+    if (name == null && st.room) send({ type: 'call-gesture', gesture: 'both-hands-raised' });
+    $q('[data-call-cinema-who]').textContent = name == null ? 'You' : name;
+    stage.classList.remove('cinema');
+    void stage.offsetWidth; // so the animation starts over
+    stage.classList.add('cinema');
+    clearTimeout(cinemaTimer);
+    cinemaTimer = setTimeout(endCinema, CINEMA_MS);
+  }
+  function endCinema() {
+    clearTimeout(cinemaTimer);
+    cinemaTimer = null;
+    const stage = $q('[data-call-stage]');
+    if (stage) stage.classList.remove('cinema');
   }
 
   // When you vanish, what shows where you were is the room the camera saw behind you; what it never saw is filled in
@@ -340,6 +377,8 @@ window.flowCall = (() => {
     if (now - painted < 120) return;
     painted = now;
     const D = window.flowGesture.DEFAULTS;
+    const R = window.flowGesture.RAISE;
+    const ok = (pass, text) => `<span class="call-check-${pass ? 'on' : 'off'}">${text}</span>`;
     const row = (side, label) => {
       const r = seen[side];
       if (!r || now - r.at > 500) return `<p><b>${label}</b> <span class="call-check-off">not in view</span></p>`;
@@ -355,6 +394,9 @@ window.flowCall = (() => {
       <p><b>Your hands</b> · tracked ${fps} times a second${fps < 20 ? ' <span class="call-check-off">(low: snaps can be missed; close other tabs and apps)</span>' : ''}</p>
       ${row('Left', 'Right hand → Dust')}
       ${row('Right', 'Left hand → Voxels')}
+      <p><b>Both hands raised</b> ${raised ? `${raised.up}/2 up · <span class="call-check-${raised.state === 'down' ? 'off' : raised.state === 'up' ? 'on' : 'far'}">${raised.state}</span>` : ''}
+        ${raised ? raised.parts.filter(Boolean).map((r, n) => `<br>hand ${n + 1}: ${ok(r.wrist <= R.top, `wrist ${r.wrist.toFixed(2)} down/${R.top}`)}
+          · ${ok(r.upright >= R.upright, `upright ${r.upright.toFixed(2)}/${R.upright}`)} · ${ok(r.open >= R.open, `fingers out ${r.open}/${R.open}`)}`).join('') : ''}</p>
       ${lastSnap && now - lastSnap.at < 1500 ? `<p class="call-check-snap">Snap! (${lastSnap.side === 'Left' ? 'right' : 'left'} hand)</p>` : ''}
       <p class="call-check-hint">Press thumb and middle finger together until it says <i>pressed</i> (gap ≤ ${D.pressed}), then snap:
         within ${D.within} ms the gap passes ${D.apart}, opening at ${D.speed}+ hand sizes a second, as the finger drops ${D.drop}+ into your palm.</p>`;
@@ -364,10 +406,13 @@ window.flowCall = (() => {
     const { FilesetResolver, HandLandmarker, ImageSegmenter } = await import(`${VISION}/vision_bundle.mjs`);
     const files = await FilesetResolver.forVisionTasks(`${VISION}/wasm`);
     const make = (delegate) => Promise.all([
-      // low presence / tracking bars: the hand stays tracked through the blur of the snap itself
+      // The hands always on the CPU: on the GPU (an M4 Mac) the palm finder missed one of two raised hands that the CPU
+      // finds every frame, at any confidence; tracking still keeps up with a 30 fps camera. Low bars: the hand stays
+      // tracked through the blur of the snap itself, and raised hands are found (at the picture's edge, cut off or
+      // against the light, the palm finder scores them 0.3–0.5: at 0.5 one of two was missed)
       HandLandmarker.createFromOptions(files, {
-        baseOptions: { modelAssetPath: HAND_MODEL, delegate }, runningMode: 'VIDEO', numHands: 2,
-        minHandDetectionConfidence: 0.5, minHandPresenceConfidence: 0.3, minTrackingConfidence: 0.3,
+        baseOptions: { modelAssetPath: HAND_MODEL, delegate: 'CPU' }, runningMode: 'VIDEO', numHands: 2,
+        minHandDetectionConfidence: 0.3, minHandPresenceConfidence: 0.3, minTrackingConfidence: 0.3,
       }),
       ImageSegmenter.createFromOptions(files, {
         baseOptions: { modelAssetPath: SEG_MODEL, delegate }, runningMode: 'VIDEO', outputConfidenceMasks: true, outputCategoryMask: false,
@@ -484,6 +529,60 @@ window.flowCall = (() => {
   const MASK = 'float personAt(vec2 uv) { return texture2D(uMask, vec2(uv.x, 1.0 - uv.y)).r; }'; // the mask's rows go top down
   const QUAD_VS = 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }';
   const PLANE_VS = 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }';
+
+  // The person mask with your hands drawn in. The selfie model hardly sees fingers (2–3 of its 256 pixels across, and
+  // unsure of them): feathered, they went half see-through, and as they were not "you", their skin went into the room
+  // the blur is made of (smeared round the hand). The hand landmarks see them well, so the hand is drawn in from them:
+  // each finger bone a capsule (a line with round ends) a little wider than the finger, the palm as four triangles,
+  // the wrist a short way down the forearm; then everything else reads it as the mask (uMask), so the hand is crisp
+  // and solid, the blur and the kept room never take it, and Dust and Voxels take it with the rest of you.
+  // Unsure pixels of the model's own (a thin arm, at 0.2–0.5) count as you too. Rows top down, like MediaPipe's mask.
+  const HANDS_FS = `
+    uniform sampler2D uRaw; // MediaPipe's mask
+    uniform vec2 uHand[42]; // the landmarks of up to two hands, in the picture (0–1, y down)
+    uniform int uHands;
+    uniform float uAspect;
+    varying vec2 vUv;
+    vec2 at(int i) { return uHand[i] * vec2(uAspect, 1.0); } // in picture heights both ways: circles stay round
+    float capsule(vec2 p, int a, int b, float r) {
+      vec2 pa = p - at(a);
+      vec2 ba = at(b) - at(a);
+      return length(pa - ba * clamp(dot(pa, ba) / max(dot(ba, ba), 1e-8), 0.0, 1.0)) - r;
+    }
+    float side(vec2 p, vec2 a, vec2 b) { return (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x); }
+    float inside(vec2 p, int a, int b, int c) { // -1 inside the triangle, 1 outside
+      float d1 = side(p, at(a), at(b));
+      float d2 = side(p, at(b), at(c));
+      float d3 = side(p, at(c), at(a));
+      return (d1 >= 0.0 && d2 >= 0.0 && d3 >= 0.0) || (d1 <= 0.0 && d2 <= 0.0 && d3 <= 0.0) ? -1.0 : 1.0;
+    }
+    // how far outside hand o (its first landmark) p is, in picture heights; below 0: inside
+    float hand(vec2 p, int o) {
+      float s = length(at(o + 9) - at(o)); // the hand's size: wrist → middle knuckle (a real hand: about 9 cm)
+      float f = 0.11 * s; // half a finger's width (about 0.1), and a little more: the landmarks lag a hand that moves
+      float d = min(capsule(p, o, o + 1, 1.3 * f), capsule(p, o + 1, o + 2, 1.15 * f)); // thumb
+      d = min(d, min(capsule(p, o + 2, o + 3, 1.1 * f), capsule(p, o + 3, o + 4, 1.1 * f)));
+      for (int k = 5; k <= 17; k += 4) { // index, middle, ring, little finger: knuckle → tip
+        d = min(d, min(capsule(p, o + k, o + k + 1, f), min(capsule(p, o + k + 1, o + k + 2, f), capsule(p, o + k + 2, o + k + 3, 0.95 * f))));
+      }
+      d = min(d, min(inside(p, o, o + 1, o + 5), inside(p, o, o + 5, o + 9))); // the palm
+      d = min(d, min(inside(p, o, o + 9, o + 13), inside(p, o, o + 13, o + 17)));
+      d = min(d, min(capsule(p, o + 5, o + 9, f), min(capsule(p, o + 9, o + 13, f), min(capsule(p, o + 13, o + 17, f), capsule(p, o, o + 17, f)))));
+      vec2 wrist = at(o);
+      vec2 arm = wrist + (wrist - at(o + 9)) * 0.6; // the forearm, as far as the hand points
+      vec2 pa = p - wrist;
+      vec2 ba = arm - wrist;
+      return min(d, length(pa - ba * clamp(dot(pa, ba) / max(dot(ba, ba), 1e-8), 0.0, 1.0)) - 0.3 * s);
+    }
+    void main() {
+      vec2 p = vUv * vec2(uAspect, 1.0);
+      float d = 1.0;
+      if (uHands > 0) d = hand(p, 0);
+      if (uHands > 1) d = min(d, hand(p, 21));
+      float drawn = clamp(0.5 - d * 256.0, 0.0, 1.0); // a mask pixel's worth of smooth edge
+      float model = smoothstep(0.2, 0.5, texture2D(uRaw, vUv).r);
+      gl_FragColor = vec4(max(model, drawn), 0.0, 0.0, 1.0);
+    }`;
 
   // The person mask, feathered: MediaPipe's mask is 256 × 256 with hard, stepped edges. Blurred on the GPU (a Gaussian,
   // across then down) twice: a little (uSoft: the edge of you, soft and smooth) and a lot (uWide: the margin round you).
@@ -859,7 +958,7 @@ window.flowCall = (() => {
     };
     const U = {
       uVideo: { value: videoTex },
-      uMask: { value: maskTex(1, 1, 255) }, // until the first mask: all of the picture is "you"
+      uMask: { value: null }, // the person mask with the hands drawn in (HANDS_FS)
       uPlate: { value: null },
       uFill: { value: null },
       uSeen: { value: null },
@@ -907,6 +1006,16 @@ window.flowCall = (() => {
       renderer.render(plateScene, camera);
     };
 
+    // the person mask with the hands drawn in (HANDS_FS), what everything reads as uMask
+    let raw = maskTex(1, 1, 255); // MediaPipe's; until the first one, all of the picture is "you"
+    const merged = new T.WebGLRenderTarget(256, 256, { depthBuffer: false });
+    const handsMat = new T.ShaderMaterial({
+      uniforms: { uRaw: { value: raw }, uHand: { value: Array.from({ length: 42 }, () => new T.Vector2()) }, uHands: { value: 0 }, uAspect: U.uAspect },
+      vertexShader: QUAD_VS, fragmentShader: HANDS_FS, depthTest: false,
+    });
+    owned.push(handsMat, merged);
+    U.uMask.value = merged.texture;
+
     // the feathered masks (BLUR_FS): soft, σ ≈ 0.7 % of the height (5 px at 720p); wide, σ ≈ 3 % (the margin)
     const target = (w, h) => new T.WebGLRenderTarget(w, h, { depthBuffer: false });
     const soft = [target(256, 256), target(256, 256)];
@@ -926,6 +1035,7 @@ window.flowCall = (() => {
       pass(blurMat, out[1]);
     }
     function blurMask() {
+      pass(handsMat, merged);
       blur(U.uMask.value, true, 0.0035, 0.0035, soft);
       blur(soft[1].texture, false, 0.015, 0.015, wide);
     }
@@ -1096,18 +1206,24 @@ window.flowCall = (() => {
       roomSeen: () => roomSeen,
       /** 0–1: how much of the whole picture's room was seen */
       frameSeen: () => frameSeen,
-      // a person mask (0–1, rows top down) → the mask texture, then the room-without-you is brought up to date
-      mask(f32, w, h) {
-        let tex = U.uMask.value;
-        if (tex.image.width !== w || tex.image.height !== h) {
-          tex.dispose();
-          tex = maskTex(w, h, 0);
-          U.uMask.value = tex;
+      // every tracked frame: the hands' landmarks (MediaPipe's, 0–1) and the person mask (0–1, rows top down), or no
+      // mask (a slow computer gets one every other frame) → the masks; with a mask, the room-without-you too
+      mask(f32, w, h, hands) {
+        const hu = handsMat.uniforms;
+        hu.uHands.value = Math.min(hands ? hands.length : 0, 2);
+        for (let n = 0; n < hu.uHands.value; n++) hands[n].forEach((p, i) => hu.uHand.value[n * 21 + i].set(p.x, p.y));
+        if (f32) {
+          if (raw.image.width !== w || raw.image.height !== h) {
+            raw.dispose();
+            raw = maskTex(w, h, 0);
+            hu.uRaw.value = raw;
+          }
+          const d = raw.image.data;
+          for (let i = 0; i < d.length; i++) d[i] = f32[i] * 255;
+          raw.needsUpdate = true;
         }
-        const d = tex.image.data;
-        for (let i = 0; i < d.length; i++) d[i] = f32[i] * 255;
-        tex.needsUpdate = true;
         blurMask();
+        if (!f32) { renderer.setRenderTarget(null); return; }
         plateMat.uniforms.uOld.value = plates[plateAt].texture;
         plateAt ^= 1;
         calmMat.uniforms.uOldCalm.value = calms[calmAt].texture;
@@ -1133,7 +1249,7 @@ window.flowCall = (() => {
       dispose() {
         renderer.setAnimationLoop(null);
         track.stop();
-        U.uMask.value.dispose();
+        raw.dispose();
         owned.forEach((x) => x.dispose());
         renderer.dispose();
         renderer.forceContextLoss();
@@ -1231,6 +1347,10 @@ window.flowCall = (() => {
   /** a "call-…" message from the server */
   function signal(m) {
     if (m.type === 'call-signal') { onSignal(m); return; }
+    if (m.type === 'call-gesture') {
+      if (st.room && m.gesture === 'both-hands-raised') cinema(st.peerInfo ? st.peerInfo.name : 'They');
+      return;
+    }
     if (!st.room || !st.media) return;
     if (m.type === 'call-joined') {
       st.peerInfo = m.peer;
@@ -1262,6 +1382,7 @@ window.flowCall = (() => {
   }
 
   function leave() {
+    endCinema();
     if (st.room) send({ type: 'call-leave' });
     dropPeer();
     stopMedia();

@@ -1,4 +1,4 @@
-/* FlowTrace — finger snap ("chutki") from MediaPipe hand landmarks. © 2026 FinDevelopers
+/* FlowTrace — finger snap ("chutki") and both hands raised, from MediaPipe hand landmarks. © 2026 FinDevelopers
  *
  * A snap, as the camera sees it: thumb tip (4) and middle fingertip (12) pressed together, then the middle finger
  * slips off and slaps down into the palm. So per hand, every frame:
@@ -14,7 +14,24 @@
  * curl rises), or opens slowly.
  * When a try is not a snap, `missed` says what it reached (gap, speed, drop), to see which limit stopped it.
  *
- * Node: require('./public/gesture') → { snapDetector, measure } for the tests; browser: window.flowGesture.
+ * Both hands raised ("absolute cinema"): on the picture's landmarks (0–1, y down), measured with the picture's
+ * aspect (a 16:9 picture is wider than tall: x is stretched back, so a tilted hand measures right).
+ * A hand is raised when it is
+ *   upright  middle knuckle (9) above the wrist by `upright` hand sizes or more (straight up: 1; sideways: 0)
+ *   open     3 of the 4 fingertips (8 12 16 20) farther from the wrist than their middle joints (6 10 14 18):
+ *            a fist, or a hand on the chin, is not raised
+ *   not low  wrist (0) above the bottom of the picture (`top` of its height): only a loose bound, as where a raised
+ *            hand shows depends on the framing (a camera close by, the face out of view: the wrist at 70 %)
+ * The hand's own pose is what says "raised": both open palms up, apart, held.
+ * Both = two raised hands at least `apart` of the picture's width from each other: left and right are told apart by
+ * where they are, not by MediaPipe's handedness, which can name both hands the same. No pose model is needed: it
+ * would add a third model per frame for what the hands' place in the picture already shows.
+ * It fires once both have been up `hold` ms, then not again until a hand comes down (frames without both up for
+ * `lost` ms: a frame or two of bad tracking, or a pause with no frames at all, is not coming down) and at most once
+ * per `rest` ms.
+ *
+ * Node: require('./public/gesture') → { snapDetector, measure, raiseDetector, handRaised } for the tests; browser:
+ * window.flowGesture.
  */
 (function (root, factory) {
   const api = factory();
@@ -89,5 +106,64 @@
     };
   }
 
-  return { snapDetector, measure, DEFAULTS };
+  const RAISE = {
+    top: 0.85, // the wrist above this much of the picture's height, from the top
+    upright: 0.6, // knuckle above the wrist, in hand sizes
+    open: 3, // fingers out (of 4)
+    apart: 0.2, // the two wrists at least this far apart, in picture widths
+    hold: 300, // ms both up before it counts
+    lost: 300, // ms of frames without both up: a hand came down
+    rest: 3000, // ms after one before the next
+  };
+
+  /** one hand's 21 picture landmarks (0–1, y down), picture width / height → { wrist, upright, open }, or null */
+  function raiseParts(p, aspect = 1) {
+    if (!p || p.length < 21) return null;
+    const flat = (a, b) => Math.hypot((a.x - b.x) * aspect, a.y - b.y);
+    const size = flat(p[0], p[9]);
+    if (!(size > 0)) return null;
+    return {
+      wrist: p[0].y,
+      upright: (p[0].y - p[9].y) / size,
+      open: [[8, 6], [12, 10], [16, 14], [20, 18]].filter(([tip, joint]) => flat(p[tip], p[0]) > flat(p[joint], p[0])).length,
+    };
+  }
+  /** raised? (raiseParts against the limits) */
+  function handRaised(p, options, aspect) {
+    const o = { ...RAISE, ...options };
+    const r = raiseParts(p, aspect);
+    return Boolean(r) && r.wrist <= o.top && r.upright >= o.upright && r.open >= o.open;
+  }
+
+  /**
+   * update(hands, ms, aspect) → { up, state, fire, parts }, every frame, with every hand in view (an array of 21
+   * picture landmarks each; [] when none) and the picture's width / height. up: how many hands are raised (0–2);
+   * state: 'down' | 'rising' (both up, not `hold` yet) | 'up' (fired, waiting for a hand to come down); fire: true
+   * once per raise; parts: each hand's raiseParts, to show what stops it.
+   */
+  function raiseDetector(options) {
+    const o = { ...RAISE, ...options };
+    let since = null; // both up since
+    let down = null; // since when the frames have not shown both up (while since is set)
+    let fired = false; // this raise has fired
+    let at = -Infinity; // when the last one fired
+    return function update(hands, t, aspect = 1) {
+      const parts = (hands || []).map((p) => raiseParts(p, aspect));
+      const wrists = (hands || []).filter((p, i) => parts[i] && parts[i].wrist <= o.top && parts[i].upright >= o.upright && parts[i].open >= o.open)
+        .map((p) => p[0].x).sort((a, b) => a - b);
+      const both = wrists.length >= 2 && wrists[wrists.length - 1] - wrists[0] >= o.apart;
+      if (both) {
+        if (since === null) { since = t; fired = false; }
+        down = null;
+      } else if (since !== null) {
+        if (down === null) down = t;
+        if (t - down >= o.lost) { since = null; down = null; }
+      }
+      let fire = false;
+      if (both && !fired && t - since >= o.hold && t - at >= o.rest) { fired = true; at = t; fire = true; }
+      return { up: Math.min(wrists.length, 2), state: since === null ? 'down' : fired ? 'up' : 'rising', fire, parts };
+    };
+  }
+
+  return { snapDetector, measure, DEFAULTS, raiseDetector, handRaised, raiseParts, RAISE };
 }));

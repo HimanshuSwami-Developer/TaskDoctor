@@ -9,17 +9,21 @@
  *
  *   browser → server   { type: 'call-join', room }
  *                      { type: 'call-signal', description?, candidate? }   passed to the other tab in the room
+ *                      { type: 'call-gesture', gesture }                    passed on (only GESTURES): a reaction, e.g.
+ *                                                                          both hands raised, shown on both screens
  *                      { type: 'call-leave' }
  *   server → browser   { type: 'call-joined', room, polite, peer }         peer = { id, name }, or null: waiting
  *                      { type: 'call-peer', peer }                         someone joined your room
  *                      { type: 'call-left' }                               they left, or their tab closed
  *                      { type: 'call-signal', description?, candidate? }
+ *                      { type: 'call-gesture', gesture }
  *                      { type: 'call-full', room }
  */
 const { createHmac } = require('crypto');
 
 const ROOM = /^[a-z0-9][a-z0-9-]{2,39}$/;
 const SIZE = 2;
+const GESTURES = ['both-hands-raised'];
 
 function create() {
   const rooms = new Map(); // room → Map(ws → { id, name })
@@ -66,10 +70,15 @@ function create() {
     others(ws).forEach((o) => send(o, out));
   }
 
+  function gesture(ws, m) {
+    if (GESTURES.includes(m.gesture)) others(ws).forEach((o) => send(o, { type: 'call-gesture', gesture: m.gesture }));
+  }
+
   /** a message from a signed-in tab (user = { id, name, username }) */
   function message(ws, user, m) {
     if (m.type === 'call-join') join(ws, user, m.room);
     else if (m.type === 'call-signal') signal(ws, m);
+    else if (m.type === 'call-gesture') gesture(ws, m);
     else if (m.type === 'call-leave') leave(ws);
   }
 
