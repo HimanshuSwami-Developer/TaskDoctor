@@ -97,7 +97,7 @@
       "title": "⚠️ Margin Shortfall Alert — Action Required",
       "body": "<div style=\"font-family:Arial,sans-serif;max-width:600px;margin:0 auto;\"><div style=\"background:#b71c1c;padding:24px;text-align:center;font-size:40px;\">⚠️</div><div style=\"padding:28px;\"><h2>Margin Shortfall Notice</h2><p>Dear <strong>${firstName}</strong>,<br /><br />We have detected a margin shortfall in your trading account. Please review the details below and take immediate action to avoid any disruption to your positions.</p><div style=\"background:#f5f5f5;border-radius:8px;padding:16px;\">Shortfall Date: ${dateStr}<br/>Shortfall Amount: ${amount}</div><p><strong>Action required:</strong> Please deposit the required funds or reduce your open positions at the earliest to avoid margin call or forced square-off.</p><p>If you have already taken action, please disregard this notice.</p><p>Regards,<br /><strong>FinDost Risk Management Team</strong></p></div></div>",
       "variables": ["firstName: client's first name", "dateStr: shortfall date (dd Mon yyyy)", "amount: ₹ formatted shortfall amount"],
-      "trigger": "AP/DRA notifies margin-shortfall clients with channel 'email' (Dashboard > Margin Shortfall)",
+      "trigger": "AP/DRA notifies margin-shortfall clients and picks Email (Dashboard > Margin Shortfall > Notify All / Notify Selected > Notify via Email; Flutter app: Notify All > Email). Only the picked channel is sent",
       "provider": "SMTP (nodemailer)",
       "source": "findost_be/src/utilities/email/templates/client.templates.js:158"
     },
@@ -300,10 +300,10 @@
       "title": "FinDost Notification",
       "body": "Dear {{1}} {{2}} Thank you for choosing FinDost.",
       "variables": ["{{1}}: client name followed by a comma ('Customer,' when unknown)", "{{2}}: your trading account (Client Code ${ucc}) has a margin shortfall of ₹${amount} as on ${date}. Please add funds at the earliest to avoid square-off of your positions."],
-      "trigger": "AP/DRA notifies margin-shortfall clients with channel 'whatsapp' (default channels: e-mail + WhatsApp). Body text known only from a code comment, not from the provider",
+      "trigger": "AP/DRA notifies margin-shortfall clients and picks WhatsApp (Dashboard > Margin Shortfall > Notify All / Notify Selected > Notify via WhatsApp; Flutter app: Notify All > WhatsApp). Only the picked channel is sent; the API still defaults to e-mail + WhatsApp when no channels are passed. Body text known only from a code comment, not from the provider",
       "provider": "LimeChat (Meta-approved template)",
       "externalId": "LIMECHAT_TEMPLATE_ID",
-      "source": "findost_be/src/services/notification.service.js:53; findost_be/src/services/limechatWhatsapp.service.js:32"
+      "source": "findost_be/src/services/notification.service.js:58; findost_be/src/services/limechatWhatsapp.service.js:32; findost_r_fe/src/pages/dashboard-pages/dashboard/components/margin-shortfall/margin-shortfall-popup/MarginShortfallPopup.jsx:122; findost_fe/lib/presentation/widgets/dashboard/margin_shortfall_dialoug.dart:91"
     },
     {
       "channel": "whatsapp",
@@ -384,6 +384,49 @@
       "trigger": "Fallback WhatsApp link when the backend's EKYC_WHATSAPP_ONBOARDING_URL is not set; opens a chat with Findoc's number",
       "provider": "wa.me link",
       "source": "findost_r_fe/src/store/client/store/useClientStore.js:397; findost_be/src/services/admin/channelPartner.service.js:475"
+    },
+    {
+      "channel": "whatsapp",
+      "name": "FinDost Notification (invite link)",
+      "title": "FinDost Notification",
+      "body": "Dear {{1}} {{2}} Thank you for choosing FinDost.",
+      "variables": ["{{1}}: client name followed by a comma ('Customer,' when unknown)", "{{2}}: we'd love to help your friends and family start their investment journey too. Share this link with them to open their trading account with FinDost: ${link}", "link: partner's eKYC invite link (?subType=..&agentId=..&branchId=..) from the first share icon, or EKYC_WHATSAPP_ONBOARDING_URL from the second (WhatsApp invite link) share icon"],
+      "trigger": "Dashboard > Share & Invite card > share icon > Share on WhatsApp > tick clients > Send on WhatsApp (POST /notifications/invite { uccs, link_type: 'invite' | 'whatsapp' }). Only the partner's own clients are messaged (admins: clients of their network); max 500 per send; clients without a valid mobile are skipped. The popup shows this exact text with <Client Name> before sending (GET preview endpoint).",
+      "provider": "LimeChat (Meta-approved template)",
+      "externalId": "LIMECHAT_TEMPLATE_ID",
+      "source": "findost_be/src/services/notification.service.js:239; findost_r_fe/src/pages/dashboard-pages/dashboard/components/invite-share-card/InviteShareCard.jsx:244"
+    },
+    {
+      "channel": "whatsapp",
+      "name": "FinDost Notification (IPO)",
+      "title": "FinDost Notification",
+      "body": "Dear {{1}} {{2}} Thank you for choosing FinDost.",
+      "variables": ["{{1}}: client name followed by a comma ('Customer,' when unknown)", "{{2}}: the ${ipoName} IPO is now open for subscription. View the details and apply here: ${link}", "ipoName: IPO name looked up from the symbol", "link: https://ipo.findoc.com/ipo/<slug>-ipo (same slug rule as the IPO e-mail template)"],
+      "trigger": "IPO Details (open IPOs) > Share > WhatsApp to Clients > tick clients > Send on WhatsApp (POST /notifications/ipo/whatsapp { uccs, symbol }). Only the partner's own clients are messaged (admins: clients of their network); max 500 per send; clients without a valid mobile are skipped. The popup shows this exact text with <Client Name> before sending (GET preview endpoint).",
+      "provider": "LimeChat (Meta-approved template)",
+      "externalId": "LIMECHAT_TEMPLATE_ID",
+      "source": "findost_be/src/services/notification.service.js:267; findost_r_fe/src/pages/dashboard-pages/ipo/IpoDetail.jsx:420"
+    },
+    {
+      "channel": "whatsapp",
+      "name": "FinDost Notification (mutual fund)",
+      "title": "FinDost Notification",
+      "body": "Dear {{1}} {{2}} Thank you for choosing FinDost.",
+      "variables": ["{{1}}: client name followed by a comma ('Customer,' when unknown)", "{{2}}: here is a mutual fund you may like: ${schemeName} (${category}). Returns: 1Y ${r1y}%, 3Y ${r3y}%, 5Y ${r5y}%. View the details and invest here: ${link}", "schemeName: fund name from the scheme details", "category: sub-category, else asset type (the bracket is left out when neither is known)", "r1y / r3y / r5y: trailing returns, 2 decimals (each one left out when unknown; the whole 'Returns:' sentence when none)", "link: MF_SCHEME_SHARE_URL + scheme code (default https://finzoom.findoc.com/scheme-details/?schemeCode=<code>)"],
+      "trigger": "Mutual Funds > Explore Funds > open a fund > Share > WhatsApp to Clients > tick clients > Send on WhatsApp (POST /notifications/mf/whatsapp { uccs, code }). Only the partner's own clients are messaged (admins: clients of their network); max 500 per send; clients without a valid mobile are skipped. The popup shows this exact text with <Client Name> before sending (GET preview endpoint).",
+      "provider": "LimeChat (Meta-approved template)",
+      "externalId": "LIMECHAT_TEMPLATE_ID",
+      "source": "findost_be/src/services/notification.service.js:296; findost_r_fe/src/pages/dashboard-pages/mutual-funds/components/explore/SchemeShareMenu.jsx:122"
+    },
+    {
+      "channel": "whatsapp",
+      "name": "mf_scheme_share_wa_me",
+      "title": "Mutual Fund Share (WhatsApp / Copy)",
+      "body": "📊 *${schemeName}*\n\n📂 Category: ${category}\n💰 NAV: ₹${nav}\n📈 Returns:\n  • 1Y: ${r1y}%\n  • 3Y: ${r3y}%\n  • 5Y: ${r5y}%\n💵 Min SIP: ₹${minSip}\n💵 Min Lumpsum: ₹${minLumpsum}\n\n👉 View & Invest: https://finzoom.findoc.com/scheme-details/?schemeCode=${code}",
+      "variables": ["schemeName: fund name", "category: sub-category, else asset type", "nav: current NAV (2 decimals)", "r1y / r3y / r5y: trailing returns, 2 decimals", "minSip: monthly SIP minimum", "minLumpsum: lumpsum minimum", "code: scheme code. Every line whose value is unknown is left out"],
+      "trigger": "Mutual Funds > Explore Funds > open a fund > Share > WhatsApp (wa.me/?text=, pick any chat) or Copy. Same layout as the FinZoom app's fund share",
+      "provider": "wa.me link / clipboard",
+      "source": "findost_r_fe/src/pages/dashboard-pages/mutual-funds/components/explore/SchemeShareMenu.jsx:28"
     },
     {
       "channel": "push",
