@@ -321,7 +321,7 @@ function password(value) {
   return value.slice(0, 200);
 }
 
-// who is online (presence.js), set once the server listens
+// who is online (presence.js), set when this file starts the server
 let online = null;
 
 // with when each login last signed in, whether it is signed in now, and whether it is online now (Admin page)
@@ -3267,21 +3267,24 @@ async function ensureSuperAdmin() {
   console.log(`Super admin "${username}" created.`);
 }
 
-// `npm start` runs this file, and so does Vercel (its Express support takes over app.listen); the tests require it
-// for the app and start their own server (test/journal.api.test.js)
+// `npm start` runs this file, and so does Vercel; the tests require it for the app and start their own server
+// (test/journal.api.test.js).
+// The HTTP server is made here (not by app.listen) so the WebSocket (/ws: who is online, video call signalling) is
+// attached to it straight away, and so it is what this file exports: Vercel serves an exported http.Server WebSockets
+// included, while an exported Express app gets no upgrade, so /ws answered 404 there ("Not connected to the server").
+const server = require('http').createServer(app);
 if (require.main === module || process.env.VERCEL) {
+  online = presence.attach(server, { db, auth, calls: calls.create() });
   db.init()
     .then(ensureSuperAdmin)
     .then(() => {
-      const server = app.listen(PORT, () => {
-        console.log(`FlowTrace running at http://localhost:${PORT}`);
-        if (!cloud.configured()) console.log('Image uploads are off: add the Cloudinary keys to .env to turn them on.');
-        if (!process.env.APP_URL) console.log('APP_URL is not set: Teams reminders will have no "Start sanity" link.');
-        if (!assist.configured()) console.log('The AI writing assistant is off: add GROQ_API_KEY to .env to turn it on (quick checks still run).');
-        setInterval(() => sanityReminders().catch((err) => console.error('Sanity reminders:', err.message)), 60 * 1000);
-      });
-      // who is online, and video call signalling: a WebSocket on the same port (/ws)
-      online = presence.attach(server, { db, auth, calls: calls.create() });
+      if (!process.env.VERCEL) {
+        server.listen(PORT, () => console.log(`FlowTrace running at http://localhost:${PORT}`));
+      }
+      if (!cloud.configured()) console.log('Image uploads are off: add the Cloudinary keys to .env to turn them on.');
+      if (!process.env.APP_URL) console.log('APP_URL is not set: Teams reminders will have no "Start sanity" link.');
+      if (!assist.configured()) console.log('The AI writing assistant is off: add GROQ_API_KEY to .env to turn it on (quick checks still run).');
+      setInterval(() => sanityReminders().catch((err) => console.error('Sanity reminders:', err.message)), 60 * 1000);
     })
     .catch((err) => {
       console.error('Could not connect to the database:', err.message);
@@ -3289,6 +3292,7 @@ if (require.main === module || process.env.VERCEL) {
     });
 }
 
-// the app itself is the export (what a serverless host calls); `.app` keeps `const { app } = require('./server')` working
-module.exports = app;
+// the server is the export (what Vercel serves); `.app` keeps `const { app } = require('./server')` working
+module.exports = server;
 module.exports.app = app;
+module.exports.server = server;
