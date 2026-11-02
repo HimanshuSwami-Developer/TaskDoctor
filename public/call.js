@@ -243,9 +243,41 @@ window.flowCall = (() => {
 
   // ---------------------------------------------------------------- effects: load, and MediaPipe → shader uniforms
 
+  // Is WebGL drawn by the graphics card? Without acceleration (Chrome on Ubuntu with a blocklisted driver, Windows in a
+  // VM / over Remote Desktop / on a basic display driver) it runs in software (SwiftShader, llvmpipe, Microsoft Basic
+  // Render Driver): the effects then take the whole CPU, the video sent stutters and the hand tracking starves, so no
+  // gesture is seen. Then the plain camera is sent and the effects are not started.
+  let gpu = null;
+  function gpuInfo() {
+    if (gpu) return gpu;
+    let renderer = '';
+    let ok = false;
+    try {
+      const gl = document.createElement('canvas').getContext('webgl2');
+      if (gl) {
+        ok = true;
+        const ext = gl.getExtension('WEBGL_debug_renderer_info');
+        renderer = String(gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER) || '');
+        const lose = gl.getExtension('WEBGL_lose_context');
+        if (lose) lose.loseContext();
+      }
+    } catch (err) { ok = false; }
+    const soft = /swiftshader|llvmpipe|softpipe|software|basic render/i.test(renderer);
+    gpu = { ok, soft, renderer };
+    if (!ok || soft) console.warn('Call: no graphics acceleration', renderer || '(no WebGL 2)');
+    return gpu;
+  }
+
   let loading = null;
   function loadEffects() {
     if (loading || st.fx || !st.media) return loading;
+    const g = gpuInfo();
+    if (!g.ok || g.soft) {
+      st.note = !g.ok ? 'Effects and gestures are off: this browser has no WebGL 2'
+        : 'Effects and gestures are off: graphics acceleration is off in this browser (Settings → System → "Use graphics acceleration when available", then restart the browser)';
+      render();
+      return null;
+    }
     st.note = 'Loading effects…';
     render();
     const media = st.media;
@@ -257,7 +289,8 @@ window.flowCall = (() => {
         syncTrack();
         st.note = 'Loading hand and background tracking…';
         render();
-        return createVision($q('[data-call-cam]'), onVision).then((v) => {
+        const trouble = (note) => { if (st.media === media) { st.note = note; render(); } };
+        return createVision($q('[data-call-cam]'), onVision, trouble).then((v) => {
           if (st.media !== media) { v.stop(); return; }
           st.vision = v;
           st.note = '';
@@ -408,7 +441,7 @@ window.flowCall = (() => {
         within ${D.within} ms the gap passes ${D.apart}, opening at ${D.speed}+ hand sizes a second, as the finger drops ${D.drop}+ into your palm.</p>`;
   }
 
-  async function createVision(video, onFrame) {
+  async function createVision(video, onFrame, onTrouble = () => {}) {
     const { FilesetResolver, HandLandmarker, ImageSegmenter } = await import(`${VISION}/vision_bundle.mjs`);
     const files = await FilesetResolver.forVisionTasks(`${VISION}/wasm`);
     const make = (delegate) => Promise.all([
@@ -424,7 +457,31 @@ window.flowCall = (() => {
         baseOptions: { modelAssetPath: SEG_MODEL, delegate }, runningMode: 'VIDEO', outputConfidenceMasks: true, outputCategoryMask: false,
       }),
     ]);
-    const [hands, seg] = await make('GPU').catch(() => make('CPU'));
+    let [hands, seg] = await make('GPU').catch(() => make('CPU'));
+    let segOnGpu = true;
+    let segErrors = 0;
+    let handErrors = 0;
+    // the mask failed on this frame: on the GPU (loads fine, then fails on every frame with some Windows / Linux
+    // drivers) it is made again on the CPU; failing there too, the background effects go without it
+    async function segFailed(err) {
+      segErrors += 1;
+      if (segErrors < 3 || !seg) return;
+      console.error('Call tracking (background):', err);
+      const old = seg;
+      seg = null;
+      try { old.close(); } catch (e) { /* already gone */ }
+      if (segOnGpu) {
+        segOnGpu = false;
+        segErrors = 0;
+        try {
+          seg = await ImageSegmenter.createFromOptions(files, {
+            baseOptions: { modelAssetPath: SEG_MODEL, delegate: 'CPU' }, runningMode: 'VIDEO', outputConfidenceMasks: true, outputCategoryMask: false,
+          });
+          return;
+        } catch (e) { console.error('Call tracking (background, CPU):', e); }
+      }
+      onTrouble('Background blur is off (the person mask failed on this computer); gestures still work');
+    }
     let stopped = false;
     let last = -1;
     let busy = false;
@@ -434,25 +491,40 @@ window.flowCall = (() => {
       if (stopped) return;
       if (video.readyState >= 2 && now > last) {
         last = now;
+        const t0 = performance.now();
+        // the hands and the mask apart: a failing mask must not take the gestures with it
+        let found = null;
         try {
-          const t0 = performance.now();
-          const found = hands.detectForVideo(video, now);
-          // a slow computer: the mask only every other frame, so the hands (the snaps) keep every frame
-          if (busy) { busy = false; onFrame(now, found, null, 0, 0); } else {
+          found = hands.detectForVideo(video, now);
+          handErrors = 0;
+        } catch (err) {
+          handErrors += 1;
+          if (handErrors === 1) console.error('Call tracking (hands):', err);
+          if (handErrors === 30) onTrouble(`Gestures are off: hand tracking fails on this computer (${err && err.message ? err.message : err})`);
+        }
+        let sent = false;
+        // a slow computer: the mask only every other frame, so the hands (the snaps) keep every frame
+        if (!busy && seg) {
+          try {
             seg.segmentForVideo(video, now, (r) => {
               // the last mask is the person (a one-class model has only that one); it is only valid inside this callback
               const masks = r.confidenceMasks || [];
               const m = masks[masks.length - 1];
+              sent = true;
               onFrame(now, found, m ? m.getAsFloat32Array() : null, m ? m.width : 0, m ? m.height : 0);
             });
-            busy = performance.now() - t0 > 25;
-          }
-        } catch (err) { console.error('Call tracking:', err); }
+            segErrors = 0;
+          } catch (err) { segFailed(err); }
+          busy = performance.now() - t0 > 25;
+        } else busy = false;
+        if (!sent) {
+          try { onFrame(now, found, null, 0, 0); } catch (err) { console.error('Call tracking:', err); }
+        }
       }
       next(tick);
     };
     next(tick);
-    return { stop() { stopped = true; hands.close(); seg.close(); } };
+    return { stop() { stopped = true; hands.close(); if (seg) seg.close(); } };
   }
 
   // ---------------------------------------------------------------- effects: Three.js + GLSL
