@@ -7690,7 +7690,13 @@ $(function () {
 
   let callView = null;
   window.flowCall.setup({
-    send: (m) => { if (live.ws && live.ws.readyState === 1) live.ws.send(JSON.stringify(m)); },
+    // true when sent; false while the socket is not open (the call joins again from ws.onopen)
+    send: (m) => {
+      if (!live.ws || live.ws.readyState !== 1) return false;
+      live.ws.send(JSON.stringify(m));
+      return true;
+    },
+    connect: () => connectPresence(), // after a close it gave up on (4401 / 4403), try once more
     ice: () => api('GET', '/api/call/ice', null, null, QUIET).then((r) => r.iceServers, () => []),
     icon,
     toast,

@@ -26,7 +26,7 @@ test('a room holds two; bad room names are ignored', () => {
   const [a, b, x] = [socket(), socket(), socket()];
   c.message(a, ann, { type: 'call-join', room: 'abc' });
   c.message(b, bob, { type: 'call-join', room: 'abc' });
-  c.message(x, bob, { type: 'call-join', room: 'abc' });
+  c.message(x, { id: 'u3', name: 'Cy' }, { type: 'call-join', room: 'abc' });
   assert.deepEqual(last(x), { type: 'call-full', room: 'abc' });
   ['ab', '-abc', 'a b c', 'x'.repeat(41), 42, null].forEach((room) => c.message(x, bob, { type: 'call-join', room }));
   assert.equal(x.got.length, 1);
@@ -98,4 +98,18 @@ test('a gesture goes to the other one in the room, and only a known one', () => 
   assert.equal(b.got.length, n);
   assert.equal(other.got.length, before);
   assert.equal(a.got.filter((m) => m.type === 'call-gesture').length, 0);
+});
+
+test('a full room makes way for the same login joining again (its old socket is stale), not for anyone else', () => {
+  const c = calls.create();
+  const [a, b, aAgain, x] = [socket(), socket(), socket(), socket()];
+  c.message(a, ann, { type: 'call-join', room: 'abc' });
+  c.message(b, bob, { type: 'call-join', room: 'abc' });
+  c.message(x, { id: 'u3', name: 'Cy' }, { type: 'call-join', room: 'abc' });
+  assert.deepEqual(last(x), { type: 'call-full', room: 'abc' });
+  c.message(aAgain, ann, { type: 'call-join', room: 'abc' });
+  assert.deepEqual(last(aAgain), { type: 'call-joined', room: 'abc', polite: true, peer: { id: 'u2', name: 'bob' } });
+  assert.deepEqual(b.got.slice(-2), [{ type: 'call-left' }, { type: 'call-peer', peer: { id: 'u1', name: 'Ann' } }]);
+  c.message(a, ann, { type: 'call-signal', candidate: null }); // the stale socket is out of the room
+  assert.deepEqual(last(b), { type: 'call-peer', peer: { id: 'u1', name: 'Ann' } });
 });

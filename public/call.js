@@ -47,6 +47,7 @@ window.flowCall = (() => {
     draft: '', // the room name typed, before joining
     peerInfo: null, // { id, name } of the other person
     status: '', // waiting | connecting | connected | failed
+    offline: false, // the join could not be sent: the socket is not open (yet)
     media: null, // { stream, video, audio } from the camera
     fx: null, // the effects (Three.js), or null
     vision: null, // MediaPipe, or null
@@ -122,8 +123,9 @@ window.flowCall = (() => {
     $q('[data-call-cam]').classList.toggle('call-offscreen', usingFx);
 
     const who = st.peerInfo ? esc(st.peerInfo.name) : 'the other person';
-    const wait = !st.media ? `${i('video', 32)}<p class="font-medium">Your camera is off</p><p class="text-sm opacity-80">Join a room, or preview your camera and effects first.</p>`
+    const wait = !st.media && !st.room ? `${i('video', 32)}<p class="font-medium">Your camera is off</p><p class="text-sm opacity-80">Join a room, or preview your camera and effects first.</p>`
       : !st.room || connected ? ''
+        : st.offline ? `<p class="font-medium">Not connected to the server</p><p class="text-sm opacity-80">You join <b>${esc(st.room)}</b> as soon as the connection is back.</p>`
         : st.status === 'connecting' ? `<p class="font-medium">Connecting to ${who}…</p>`
           : st.status === 'failed' ? `<p class="font-medium">Could not reach ${who}</p><p class="text-sm opacity-80">Your network blocks a direct connection. A TURN server fixes this (TURN_URLS in .env).</p>`
             : `<p class="font-medium">Waiting for someone to join <b>${esc(st.room)}</b></p><p class="text-sm opacity-80">Send them the link.</p>`;
@@ -132,7 +134,7 @@ window.flowCall = (() => {
     $wait.classList.toggle('hidden', !wait);
     $wait.classList.toggle('over', Boolean(st.media));
 
-    const status = st.room ? (connected ? `<span class="call-dot"></span>In call with ${who}` : st.status === 'connecting' ? 'Connecting…' : st.status === 'failed' ? 'Connection failed' : 'Waiting…') : '';
+    const status = st.room ? (st.offline && !connected ? 'Not connected to the server…' : connected ? `<span class="call-dot"></span>In call with ${who}` : st.status === 'connecting' ? 'Connecting…' : st.status === 'failed' ? 'Connection failed' : 'Waiting…') : '';
     $q('[data-call-status]').innerHTML = [status, st.note && `<span class="text-slate-400">${esc(st.note)}</span>`].filter(Boolean).join(' · ');
 
     const tog = (key, on, label, title) => `<button type="button" class="btn-secondary call-tog ${on ? 'on' : 'off'}" data-call="${key}" aria-pressed="${on}" title="${esc(title)}">${label}</button>`;
@@ -160,8 +162,10 @@ window.flowCall = (() => {
         <button type="button" class="btn-secondary call-tog ${st.check ? 'on' : ''}" data-call="check" aria-pressed="${st.check}" ${st.vision ? '' : 'disabled'} title="Show what the camera sees of your hands">Gesture check</button>
         <button type="button" class="btn-secondary" data-call="ash" ${fxReady && st.fxOn ? '' : 'disabled'} title="Dust (snap with your right hand)">Dust</button>
         <button type="button" class="btn-secondary" data-call="voxel" ${fxReady && st.fxOn ? '' : 'disabled'} title="Voxels (snap with your left hand)">Voxels</button>
-        <button type="button" class="btn-secondary" data-call="cinema" title="Absolute cinema, on both screens (raise both hands)">Cinema</button>
+        <button type="button" class="btn-secondary" data-call="cinema" title="Absolute cinema, on both screens (raise both hands)">Cinema</button>` : ''}
+      ${st.media || st.room ? `
         <span class="call-sep"></span>
+        ${st.media ? '' : '<span class="call-chip" title="Your camera and microphone are off: you can see and hear the other person">No camera</span>'}
         <button type="button" class="btn-danger" data-call="leave">${st.room ? 'Leave call' : 'Stop camera'}</button>` : ''}`;
   }
 
@@ -1273,15 +1277,23 @@ window.flowCall = (() => {
   async function join(value) {
     const room = String(value || '').trim().toLowerCase();
     if (!ROOM.test(room)) { opts.alert('A room name is 3 to 40 letters, numbers and dashes, starting with a letter or number.', 'Room'); return; }
-    try {
-      await startMedia();
-      if (!st.iceServers) st.iceServers = await opts.ice();
-    } catch (err) { mediaError(err); return; }
+    // no camera (blocked, in use by another app, or the page is not on https / localhost): join anyway, to see and
+    // hear the other person, instead of not getting into the room at all
+    let camError = null;
+    try { await startMedia(); } catch (err) { camError = err; }
+    if (!st.iceServers) st.iceServers = await opts.ice();
     st.room = room;
     st.draft = '';
     st.status = 'waiting';
-    send({ type: 'call-join', room });
+    // the socket may not be open yet (or is reconnecting): reconnected() joins once it is
+    st.offline = !send({ type: 'call-join', room });
+    if (st.offline && opts.connect) opts.connect();
     changed();
+    if (camError) {
+      const denied = camError.name === 'NotAllowedError' || camError.name === 'SecurityError';
+      opts.alert(`${denied ? 'FlowTrace may not use your camera (allow it in the address bar, the camera icon).'
+        : `The camera could not start: ${camError.message || camError}.`} You are in the call without camera and microphone: you can see and hear the other person. To be seen, allow the camera, Leave call and join again.`, 'Camera');
+    }
   }
 
   function makePeer(polite) {
@@ -1289,9 +1301,12 @@ window.flowCall = (() => {
     const pc = new RTCPeerConnection({ iceServers: st.iceServers || [] });
     const peer = { pc, polite, makingOffer: false, ignoreOffer: false, sender: null };
     st.peer = peer;
-    const out = new MediaStream([st.media.audio, outTrack()].filter(Boolean));
-    if (st.media.audio) pc.addTrack(st.media.audio, out);
-    peer.sender = pc.addTrack(outTrack(), out);
+    // without a camera nothing is added: the other side's offer brings the tracks, and the answer only receives
+    if (st.media) {
+      const out = new MediaStream([st.media.audio, outTrack()].filter(Boolean));
+      if (st.media.audio) pc.addTrack(st.media.audio, out);
+      peer.sender = pc.addTrack(outTrack(), out);
+    }
 
     pc.ontrack = ({ track, streams }) => {
       const v = $q('[data-call-remote]');
@@ -1351,8 +1366,9 @@ window.flowCall = (() => {
       if (st.room && m.gesture === 'both-hands-raised') cinema(st.peerInfo ? st.peerInfo.name : 'They');
       return;
     }
-    if (!st.room || !st.media) return;
+    if (!st.room) return;
     if (m.type === 'call-joined') {
+      st.offline = false;
       st.peerInfo = m.peer;
       if (m.peer) makePeer(true); else st.status = 'waiting';
     } else if (m.type === 'call-peer') {
@@ -1377,7 +1393,7 @@ window.flowCall = (() => {
     if (!st.room) return;
     dropPeer();
     st.status = 'waiting';
-    send({ type: 'call-join', room: st.room });
+    st.offline = !send({ type: 'call-join', room: st.room });
     changed();
   }
 
@@ -1389,6 +1405,7 @@ window.flowCall = (() => {
     st.room = null;
     st.peerInfo = null;
     st.status = '';
+    st.offline = false;
     changed();
   }
 

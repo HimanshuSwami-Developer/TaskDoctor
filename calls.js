@@ -50,6 +50,12 @@ function create() {
     if (!ROOM.test(room)) return;
     leave(ws);
     const r = rooms.get(room) || new Map();
+    // full, but one of the two is this same login: that is their old socket (a dropped connection the ping sweep has
+    // not closed yet, or a reloaded tab), so it makes way instead of locking them out of their own room
+    if (r.size >= SIZE) {
+      const stale = [...r.entries()].find(([o, info]) => o !== ws && info.id === user.id);
+      if (stale) leave(stale[0]);
+    }
     if (r.size >= SIZE) { send(ws, { type: 'call-full', room }); return; }
     const [other] = [...r.entries()];
     const me = { id: user.id, name: user.name || user.username };
