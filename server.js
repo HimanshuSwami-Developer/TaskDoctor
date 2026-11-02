@@ -25,6 +25,17 @@ const AREAS = ['frontend', 'backend', 'both']; // which side an issue is in
 const ACCESS = Object.keys(auth.LEVELS);
 
 const app = express();
+
+// The WebSocket (/ws: who is online, video call signalling) on Vercel. There the upgrade never reaches the server's
+// 'upgrade' event: it arrives here as a plain GET, and the runtime hands over the raw socket through upgradeWebSocket()
+// on the request context (what @vercel/functions' upgradeWebSocket() uses). Without this /ws answered 404 and calls
+// showed "Not connected to the server". Locally the server's 'upgrade' event takes it and this route is never hit.
+app.get('/ws', (req, res, next) => {
+  const ctx = globalThis[Symbol.for('@vercel/request-context')]?.get?.() || {};
+  if (!online || typeof ctx.upgradeWebSocket !== 'function' || !/websocket/i.test(req.headers.upgrade || '')) return next();
+  const { req: upReq, socket, head } = ctx.upgradeWebSocket();
+  online.wss.handleUpgrade(upReq, socket, head, (ws) => online.wss.emit('connection', ws, upReq));
+});
 app.use(express.json({ limit: '8mb' }));
 // no-cache: the browser asks every time (a quick 304 when unchanged), so a new app.js / styles.css shows on the next load
 app.use(express.static(path.join(__dirname, 'public'), { setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache') }));
