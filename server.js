@@ -7,6 +7,7 @@ const cloud = require('./cloud');
 const auth = require('./auth');
 const teams = require('./teams');
 const presence = require('./presence');
+const calls = require('./calls');
 const excel = require('./excel');
 const journal = require('./journal');
 const assist = require('./assist');
@@ -3231,6 +3232,10 @@ app.get('/api/sheets/:id/export', route(async (req, res) => {
   res.end();
 }));
 
+// ---------------------------------------------------------------- video calls (calls.js; signalling is on /ws)
+
+app.get('/api/call/ice', (req, res) => res.json({ iceServers: calls.iceServers(process.env, req.user.id) }));
+
 // ---------------------------------------------------------------- errors + start
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
@@ -3272,8 +3277,8 @@ if (require.main === module || process.env.VERCEL) {
         if (!assist.configured()) console.log('The AI writing assistant is off: add GROQ_API_KEY to .env to turn it on (quick checks still run).');
         setInterval(() => sanityReminders().catch((err) => console.error('Sanity reminders:', err.message)), 60 * 1000);
       });
-      // who is online: a WebSocket on the same port (/ws)
-      online = presence.attach(server, { db, auth });
+      // who is online, and video call signalling: a WebSocket on the same port (/ws)
+      online = presence.attach(server, { db, auth, calls: calls.create() });
     })
     .catch((err) => {
       console.error('Could not connect to the database:', err.message);
