@@ -10,53 +10,70 @@ const last = (ws) => ws.got[ws.got.length - 1];
 const ann = { id: 'u1', name: 'Ann', username: 'ann' };
 const bob = { id: 'u2', name: '', username: 'bob' };
 
-test('the first to join waits; the second is polite and both learn who the other is', () => {
+// pid of a socket, from its call-joined
+const pid = (ws) => ws.got.find((m) => m.type === 'call-joined').self;
+const cy = (n) => ({ id: `u${n}`, name: `P${n}` });
+
+test('the first to join waits; each newcomer gets everyone already there, and they learn about the newcomer', () => {
   const c = calls.create();
-  const a = socket();
-  const b = socket();
+  const [a, b, d] = [socket(), socket(), socket()];
   c.message(a, ann, { type: 'call-join', room: 'Daily-Sync' });
-  assert.deepEqual(last(a), { type: 'call-joined', room: 'daily-sync', polite: false, peer: null });
+  assert.deepEqual(last(a), { type: 'call-joined', room: 'daily-sync', self: pid(a), peers: [] });
+  assert.match(pid(a), /^[0-9a-f]{12}$/);
   c.message(b, bob, { type: 'call-join', room: 'daily-sync' });
-  assert.deepEqual(last(b), { type: 'call-joined', room: 'daily-sync', polite: true, peer: { id: 'u1', name: 'Ann' } });
-  assert.deepEqual(last(a), { type: 'call-peer', peer: { id: 'u2', name: 'bob' } });
+  assert.deepEqual(last(b), { type: 'call-joined', room: 'daily-sync', self: pid(b), peers: [{ pid: pid(a), id: 'u1', name: 'Ann' }] });
+  assert.deepEqual(last(a), { type: 'call-peer', peer: { pid: pid(b), id: 'u2', name: 'bob' } });
+  c.message(d, cy(3), { type: 'call-join', room: 'daily-sync' });
+  assert.deepEqual(last(d).peers.map((p) => p.name), ['Ann', 'bob']);
+  assert.deepEqual(last(a), { type: 'call-peer', peer: { pid: pid(d), id: 'u3', name: 'P3' } });
+  assert.deepEqual(last(b), { type: 'call-peer', peer: { pid: pid(d), id: 'u3', name: 'P3' } });
 });
 
-test('a room holds two; bad room names are ignored', () => {
+test(`a room holds ${calls.SIZE}; bad room names are ignored`, () => {
   const c = calls.create();
-  const [a, b, x] = [socket(), socket(), socket()];
-  c.message(a, ann, { type: 'call-join', room: 'abc' });
-  c.message(b, bob, { type: 'call-join', room: 'abc' });
-  c.message(x, { id: 'u3', name: 'Cy' }, { type: 'call-join', room: 'abc' });
-  assert.deepEqual(last(x), { type: 'call-full', room: 'abc' });
+  const people = Array.from({ length: calls.SIZE }, () => socket());
+  people.forEach((ws, i) => c.message(ws, cy(i), { type: 'call-join', room: 'abc' }));
+  people.forEach((ws) => assert.notEqual(ws.got[0].type, 'call-full'));
+  const x = socket();
+  c.message(x, cy(99), { type: 'call-join', room: 'abc' });
+  assert.deepEqual(last(x), { type: 'call-full', room: 'abc', size: calls.SIZE });
   ['ab', '-abc', 'a b c', 'x'.repeat(41), 42, null].forEach((room) => c.message(x, bob, { type: 'call-join', room }));
   assert.equal(x.got.length, 1);
 });
 
-test('signals go only to the other one in the room, with only the WebRTC fields', () => {
+test('signals go only to the one addressed, in the same room, with the sender and only the WebRTC fields', () => {
   const c = calls.create();
-  const [a, b, other] = [socket(), socket(), socket()];
+  const [a, b, d, other] = [socket(), socket(), socket(), socket()];
   c.message(a, ann, { type: 'call-join', room: 'one' });
   c.message(b, bob, { type: 'call-join', room: 'one' });
+  c.message(d, cy(3), { type: 'call-join', room: 'one' });
   c.message(other, bob, { type: 'call-join', room: 'two' });
-  const before = other.got.length;
-  c.message(a, ann, { type: 'call-signal', description: { type: 'offer', sdp: 'v=0', extra: 'x' }, room: 'two' });
-  assert.deepEqual(last(b), { type: 'call-signal', description: { type: 'offer', sdp: 'v=0' } });
-  c.message(b, bob, { type: 'call-signal', candidate: null });
-  assert.deepEqual(last(a), { type: 'call-signal', candidate: null });
+  const [nd, no] = [d.got.length, other.got.length];
+  c.message(a, ann, { type: 'call-signal', to: pid(b), description: { type: 'offer', sdp: 'v=0', extra: 'x' }, room: 'two' });
+  assert.deepEqual(last(b), { type: 'call-signal', from: pid(a), description: { type: 'offer', sdp: 'v=0' } });
+  c.message(b, bob, { type: 'call-signal', to: pid(a), candidate: null });
+  assert.deepEqual(last(a), { type: 'call-signal', from: pid(b), candidate: null });
+  assert.equal(d.got.length, nd); // not addressed to d
   const n = b.got.length;
-  c.message(a, ann, { type: 'call-signal', description: { type: 'hack' } });
-  c.message(a, ann, { type: 'call-signal', candidate: 'text' });
+  c.message(a, ann, { type: 'call-signal', to: pid(b), description: { type: 'hack' } });
+  c.message(a, ann, { type: 'call-signal', to: pid(b), candidate: 'text' });
+  c.message(a, ann, { type: 'call-signal', candidate: null }); // no one addressed
+  c.message(a, ann, { type: 'call-signal', to: pid(other), candidate: null }); // another room
+  c.message(a, ann, { type: 'call-signal', to: pid(a), candidate: null }); // itself
   assert.equal(b.got.length, n);
-  assert.equal(other.got.length, before);
+  assert.equal(other.got.length, no);
 });
 
-test('leaving, or the tab closing, tells the other one and empties the room', () => {
+test('leaving, or the tab closing, tells the others who left and empties the room', () => {
   const c = calls.create();
-  const [a, b] = [socket(), socket()];
+  const [a, b, d] = [socket(), socket(), socket()];
   c.message(a, ann, { type: 'call-join', room: 'abc' });
   c.message(b, bob, { type: 'call-join', room: 'abc' });
+  c.message(d, cy(3), { type: 'call-join', room: 'abc' });
   c.leave(b);
-  assert.deepEqual(last(a), { type: 'call-left' });
+  assert.deepEqual(last(a), { type: 'call-left', pid: pid(b) });
+  assert.deepEqual(last(d), { type: 'call-left', pid: pid(b) });
+  c.message(d, cy(3), { type: 'call-leave' });
   c.message(a, ann, { type: 'call-leave' });
   assert.equal(c.count(), 0);
   c.leave(a); // not in a room: nothing happens
@@ -67,8 +84,9 @@ test('joining another room leaves the first', () => {
   const [a, b] = [socket(), socket()];
   c.message(a, ann, { type: 'call-join', room: 'abc' });
   c.message(b, bob, { type: 'call-join', room: 'abc' });
+  const old = pid(b);
   c.message(b, bob, { type: 'call-join', room: 'xyz' });
-  assert.deepEqual(last(a), { type: 'call-left' });
+  assert.deepEqual(last(a), { type: 'call-left', pid: old });
   assert.equal(c.count(), 2);
 });
 
@@ -83,15 +101,17 @@ test('ICE: STUN by default; TURN with a 12-hour login from the shared secret, or
   assert.equal(calls.iceServers({ TURN_URLS: 'turn:t:3478' }, 'u1').length, 1); // no login: TURN left out
 });
 
-test('a gesture goes to the other one in the room, and only a known one', () => {
+test('a gesture goes to the others in the room with who made it, and only a known one', () => {
   const c = calls.create();
-  const [a, b, other] = [socket(), socket(), socket()];
+  const [a, b, d, other] = [socket(), socket(), socket(), socket()];
   c.message(a, ann, { type: 'call-join', room: 'one' });
   c.message(b, bob, { type: 'call-join', room: 'one' });
+  c.message(d, cy(3), { type: 'call-join', room: 'one' });
   c.message(other, bob, { type: 'call-join', room: 'two' });
   const before = other.got.length;
   c.message(a, ann, { type: 'call-gesture', gesture: 'both-hands-raised', extra: '<b>' });
-  assert.deepEqual(last(b), { type: 'call-gesture', gesture: 'both-hands-raised' });
+  assert.deepEqual(last(b), { type: 'call-gesture', from: pid(a), gesture: 'both-hands-raised' });
+  assert.deepEqual(last(d), { type: 'call-gesture', from: pid(a), gesture: 'both-hands-raised' });
   const n = b.got.length;
   c.message(a, ann, { type: 'call-gesture', gesture: 'anything' });
   c.message(a, ann, { type: 'call-gesture' });
@@ -102,16 +122,21 @@ test('a gesture goes to the other one in the room, and only a known one', () => 
 
 test('a full room makes way for the same login joining again (its old socket is stale), not for anyone else', () => {
   const c = calls.create();
-  const [a, b, aAgain, x] = [socket(), socket(), socket(), socket()];
-  c.message(a, ann, { type: 'call-join', room: 'abc' });
-  c.message(b, bob, { type: 'call-join', room: 'abc' });
-  c.message(x, { id: 'u3', name: 'Cy' }, { type: 'call-join', room: 'abc' });
-  assert.deepEqual(last(x), { type: 'call-full', room: 'abc' });
+  const people = Array.from({ length: calls.SIZE }, () => socket());
+  const [a, b] = people;
+  people.forEach((ws, i) => c.message(ws, i === 0 ? ann : cy(i + 10), { type: 'call-join', room: 'abc' }));
+  const x = socket();
+  c.message(x, cy(99), { type: 'call-join', room: 'abc' });
+  assert.equal(last(x).type, 'call-full');
+  const old = pid(a);
+  const aAgain = socket();
   c.message(aAgain, ann, { type: 'call-join', room: 'abc' });
-  assert.deepEqual(last(aAgain), { type: 'call-joined', room: 'abc', polite: true, peer: { id: 'u2', name: 'bob' } });
-  assert.deepEqual(b.got.slice(-2), [{ type: 'call-left' }, { type: 'call-peer', peer: { id: 'u1', name: 'Ann' } }]);
-  c.message(a, ann, { type: 'call-signal', candidate: null }); // the stale socket is out of the room
-  assert.deepEqual(last(b), { type: 'call-peer', peer: { id: 'u1', name: 'Ann' } });
+  assert.equal(last(aAgain).type, 'call-joined');
+  assert.equal(last(aAgain).peers.length, calls.SIZE - 1);
+  assert.deepEqual(b.got.slice(-2), [{ type: 'call-left', pid: old }, { type: 'call-peer', peer: { pid: pid(aAgain), id: 'u1', name: 'Ann' } }]);
+  const n = b.got.length;
+  c.message(a, ann, { type: 'call-signal', to: pid(b), candidate: null }); // the stale socket is out of the room
+  assert.equal(b.got.length, n);
 });
 
 test('ICE: addresses without stun: / turn: are left out (the browser would refuse the whole list)', () => {

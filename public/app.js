@@ -3931,7 +3931,7 @@ $(function () {
       ${schemaFor(current) ? sbItem({ attrs: 'data-action="schema"', ico: icon('db', 16), label: 'DB Schema', on: Boolean(schemaView), title: `DB Schema: every table of the ${schemaFor(current).label} database and the foreign keys between them` }) : ''}
       ${sbItem({ attrs: 'data-action="sanity"', ico: icon('check', 16), label: 'Sanity', on: Boolean(sanity), title: 'Daily sanity checklist of this app' })}
       ${sbItem({ attrs: 'data-action="done"', ico: icon('note', 16), label: 'Done today', title: 'Daily journal: done, to-do, in progress, questions and blockers' })}
-      ${sbItem({ attrs: 'data-action="call"', ico: icon('video', 16), label: 'Video call', on: Boolean(callView), extra: window.flowCall.active() ? '<span class="call-live" title="In a call"></span>' : '', title: 'Video call: one to one, peer to peer, with background blur and snap effects' })}
+      ${sbItem({ attrs: 'data-action="call"', ico: icon('video', 16), label: 'Video call', on: Boolean(callView), extra: window.flowCall.active() ? '<span class="call-live" title="In a call"></span>' : '', title: 'Video call: up to 6 people, peer to peer, with background blur and snap effects' })}
       <a class="sb-item" href="/api/export" title="Download every task as an Excel sheet"><span class="sb-ico">${icon('download', 16)}</span><span class="sb-label">Excel export</span></a>
       ${sbItem({ attrs: 'data-action="admin"', ico: icon('shield', 16), label: 'Users & access', on: Boolean(adminView), title: 'Admin: logins, passwords and access' })}`);
     $('#account').html(`
@@ -7684,7 +7684,7 @@ $(function () {
   });
 
   // ---------------------------------------------------------------- video call (public/call.js)
-  // A page of its own, in the board's place: a one-to-one call, peer to peer, signalled over the presence socket.
+  // A page of its own, in the board's place: a group call (up to 6), peer to peer, signalled over the presence socket.
   // Going to another page keeps the call going (the sidebar item shows a dot); only Leave call ends it.
   // The address (#call=<room>) keeps it; a shared link fills in the room, and Join call starts the camera.
 

@@ -1,46 +1,53 @@
 'use strict';
 /**
- * Video calls: rooms of two, signalled over the presence socket (/ws, presence.js).
+ * Video calls: rooms of up to SIZE people, signalled over the presence socket (/ws, presence.js).
  *
- * The browsers send their video to each other directly (WebRTC, peer to peer); the server only passes their offers,
- * answers and ICE candidates along, and never sees the video. A tab is in at most one room and a room holds two tabs.
- * The second to join is the "polite" one (perfect negotiation: when both offer at once, it gives way). Rooms live in
- * memory: a restart empties them, and the browsers join again when their socket comes back.
+ * The browsers send their video to each other directly (WebRTC, peer to peer: a mesh, each one connected to every
+ * other); the server only passes their offers, answers and ICE candidates along, and never sees the video. A tab is in
+ * at most one room. Each tab in a room has a pid (a short random id, new on every join): signals are addressed to one
+ * pid, and arrive with the sender's. In each pair the one who joined later is the "polite" one (perfect negotiation:
+ * when both offer at once, it gives way). Rooms live in memory: a restart empties them, and the browsers join again
+ * when their socket comes back.
  *
  *   browser → server   { type: 'call-join', room }
- *                      { type: 'call-signal', description?, candidate? }   passed to the other tab in the room
- *                      { type: 'call-gesture', gesture }                    passed on (only GESTURES): a reaction, e.g.
- *                                                                          both hands raised, shown on both screens
+ *                      { type: 'call-signal', to, description?, candidate? }   passed to that pid in the room
+ *                      { type: 'call-gesture', gesture }                    passed on (only GESTURES) to the others: a
+ *                                                                          reaction, e.g. both hands raised
  *                      { type: 'call-leave' }
- *   server → browser   { type: 'call-joined', room, polite, peer }         peer = { id, name }, or null: waiting
- *                      { type: 'call-peer', peer }                         someone joined your room
- *                      { type: 'call-left' }                               they left, or their tab closed
- *                      { type: 'call-signal', description?, candidate? }
- *                      { type: 'call-gesture', gesture }
- *                      { type: 'call-full', room }
+ *   server → browser   { type: 'call-joined', room, self, peers }          peers = [{ pid, id, name }], [] = waiting;
+ *                                                                          you are the polite one towards each of them
+ *                      { type: 'call-peer', peer }                         { pid, id, name } joined your room
+ *                      { type: 'call-left', pid }                          they left, or their tab closed
+ *                      { type: 'call-signal', from, description?, candidate? }
+ *                      { type: 'call-gesture', from, gesture }
+ *                      { type: 'call-full', room, size }
  */
-const { createHmac } = require('crypto');
+const { createHmac, randomBytes } = require('crypto');
 
 const ROOM = /^[a-z0-9][a-z0-9-]{2,39}$/;
-const SIZE = 2;
+// everyone sends their video to everyone else (a mesh), so each person uploads SIZE - 1 streams: 6 is about what a
+// laptop and a home connection carry
+const SIZE = 6;
 const GESTURES = ['both-hands-raised'];
 
 function create() {
-  const rooms = new Map(); // room → Map(ws → { id, name })
+  const rooms = new Map(); // room → Map(ws → { pid, id, name })
   const roomOf = new Map(); // ws → room
 
   const send = (ws, m) => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(m)); };
+  const inRoom = (ws) => rooms.get(roomOf.get(ws)) || null;
   const others = (ws) => {
-    const r = rooms.get(roomOf.get(ws));
+    const r = inRoom(ws);
     return r ? [...r.keys()].filter((x) => x !== ws) : [];
   };
 
   function leave(ws) {
     const room = roomOf.get(ws);
     if (!room) return;
-    others(ws).forEach((o) => send(o, { type: 'call-left' }));
-    roomOf.delete(ws);
     const r = rooms.get(room);
+    const { pid } = r.get(ws);
+    others(ws).forEach((o) => send(o, { type: 'call-left', pid }));
+    roomOf.delete(ws);
     r.delete(ws);
     if (!r.size) rooms.delete(room);
   }
@@ -50,34 +57,39 @@ function create() {
     if (!ROOM.test(room)) return;
     leave(ws);
     const r = rooms.get(room) || new Map();
-    // full, but one of the two is this same login: that is their old socket (a dropped connection the ping sweep has
+    // full, but one of them is this same login: that is their old socket (a dropped connection the ping sweep has
     // not closed yet, or a reloaded tab), so it makes way instead of locking them out of their own room
     if (r.size >= SIZE) {
       const stale = [...r.entries()].find(([o, info]) => o !== ws && info.id === user.id);
       if (stale) leave(stale[0]);
     }
-    if (r.size >= SIZE) { send(ws, { type: 'call-full', room }); return; }
-    const [other] = [...r.entries()];
-    const me = { id: user.id, name: user.name || user.username };
+    if (r.size >= SIZE) { send(ws, { type: 'call-full', room, size: SIZE }); return; }
+    const peers = [...r.entries()];
+    const me = { pid: randomBytes(6).toString('hex'), id: user.id, name: user.name || user.username };
     r.set(ws, me);
     rooms.set(room, r);
     roomOf.set(ws, room);
-    send(ws, { type: 'call-joined', room, polite: Boolean(other), peer: other ? other[1] : null });
-    if (other) send(other[0], { type: 'call-peer', peer: me });
+    send(ws, { type: 'call-joined', room, self: me.pid, peers: peers.map(([, info]) => info) });
+    peers.forEach(([o]) => send(o, { type: 'call-peer', peer: me }));
   }
 
-  // only the two fields WebRTC needs, so a tab cannot push anything else through to the other
+  // only the two fields WebRTC needs, so a tab cannot push anything else through; only to someone in the same room
   function signal(ws, m) {
-    const out = { type: 'call-signal' };
+    const r = inRoom(ws);
+    if (!r) return;
+    const to = [...r.entries()].find(([o, info]) => o !== ws && info.pid === m.to);
+    if (!to) return;
+    const out = { type: 'call-signal', from: r.get(ws).pid };
     const d = m.description;
     if (d && typeof d === 'object' && ['offer', 'answer', 'rollback'].includes(d.type)) out.description = { type: d.type, sdp: String(d.sdp || '') };
     else if (m.candidate === null || (m.candidate && typeof m.candidate === 'object')) out.candidate = m.candidate;
     else return;
-    others(ws).forEach((o) => send(o, out));
+    send(to[0], out);
   }
 
   function gesture(ws, m) {
-    if (GESTURES.includes(m.gesture)) others(ws).forEach((o) => send(o, { type: 'call-gesture', gesture: m.gesture }));
+    const r = inRoom(ws);
+    if (r && GESTURES.includes(m.gesture)) others(ws).forEach((o) => send(o, { type: 'call-gesture', from: r.get(ws).pid, gesture: m.gesture }));
   }
 
   /** a message from a signed-in tab (user = { id, name, username }) */
@@ -146,4 +158,4 @@ function metered(env, fetchFn = globalThis.fetch) {
   };
 }
 
-module.exports = { create, iceServers, metered, ROOM };
+module.exports = { create, iceServers, metered, ROOM, SIZE };

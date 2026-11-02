@@ -1,12 +1,13 @@
 /* FlowTrace — video calls with live effects. © 2026 FinDevelopers
  *
- * One-to-one calls, peer to peer (WebRTC). The server only introduces the two tabs (calls.js, over the presence
- * socket /ws); the video goes straight from one browser to the other, or through TURN when the network needs it.
+ * Group calls (up to 6, calls.js SIZE), peer to peer (WebRTC): everyone is connected to everyone else (a mesh). The
+ * server only introduces the tabs (calls.js, over the presence socket /ws); the video goes straight from one browser to
+ * each of the others, or through TURN when the network needs it.
  *
  * What you send is not the camera itself but a canvas it is drawn on:
  *   camera → <video> → MediaPipe (hand landmarks + person mask, ~30 times a second)
  *                    → Three.js (background blur / studio, and the effects as shaders) → <canvas>
- *   canvas.captureStream(30) → RTCRtpSender.replaceTrack() → the other person
+ *   canvas.captureStream(30) → RTCRtpSender.replaceTrack() → each of the others
  * so they see the background and the effects exactly as you do. Effects off, or this tab in the background (the
  * canvas stops drawing there), sends the plain camera instead; switching never renegotiates the call.
  *
@@ -15,7 +16,7 @@
  *               noise), the fine ash rising and heavier flakes falling; then it all plays backwards and you are back
  *   left hand   Voxels: you break into 3D cubes that spin off into the room, then they walk back in, each on its
  *               own path, and build you again from the feet up, locking in with a flash of neon
- * Both hands raised: "Absolute cinema" on both screens (black and white, letterbox, the caption), the other tab told
+ * Both hands raised: "Absolute cinema" on everyone's screen (black and white, letterbox, the caption), the other tabs told
  * over the socket ({ type: 'call-gesture' }, calls.js). Only page classes change: no render, no change to the video sent.
  * Behind you while you are gone: the room as last seen around you (kept as you move), or the studio backdrop.
  *
@@ -45,14 +46,12 @@ window.flowCall = (() => {
     el: null, // the page's element
     room: null, // the room joined (or joining)
     draft: '', // the room name typed, before joining
-    peerInfo: null, // { id, name } of the other person
-    status: '', // waiting | connecting | connected | failed
     offline: false, // the join could not be sent: the socket is not open (yet)
     media: null, // { stream, video, audio } from the camera
     fx: null, // the effects (Three.js), or null
     vision: null, // MediaPipe, or null
     note: '', // what is loading, or why effects are off
-    peer: null, // { pc, polite, makingOffer, ignoreOffer, sender }
+    peers: new Map(), // pid → { pid, info: { id, name }, pc, polite, makingOffer, ignoreOffer, sender, state, tile }
     iceServers: null,
     fxOn: true,
     bg: 'blur',
@@ -80,11 +79,11 @@ window.flowCall = (() => {
       <div class="call-page">
         <div class="call-head">
           <div><h1 class="text-xl font-semibold text-slate-900">Video call</h1>
-            <p class="text-sm text-slate-500">Peer to peer: the video goes straight to the other person, never through FlowTrace.</p></div>
+            <p class="text-sm text-slate-500">Up to 6 people, peer to peer: the video goes straight to the others, never through FlowTrace.</p></div>
           <p class="call-status" data-call-status></p>
         </div>
         <div class="call-stage solo" data-call-stage>
-          <video class="call-remote" data-call-remote autoplay playsinline></video>
+          <div class="call-grid" data-call-grid></div>
           <div class="call-wait" data-call-wait></div>
           <div class="call-check hidden" data-call-check><p>Waiting for hand tracking…</p></div>
           <div class="call-capture hidden" data-call-capture></div>
@@ -100,7 +99,7 @@ window.flowCall = (() => {
         <div class="call-bar" data-call-bar></div>
         <p class="call-help">Snap your fingers (thumb and middle finger) in front of the camera:
           <b>right hand</b> turns you to dust that the wind carries off, <b>left hand</b> breaks you into cubes that walk
-          back and build you again. The other person sees it too. <b>Raise both hands</b>: absolute cinema, on both screens.
+          back and build you again. Everyone in the call sees it too. <b>Raise both hands</b>: absolute cinema, on everyone's screen.
           Keep the whole hand in view (wrist too), in good light. Missed snaps? <b>Gesture check</b> shows what the camera sees.</p>
         <p class="call-help hidden" data-call-roomseen></p>
       </div>`;
@@ -114,27 +113,30 @@ window.flowCall = (() => {
     if (!st.el) return;
     const i = opts.icon;
     const stage = $q('[data-call-stage]');
-    const connected = st.status === 'connected';
+    const state = callState();
+    const connected = state === 'connected';
     stage.classList.toggle('solo', !connected);
-    $q('[data-call-remote]').classList.toggle('hidden', !connected);
+    const grid = $q('[data-call-grid]');
+    grid.classList.toggle('hidden', !connected);
     const usingFx = Boolean(st.fx && st.fxOn);
     $q('[data-call-canvas]').classList.toggle('hidden', !usingFx);
     $q('[data-call-check]').classList.toggle('hidden', !(st.check && st.vision));
     $q('[data-call-cam]').classList.toggle('call-offscreen', usingFx);
 
-    const who = st.peerInfo ? esc(st.peerInfo.name) : 'the other person';
+    const names = [...st.peers.values()].map((p) => p.info.name);
+    const who = !names.length ? 'the others' : names.length <= 3 ? esc(names.join(', ')) : `${esc(names.slice(0, 2).join(', '))} and ${names.length - 2} more`;
     const wait = !st.media && !st.room ? `${i('video', 32)}<p class="font-medium">Your camera is off</p><p class="text-sm opacity-80">Join a room, or preview your camera and effects first.</p>`
       : !st.room || connected ? ''
         : st.offline ? `<p class="font-medium">Not connected to the server</p><p class="text-sm opacity-80">You join <b>${esc(st.room)}</b> as soon as the connection is back.</p>`
-        : st.status === 'connecting' ? `<p class="font-medium">Connecting to ${who}…</p>`
-          : st.status === 'failed' ? `<p class="font-medium">Could not reach ${who}</p><p class="text-sm opacity-80">Your network blocks a direct connection. A TURN server fixes this (TURN_URLS in .env).</p>`
+        : state === 'connecting' ? `<p class="font-medium">Connecting to ${who}…</p>`
+          : state === 'failed' ? `<p class="font-medium">Could not reach ${who}</p><p class="text-sm opacity-80">Your network blocks a direct connection. A TURN server fixes this (TURN_URLS in .env).</p>`
             : `<p class="font-medium">Waiting for someone to join <b>${esc(st.room)}</b></p><p class="text-sm opacity-80">Send them the link.</p>`;
     const $wait = $q('[data-call-wait]');
     $wait.innerHTML = wait;
     $wait.classList.toggle('hidden', !wait);
     $wait.classList.toggle('over', Boolean(st.media));
 
-    const status = st.room ? (st.offline && !connected ? 'Not connected to the server…' : connected ? `<span class="call-dot"></span>In call with ${who}` : st.status === 'connecting' ? 'Connecting…' : st.status === 'failed' ? 'Connection failed' : 'Waiting…') : '';
+    const status = st.room ? (st.offline && !connected ? 'Not connected to the server…' : connected ? `<span class="call-dot"></span>In call with ${who}` : state === 'connecting' ? 'Connecting…' : state === 'failed' ? 'Connection failed' : 'Waiting…') : '';
     $q('[data-call-status]').innerHTML = [status, st.note && `<span class="text-slate-400">${esc(st.note)}</span>`].filter(Boolean).join(' · ');
 
     const tog = (key, on, label, title) => `<button type="button" class="btn-secondary call-tog ${on ? 'on' : 'off'}" data-call="${key}" aria-pressed="${on}" title="${esc(title)}">${label}</button>`;
@@ -162,10 +164,10 @@ window.flowCall = (() => {
         <button type="button" class="btn-secondary call-tog ${st.check ? 'on' : ''}" data-call="check" aria-pressed="${st.check}" ${st.vision ? '' : 'disabled'} title="Show what the camera sees of your hands">Gesture check</button>
         <button type="button" class="btn-secondary" data-call="ash" ${fxReady && st.fxOn ? '' : 'disabled'} title="Dust (snap with your right hand)">Dust</button>
         <button type="button" class="btn-secondary" data-call="voxel" ${fxReady && st.fxOn ? '' : 'disabled'} title="Voxels (snap with your left hand)">Voxels</button>
-        <button type="button" class="btn-secondary" data-call="cinema" title="Absolute cinema, on both screens (raise both hands)">Cinema</button>` : ''}
+        <button type="button" class="btn-secondary" data-call="cinema" title="Absolute cinema, on everyone's screen (raise both hands)">Cinema</button>` : ''}
       ${st.media || st.room ? `
         <span class="call-sep"></span>
-        ${st.media ? '' : '<span class="call-chip" title="Your camera and microphone are off: you can see and hear the other person">No camera</span>'}
+        ${st.media ? '' : '<span class="call-chip" title="Your camera and microphone are off: you can see and hear the others">No camera</span>'}
         <button type="button" class="btn-danger" data-call="leave">${st.room ? 'Leave call' : 'Stop camera'}</button>` : ''}`;
   }
 
@@ -1267,24 +1269,35 @@ window.flowCall = (() => {
   // where the canvas stops drawing)
   const outTrack = () => (st.fx && st.fxOn && document.visibilityState === 'visible' ? st.fx.track : st.media.video);
   function syncTrack() {
-    const p = st.peer;
-    if (p && p.sender && st.media && p.sender.track !== outTrack()) p.sender.replaceTrack(outTrack()).catch((err) => console.error('Call:', err));
+    if (!st.media) return;
+    st.peers.forEach((p) => {
+      if (p.sender && p.sender.track !== outTrack()) p.sender.replaceTrack(outTrack()).catch((err) => console.error('Call:', err));
+    });
   }
   document.addEventListener('visibilitychange', syncTrack);
 
   const send = (m) => opts.send(m);
 
+  // the call as a whole: connected when anyone is; failed when everyone failed; waiting when nobody else is here
+  function callState() {
+    if (!st.room) return '';
+    const states = [...st.peers.values()].map((p) => p.state);
+    if (!states.length) return 'waiting';
+    if (states.includes('connected')) return 'connected';
+    if (states.every((x) => x === 'failed')) return 'failed';
+    return 'connecting';
+  }
+
   async function join(value) {
     const room = String(value || '').trim().toLowerCase();
     if (!ROOM.test(room)) { opts.alert('A room name is 3 to 40 letters, numbers and dashes, starting with a letter or number.', 'Room'); return; }
     // no camera (blocked, in use by another app, or the page is not on https / localhost): join anyway, to see and
-    // hear the other person, instead of not getting into the room at all
+    // hear the others, instead of not getting into the room at all
     let camError = null;
     try { await startMedia(); } catch (err) { camError = err; }
     if (!st.iceServers) st.iceServers = await opts.ice();
     st.room = room;
     st.draft = '';
-    st.status = 'waiting';
     // the socket may not be open yet (or is reconnecting): reconnected() joins once it is
     st.offline = !send({ type: 'call-join', room });
     if (st.offline && opts.connect) opts.connect();
@@ -1292,15 +1305,28 @@ window.flowCall = (() => {
     if (camError) {
       const denied = camError.name === 'NotAllowedError' || camError.name === 'SecurityError';
       opts.alert(`${denied ? 'FlowTrace may not use your camera (allow it in the address bar, the camera icon).'
-        : `The camera could not start: ${camError.message || camError}.`} You are in the call without camera and microphone: you can see and hear the other person. To be seen, allow the camera, Leave call and join again.`, 'Camera');
+        : `The camera could not start: ${camError.message || camError}.`} You are in the call without camera and microphone: you can see and hear the others. To be seen, allow the camera, Leave call and join again.`, 'Camera');
     }
   }
 
-  function makePeer(polite) {
-    dropPeer();
+  // one tile in the grid per person: their video and their name
+  function addTile(peer) {
+    const tile = document.createElement('div');
+    tile.className = 'call-tile';
+    tile.innerHTML = `<video autoplay playsinline></video><span class="call-name">${esc(peer.info.name)}</span>`;
+    const grid = $q('[data-call-grid]');
+    if (grid) grid.appendChild(tile);
+    peer.tile = tile;
+  }
+
+  /** a connection to one other person (info = { pid, id, name }) */
+  function makePeer(info, polite) {
+    dropPeer(info.pid);
     const pc = new RTCPeerConnection({ iceServers: st.iceServers || [] });
-    const peer = { pc, polite, makingOffer: false, ignoreOffer: false, sender: null };
-    st.peer = peer;
+    const peer = { pid: info.pid, info, pc, polite, makingOffer: false, ignoreOffer: false, sender: null, state: 'connecting', tile: null };
+    st.peers.set(info.pid, peer);
+    addTile(peer);
+    const to = info.pid;
     // without a camera nothing is added: the other side's offer brings the tracks, and the answer only receives
     if (st.media) {
       const out = new MediaStream([st.media.audio, outTrack()].filter(Boolean));
@@ -1309,7 +1335,7 @@ window.flowCall = (() => {
     }
 
     pc.ontrack = ({ track, streams }) => {
-      const v = $q('[data-call-remote]');
+      const v = peer.tile.querySelector('video');
       if (streams[0]) { if (v.srcObject !== streams[0]) v.srcObject = streams[0]; }
       else { if (!v.srcObject) v.srcObject = new MediaStream(); v.srcObject.addTrack(track); }
       v.play().catch(() => {});
@@ -1318,29 +1344,34 @@ window.flowCall = (() => {
       try {
         peer.makingOffer = true;
         await pc.setLocalDescription();
-        send({ type: 'call-signal', description: pc.localDescription });
+        send({ type: 'call-signal', to, description: pc.localDescription });
       } catch (err) { console.error('Call:', err); } finally { peer.makingOffer = false; }
     };
-    pc.onicecandidate = ({ candidate }) => send({ type: 'call-signal', candidate });
+    pc.onicecandidate = ({ candidate }) => send({ type: 'call-signal', to, candidate });
     pc.onconnectionstatechange = () => {
-      if (st.peer !== peer) return;
+      if (st.peers.get(to) !== peer) return;
       const s = pc.connectionState;
       if (s === 'failed') pc.restartIce();
-      st.status = s === 'connected' ? 'connected' : s === 'failed' ? 'failed' : 'connecting';
+      peer.state = s === 'connected' ? 'connected' : s === 'failed' ? 'failed' : 'connecting';
+      peer.tile.classList.toggle('waiting', peer.state !== 'connected');
       changed();
     };
-    st.status = 'connecting';
+    peer.tile.classList.add('waiting');
   }
 
-  function dropPeer() {
-    if (st.peer) st.peer.pc.close();
-    st.peer = null;
-    const v = $q('[data-call-remote]');
+  function dropPeer(pid) {
+    const peer = st.peers.get(pid);
+    if (!peer) return;
+    peer.pc.close();
+    const v = peer.tile && peer.tile.querySelector('video');
     if (v) v.srcObject = null;
+    if (peer.tile) peer.tile.remove();
+    st.peers.delete(pid);
   }
+  const dropPeers = () => [...st.peers.keys()].forEach(dropPeer);
 
-  async function onSignal({ description, candidate }) {
-    const peer = st.peer;
+  async function onSignal({ from, description, candidate }) {
+    const peer = st.peers.get(from);
     if (!peer) return;
     const { pc } = peer;
     try {
@@ -1351,7 +1382,7 @@ window.flowCall = (() => {
         await pc.setRemoteDescription(description);
         if (description.type === 'offer') {
           await pc.setLocalDescription();
-          send({ type: 'call-signal', description: pc.localDescription });
+          send({ type: 'call-signal', to: from, description: pc.localDescription });
         }
       } else if (candidate !== undefined) {
         try { await pc.addIceCandidate(candidate); } catch (err) { if (!peer.ignoreOffer) throw err; }
@@ -1363,36 +1394,35 @@ window.flowCall = (() => {
   function signal(m) {
     if (m.type === 'call-signal') { onSignal(m); return; }
     if (m.type === 'call-gesture') {
-      if (st.room && m.gesture === 'both-hands-raised') cinema(st.peerInfo ? st.peerInfo.name : 'They');
+      const p = st.peers.get(m.from);
+      if (st.room && m.gesture === 'both-hands-raised') cinema(p ? p.info.name : 'They');
       return;
     }
     if (!st.room) return;
     if (m.type === 'call-joined') {
       st.offline = false;
-      st.peerInfo = m.peer;
-      if (m.peer) makePeer(true); else st.status = 'waiting';
+      dropPeers();
+      // the ones already here: we joined later, so we are the polite one towards each
+      (m.peers || []).forEach((info) => makePeer(info, true));
     } else if (m.type === 'call-peer') {
-      st.peerInfo = m.peer;
-      makePeer(false);
+      makePeer(m.peer, false);
       opts.toast(`${m.peer.name} joined the call`);
     } else if (m.type === 'call-left') {
-      if (st.peerInfo) opts.toast(`${st.peerInfo.name} left the call`);
-      dropPeer();
-      st.peerInfo = null;
-      st.status = 'waiting';
+      const p = st.peers.get(m.pid);
+      if (p) opts.toast(`${p.info.name} left the call`);
+      dropPeer(m.pid);
     } else if (m.type === 'call-full') {
-      opts.alert(`Room ${m.room} already has two people in it. Pick another room name.`, 'Room full');
+      opts.alert(`Room ${m.room} is full (${m.size || 'the most'} people). Pick another room name.`, 'Room full');
+      dropPeers();
       st.room = null;
-      st.status = '';
     }
     changed();
   }
 
-  // the socket came back (after a drop or a server restart): join again; the other side starts over with us
+  // the socket came back (after a drop or a server restart): join again; the others start over with us
   function reconnected() {
     if (!st.room) return;
-    dropPeer();
-    st.status = 'waiting';
+    dropPeers();
     st.offline = !send({ type: 'call-join', room: st.room });
     changed();
   }
@@ -1400,11 +1430,9 @@ window.flowCall = (() => {
   function leave() {
     endCinema();
     if (st.room) send({ type: 'call-leave' });
-    dropPeer();
+    dropPeers();
     stopMedia();
     st.room = null;
-    st.peerInfo = null;
-    st.status = '';
     st.offline = false;
     changed();
   }

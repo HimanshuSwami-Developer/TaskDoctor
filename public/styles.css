@@ -1701,7 +1701,18 @@ html.dark .owner-chip.me { border-color: #5e6ad2; background: #5e6ad2; }
 .call-dot, .call-live { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #16a34a; box-shadow: 0 0 0 3px rgba(22, 163, 74, .2); }
 .call-live { margin-left: auto; flex-shrink: 0; }
 .call-stage { position: relative; height: clamp(260px, calc(100vh - 300px), 760px); border-radius: 14px; overflow: hidden; background: #0b1120; }
-.call-remote { width: 100%; height: 100%; object-fit: contain; background: #0b1120; }
+.call-grid { position: absolute; inset: 0; display: grid; gap: 6px; padding: 6px; background: #0b1120;
+  /* 1 → full stage, 2 → side by side, 3–4 → 2 × 2, 5–6 → 3 × 2 */
+  grid-template-columns: minmax(0, 1fr); grid-auto-rows: minmax(0, 1fr); }
+.call-grid:has(> .call-tile:nth-child(2)) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.call-grid:has(> .call-tile:nth-child(5)) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.call-tile { position: relative; min-height: 0; border-radius: 10px; overflow: hidden; background: #111827; }
+.call-grid:has(> .call-tile:only-child) { padding: 0; }
+.call-grid:has(> .call-tile:only-child) .call-tile { border-radius: 0; }
+.call-tile video { display: block; width: 100%; height: 100%; object-fit: contain; }
+.call-name { position: absolute; left: 8px; bottom: 8px; max-width: calc(100% - 16px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 8px; border-radius: 6px; background: rgba(2, 6, 23, .65); color: #e2e8f0; font-size: 12px; font-weight: 500; }
+.call-tile.waiting video { opacity: .35; }
+.call-tile.waiting .call-name::after { content: ' · connecting…'; color: #94a3b8; }
 .call-self { position: absolute; right: 14px; bottom: 14px; width: min(30%, 320px); aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden; background: #1e293b; border: 1px solid rgba(255, 255, 255, .15); box-shadow: 0 8px 24px rgba(0, 0, 0, .45); }
 .call-stage.solo .call-self { inset: 0; width: 100%; height: 100%; aspect-ratio: auto; border: 0; border-radius: 0; box-shadow: none; background: #0b1120; }
 /* your own picture, mirrored like a mirror (only here: what is sent is not mirrored) */
