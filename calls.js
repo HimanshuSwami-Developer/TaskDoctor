@@ -98,9 +98,17 @@ function create() {
  *   TURN_SECRET      coturn's static-auth-secret: each sign-in gets a password valid for 12 hours, or
  *   TURN_USERNAME / TURN_CREDENTIAL   one fixed login
  */
+// an address without "stun:" / "turn:" / "turns:" makes the browser refuse the whole list (the call cannot start),
+// so such entries are left out
+const ICE_URL = /^(stun|turns?):[^\s]+$/i;
+const urlList = (s) => String(s || '').split(',').map((u) => u.trim()).filter((u) => {
+  if (u && !ICE_URL.test(u)) console.error(`Video calls: "${u}" is not a STUN / TURN address (it starts with stun:, turn: or turns:); left out.`);
+  return u && ICE_URL.test(u);
+});
+
 function iceServers(env, userId, now = Date.now()) {
-  const list = [{ urls: (env.STUN_URLS || 'stun:stun.l.google.com:19302').split(',').map((u) => u.trim()).filter(Boolean) }];
-  const urls = (env.TURN_URLS || '').split(',').map((u) => u.trim()).filter(Boolean);
+  const list = [{ urls: urlList(env.STUN_URLS || 'stun:stun.l.google.com:19302') }];
+  const urls = urlList(env.TURN_URLS);
   if (!urls.length) return list;
   if (env.TURN_SECRET) {
     const username = `${Math.floor(now / 1000) + 12 * 3600}:${userId}`;
@@ -109,4 +117,33 @@ function iceServers(env, userId, now = Date.now()) {
   return list;
 }
 
-module.exports = { create, iceServers, ROOM };
+/**
+ * Metered (metered.ca), a hosted TURN service: METERED_DOMAIN (e.g. yourapp.metered.live) and METERED_API_KEY (the
+ * dashboard's "TURN credential" API key). Its API hands out the STUN / TURN servers with their logins; kept for an
+ * hour, so a call does not wait on Metered each time. Without the two settings, or if Metered fails: [].
+ */
+function metered(env, fetchFn = globalThis.fetch) {
+  let cache = { at: 0, list: [] };
+  let pending = null;
+  return async function get(now = Date.now()) {
+    const domain = String(env.METERED_DOMAIN || '').trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    const key = String(env.METERED_API_KEY || '').trim();
+    if (!domain || !key) return [];
+    if (cache.list.length && now - cache.at < 60 * 60 * 1000) return cache.list;
+    pending = pending || (async () => {
+      try {
+        const res = await fetchFn(`https://${domain}/api/v1/turn/credentials?apiKey=${encodeURIComponent(key)}`, { signal: AbortSignal.timeout(5000) });
+        const body = await res.json().catch(() => null);
+        if (!res.ok || !Array.isArray(body)) throw new Error((body && body.error) || `HTTP ${res.status}`);
+        const list = body.filter((s) => s && s.urls).map((s) => ({ urls: s.urls, ...(s.username ? { username: s.username, credential: s.credential } : {}) }));
+        cache = { at: now, list };
+      } catch (err) {
+        console.error(`Video calls: Metered TURN servers could not be loaded (${err.message}); check METERED_DOMAIN and METERED_API_KEY.`);
+      } finally { pending = null; }
+      return cache.list; // the last good list, if any
+    })();
+    return pending;
+  };
+}
+
+module.exports = { create, iceServers, metered, ROOM };

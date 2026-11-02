@@ -113,3 +113,28 @@ test('a full room makes way for the same login joining again (its old socket is 
   c.message(a, ann, { type: 'call-signal', candidate: null }); // the stale socket is out of the room
   assert.deepEqual(last(b), { type: 'call-peer', peer: { id: 'u1', name: 'Ann' } });
 });
+
+test('ICE: addresses without stun: / turn: are left out (the browser would refuse the whole list)', () => {
+  const orig = console.error; console.error = () => {};
+  try {
+    assert.equal(calls.iceServers({ TURN_URLS: 'app.metered.live', TURN_SECRET: 's' }, 'u1').length, 1);
+    assert.deepEqual(calls.iceServers({ STUN_URLS: 'stun:a:3478, b.example.com' }, 'u1'), [{ urls: ['stun:a:3478'] }]);
+  } finally { console.error = orig; }
+});
+
+test('Metered: servers from its API, kept an hour; nothing without the settings or when it fails', async () => {
+  let calls_ = 0;
+  const ok = async (url) => { calls_ += 1; assert.match(url, /^https:\/\/app\.metered\.live\/api\/v1\/turn\/credentials\?apiKey=k1$/);
+    return { ok: true, json: async () => [{ urls: 'stun:stun.relay.metered.ca:80' }, { urls: 'turn:global.relay.metered.ca:80', username: 'u', credential: 'p' }] }; };
+  const get = calls.metered({ METERED_DOMAIN: 'https://app.metered.live/', METERED_API_KEY: 'k1' }, ok);
+  const list = await get(0);
+  assert.deepEqual(list[1], { urls: 'turn:global.relay.metered.ca:80', username: 'u', credential: 'p' });
+  await get(1000);
+  assert.equal(calls_, 1);
+  assert.deepEqual(await calls.metered({}, ok)(), []);
+  const orig = console.error; console.error = () => {};
+  try {
+    const bad = calls.metered({ METERED_DOMAIN: 'app.metered.live', METERED_API_KEY: 'x' }, async () => ({ ok: false, status: 401, json: async () => ({ error: 'Invalid API Key' }) }));
+    assert.deepEqual(await bad(), []);
+  } finally { console.error = orig; }
+});

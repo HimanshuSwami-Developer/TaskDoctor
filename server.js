@@ -3234,7 +3234,10 @@ app.get('/api/sheets/:id/export', route(async (req, res) => {
 
 // ---------------------------------------------------------------- video calls (calls.js; signalling is on /ws)
 
-app.get('/api/call/ice', (req, res) => res.json({ iceServers: calls.iceServers(process.env, req.user.id) }));
+const meteredIce = calls.metered(process.env);
+app.get('/api/call/ice', route(async (req, res) => {
+  res.json({ iceServers: [...calls.iceServers(process.env, req.user.id), ...await meteredIce()] });
+}));
 
 // ---------------------------------------------------------------- errors + start
 
